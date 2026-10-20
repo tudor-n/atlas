@@ -174,3 +174,44 @@ def test_update_and_node_edit_rules(rv):
     with pytest.raises(ValueError):
         rv.edit_proposal(n.id, {"name": "  "})
     rv.edit_proposal(u.id, {"status": "to_read"})
+
+
+@pytest.mark.parametrize("order", ["person first", "project first"])
+def test_confirm_all_with_person_and_project_nodes_in_any_order(rv, order):
+    specs = [("node", {"type": "person", "name": "Bob", "parent": "vibedine"}, []),
+             ("node", {"type": "project", "name": "Vibedine", "parent": None}, [])]
+    if order == "project first":
+        specs.reverse()
+    ps = rv.store.add_proposals("e-1", specs)
+    rv.confirm([p.id for p in ps])
+    m = load_map(rv.paths.brain)
+    assert any(x["slug"] == "vibedine" for x in m.projects)
+    assert next(x for x in m.people if x["slug"] == "bob")["projects"] == ["vibedine"]
+
+
+def test_confirming_a_person_pulls_in_its_proposed_project(rv):
+    [person, project] = rv.store.add_proposals("e-1", [
+        ("node", {"type": "person", "name": "Bob", "parent": "vibedine"}, []),
+        ("node", {"type": "project", "name": "Vibedine", "parent": None}, [])])
+    rv.confirm([person.id])
+    m = load_map(rv.paths.brain)
+    assert next(x for x in m.people if x["slug"] == "bob")["projects"] == ["vibedine"]
+    assert rv.store.list_proposals() == []
+
+
+def test_course_slug_is_a_valid_project(rv):
+    m = load_map(rv.paths.brain); m.courses.append({"slug": "fizica", "name": "Fizica"})
+    save_map(rv.paths.brain, m)
+    [p] = rv.store.add_proposals("e-1", [("item", _item_payload(project="fizica"), [])])
+    rv.edit_proposal(p.id, {"text": "lab report"})
+    [item] = rv.confirm([p.id])
+    assert item.project == "fizica"
+    assert rv.edit_item(item.id, {"project": "fizica", "person": "ana"}).person == "ana"
+
+
+def test_course_node_satisfies_an_items_project(rv):
+    [n, p] = rv.store.add_proposals("e-1", [
+        ("node", {"type": "course", "name": "Chimie", "parent": None}, []),
+        ("item", _item_payload(project="chimie"), [])])
+    [item] = rv.confirm([p.id])
+    assert item.project == "chimie" and any(c["slug"] == "chimie" for c in load_map(rv.paths.brain).courses)

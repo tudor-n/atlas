@@ -212,6 +212,8 @@ def _hierarchy(app) -> dict | None:
         kind = node["kind"]
         if kind in node_counts:
             node["items"] = node_counts[kind].get(node["slug"], 0)
+        elif kind == "course":  # items name a course in their "project" field
+            node["items"] = node_counts["project"].get(node["slug"], 0)
         for c in node["children"]:
             fix(c)
 

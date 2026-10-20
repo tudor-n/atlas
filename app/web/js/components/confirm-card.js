@@ -43,7 +43,8 @@ function orderProposals(proposals) {
         const slug = p.payload[field];
         if (!slug) continue;
         for (const n of nodes) {
-          if (!placed.has(n.id) && n.payload.type === field && slugify(n.payload.name || '') === slug) {
+          const fits = n.payload.type === field || (field === 'project' && n.payload.type === 'course');
+          if (!placed.has(n.id) && fits && slugify(n.payload.name || '') === slug) {
             placed.add(n.id);
             out.push(n);
           }
@@ -202,21 +203,32 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
     if (p.ptype === 'item') {
       const text = track('text', el('input', { type: 'text', value: pl.text || '' }));
       const kind = track('kind', select(KINDS.map((k) => [k, KIND_LABEL[k]]), pl.kind));
-      const projects = (s.map && s.map.projects) || [];
-      const opts = [['', '(none)'], ...projects.map((x) => [x.slug, x.name || x.slug])];
-      if (pl.project && !opts.some(([v]) => v === pl.project)) opts.push([pl.project, `${pl.project} (new)`]);
-      const project = track('project', select(opts, pl.project || ''));
+      const map = s.map || {};
+      // A value only proposed on this card (a new node) stays selectable, marked "(new)".
+      const withCurrent = (opts, current) => (current && !opts.some(([v]) => v === current)
+        ? [...opts, [current, `${current} (new)`]] : opts);
+      const projectOpts = withCurrent([['', '(none)'],
+        ...(map.projects || []).map((x) => [x.slug, x.name || x.slug]),
+        ...(map.courses || []).map((x) => [x.slug, `${x.name || x.slug} (course)`])], pl.project);
+      const project = track('project', select(projectOpts, pl.project || ''));
+      const areaOpts = withCurrent((map.areas || []).map((x) => [x.slug, x.name || x.slug]), pl.area);
+      const area = track('area', select(areaOpts, pl.area || ''));
+      const personOpts = withCurrent([['', '(none)'],
+        ...(map.people || []).map((x) => [x.slug, x.name || x.slug])], pl.person);
+      const person = track('person', select(personOpts, pl.person || ''));
       // A reminder (or an item with only a remind time) edits remind_at; everything else edits due.
       const key = (pl.kind === 'reminder' || (pl.remind_at && !pl.due)) ? 'remind_at' : 'due';
       const current = pl[key] || '';
       const date = track(key, el('input', { type: current.length > 10 ? 'datetime-local' : 'date', value: current }));
-      controls = [field('What', text, true), field('Kind', kind), field('Project', project),
-        field(key === 'remind_at' ? 'Remind at' : 'Date', date)];
+      controls = [field('What', text, true), field('Kind', kind), field('Area', area), field('Project', project),
+        field('Person', person), field(key === 'remind_at' ? 'Remind at' : 'Date', date)];
       collect = () => {
         const patch = {};
         if (text.value !== (pl.text || '')) patch.text = text.value;
         if (kind.value !== pl.kind) patch.kind = kind.value;
+        if (area.value && area.value !== pl.area) patch.area = area.value;
         if ((project.value || null) !== (pl.project || null)) patch.project = project.value || null;
+        if ((person.value || null) !== (pl.person || null)) patch.person = person.value || null;
         if (date.value !== current) {
           patch[key] = date.value || null;
           if (key === 'due') patch.remind_at = null;

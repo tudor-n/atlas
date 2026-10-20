@@ -282,3 +282,31 @@ def test_recover_from_history_marks_done(env):
     f = env.store.get_filing(env.entry.id)
     assert (f.status, f.commit, f.synopsis) == ("done", sha, "wrist check")
     assert w.requeue_unfinished() == []
+
+
+def test_parse_slugifies_area_and_parent_and_drops_unknown_parent(m):
+    raw = {"synopsis": "s", "files": [], "updates": [],
+           "new_nodes": [{"type": "project", "name": "Vibe Dine", "parent": None},
+                         {"type": "person", "name": "Bob", "parent": "Vibe Dine"},
+                         {"type": "person", "name": "Cleo", "parent": "Ghost Co"},
+                         {"type": "person", "name": "Dan", "parent": "RobotArm"}],
+           "items": [{"kind": "task", "text": "t", "area": "Projects", "project": None, "person": None,
+                      "due": None, "remind_at": None}]}
+    _, _, props = parse_filing_result(raw, m, set())
+    assert props[0][1]["area"] == "projects" and props[0][2] == []
+    nodes = {p[1]["name"]: p for p in props if p[0] == "node"}
+    assert nodes["Bob"][1]["parent"] == "vibe-dine" and nodes["Bob"][2] == []
+    assert nodes["Cleo"][1]["parent"] is None and any("Ghost Co" in w for w in nodes["Cleo"][2])
+    assert nodes["Dan"][1]["parent"] == "robotarm"
+
+
+def test_parse_accepts_a_course_slug_as_project(m):
+    m.courses.append({"slug": "fizica", "name": "Fizica"})
+    raw = {"synopsis": "s", "files": [], "updates": [],
+           "new_nodes": [{"type": "course", "name": "Chimie", "parent": None}],
+           "items": [{"kind": "deadline", "text": "lab", "area": "uni", "project": "Fizica", "person": None,
+                      "due": "2026-11-01", "remind_at": None},
+                     {"kind": "task", "text": "read", "area": "uni", "project": "chimie", "person": None,
+                      "due": None, "remind_at": None}]}
+    _, _, props = parse_filing_result(raw, m, set())
+    assert [(p[1]["project"], p[2]) for p in props[:2]] == [("fizica", []), ("chimie", [])]

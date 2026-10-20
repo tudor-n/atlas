@@ -493,3 +493,12 @@ async def test_map_edit_refuses_to_strand_items_or_notes(ready_client, app, app_
     empty_removed = _map_with(projects=MAP["projects"], courses=two["courses"])  # 'spare' has nothing
     assert (await ready_client.put("/api/map", json=empty_removed)).status == 200
     assert [p["slug"] for p in (await (await ready_client.get("/api/map")).json())["projects"]] == ["robotarm"]
+
+
+async def test_hierarchy_counts_items_filed_under_a_course(ready_client, app):
+    m = _map_with(courses=[{"slug": "fizica", "name": "Fizica"}])
+    assert (await ready_client.put("/api/map", json=m)).status == 200
+    app["store"].create_item(kind="deadline", text="lab", area="uni", project="fizica", source_entry="e-1")
+    h = await (await ready_client.get("/api/hierarchy")).json()
+    uni = next(c for c in h["children"] if c["slug"] == "uni")
+    assert next(c for c in uni["children"] if c["slug"] == "fizica")["items"] == 1

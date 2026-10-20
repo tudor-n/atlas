@@ -92,7 +92,8 @@ def ensure_folders(brain: Path, m: BrainMap) -> None:
 
 
 def add_node(m: BrainMap, ntype: str, name: str, parent: str | None) -> BrainMap:
-    """Return a new map with the node added. For a person, `parent` is an optional project slug."""
+    """Return a new map with the node added. For a person, `parent` is an optional project slug;
+    one that is not a project in the map (a course, a typo) is left out rather than failing."""
     new = copy.deepcopy(m)
     slug = slugify(name)
     if ntype == "project":
@@ -100,7 +101,8 @@ def add_node(m: BrainMap, ntype: str, name: str, parent: str | None) -> BrainMap
     elif ntype == "course":
         target, node = new.courses, {"slug": slug, "name": name}
     elif ntype == "person":
-        target, node = new.people, {"slug": slug, "name": name, "projects": [parent] if parent else []}
+        link = parent if parent in {p["slug"] for p in new.projects} else None
+        target, node = new.people, {"slug": slug, "name": name, "projects": [link] if link else []}
     elif ntype == "area":
         target, node = new.areas, {"slug": slug, "name": name}
     else:

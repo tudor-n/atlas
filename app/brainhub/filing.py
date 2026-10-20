@@ -94,9 +94,11 @@ def parse_filing_result(raw: dict, m: BrainMap, open_item_ids: set[str]
     proposed: dict[str, set[str]] = {}
     for n in new_nodes:
         proposed.setdefault(n["type"], set()).add(slugify(n["name"]))
+    courses = {c["slug"] for c in m.courses} | proposed.get("course", set())
+    projects = {p["slug"] for p in m.projects} | proposed.get("project", set())
     known = {
         "area": {a["slug"] for a in m.areas} | proposed.get("area", set()),
-        "project": {p["slug"] for p in m.projects} | proposed.get("project", set()),
+        "project": projects | courses,  # an item may belong to a course as its "project"
         "person": {p["slug"] for p in m.people} | proposed.get("person", set()),
     }
     proposals: list[tuple[str, dict, list[str]]] = []
@@ -105,7 +107,10 @@ def parse_filing_result(raw: dict, m: BrainMap, open_item_ids: set[str]
         payload = {"kind": it["kind"], "text": it["text"], "area": it["area"],
                    "project": it.get("project"), "person": it.get("person"),
                    "due": it.get("due"), "remind_at": it.get("remind_at")}
-        if payload["area"] not in known["area"]:
+        area = slugify(payload["area"]) if isinstance(payload["area"], str) else ""
+        if area in known["area"]:
+            payload["area"] = area
+        else:
             warnings.append(f"unknown area '{payload['area']}', filed under general")
             payload["area"] = "general"
         for key in ("project", "person"):
@@ -130,7 +135,15 @@ def parse_filing_result(raw: dict, m: BrainMap, open_item_ids: set[str]
             payload["note"] = u["note"]
         proposals.append(("update", payload, [] if u["item_id"] in open_item_ids else ["unknown item id"]))
     for n in new_nodes:
-        proposals.append(("node", {"type": n["type"], "name": n["name"], "parent": n.get("parent")}, []))
+        parent, warnings = n.get("parent"), []
+        if parent is not None:
+            slug = slugify(parent) if isinstance(parent, str) else ""
+            if slug and slug in projects | courses:  # in the map, or proposed alongside
+                parent = slug
+            else:
+                warnings.append(f"unknown parent '{parent}' dropped")
+                parent = None
+        proposals.append(("node", {"type": n["type"], "name": n["name"], "parent": parent}, warnings))
     return raw.get("synopsis", ""), list(raw.get("files", [])), proposals
 
 

@@ -14,6 +14,8 @@ from .store import Store
 KINDS = ("task", "deadline", "reminder", "waiting", "next_time")
 STATUSES = ("open", "to_read", "done", "dismissed", "snoozed")
 _NODE_TYPES = ("area", "project", "course", "person")
+# Nodes apply in this order, so a person can link to a project proposed in the same confirm.
+_NODE_ORDER = {"area": 0, "project": 1, "course": 2, "person": 3}
 _ITEM_KEYS = ("kind", "text", "area", "project", "person", "due", "remind_at")
 _PROPOSAL_KEYS = {
     "item": _ITEM_KEYS,
@@ -32,7 +34,9 @@ def _default_remind(due: str, lead_days: int) -> str:
 
 def _validate_fields(fields: dict, m: BrainMap) -> None:
     """Validate the item-shaped fields present in `fields`. Raises ValueError."""
-    slugs = {"area": {a["slug"] for a in m.areas}, "project": {p["slug"] for p in m.projects},
+    slugs = {"area": {a["slug"] for a in m.areas},
+             # an item's "project" may also be a uni course
+             "project": {p["slug"] for p in m.projects} | {c["slug"] for c in m.courses},
              "person": {p["slug"] for p in m.people}}
     if "kind" in fields and fields["kind"] not in KINDS:
         raise ValueError(f"invalid kind: {fields['kind']!r}")
@@ -77,13 +81,22 @@ class Reviewer:
         lead = load_settings(self.paths)["default_lead_days"]
         original = self._map()
 
-        # Pull in pending node proposals of the same entry that a selected item depends on.
+        # Pull in pending node proposals of the same entry that a selected item (or a selected
+        # person's parent) depends on. A course node satisfies an item's "project".
         chosen = {p.id for p in proposals}
         wanted = {(t, p.entry_id, p.payload.get(t)) for p in proposals if p.ptype == "item"
                   for t in ("area", "project", "person") if p.payload.get(t)}
+        wanted |= {("project", p.entry_id, p.payload.get("parent")) for p in proposals
+                   if p.ptype == "node" and p.payload.get("type") == "person"
+                   and p.payload.get("parent")}
+
+        def satisfies(n: Proposal) -> str | None:
+            t = n.payload.get("type")
+            return "project" if t == "course" else t
+
         auto = [n for n in pending
                 if n.ptype == "node" and n.id not in chosen
-                and (n.payload.get("type"), n.entry_id,
+                and (satisfies(n), n.entry_id,
                      slugify(str(n.payload.get("name", "")))) in wanted]
         auto_ids = {n.id for n in auto}
         requested = len(proposals)
@@ -92,7 +105,9 @@ class Reviewer:
         # Dry run: nothing is touched until every proposal is known to apply.
         m = original
         node_names: list[str] = []
-        for p in (p for p in proposals if p.ptype == "node"):
+        nodes = sorted((p for p in proposals if p.ptype == "node"),
+                       key=lambda p: _NODE_ORDER.get(p.payload.get("type"), len(_NODE_ORDER)))
+        for p in nodes:
             ntype, name = p.payload.get("type"), p.payload.get("name")
             if ntype not in _NODE_TYPES or not isinstance(name, str):
                 raise ValueError(f"invalid node proposal: {p.id}")
