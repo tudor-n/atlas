@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .models import Entry, Filing, Hit, Item, Proposal
 from .rawlog import read_log
+from .today import snooze_active
 
 log = logging.getLogger(__name__)
 
@@ -369,10 +370,16 @@ class Store:
         groups: dict[str, list[Item]] = {}
         for i in items:
             groups.setdefault(i.project or i.area, []).append(i)
+        now = datetime.now()
+
+        def is_open(i: Item) -> bool:  # an expired snooze is open again, as in Today
+            return i.status in ("open", "to_read") or (
+                i.status == "snoozed" and not snooze_active(i, now))
+
         for group, members in sorted(groups.items()):
             lines = [f"# {group}", ""]
             for i in sorted(members, key=lambda i: (i.due or "9999", i.id)):
-                if i.status not in ("open", "to_read"):
+                if not is_open(i):
                     continue
                 due = f" (due {i.due})" if i.due else ""
                 lines.append(f"- [ ] {i.text}{due} (from {i.source_entry})")

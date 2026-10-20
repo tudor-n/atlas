@@ -173,3 +173,13 @@ def test_reindex_changed_follows_a_commit(store, tmp_path):
     assert [h.ref for h in store.search('"heron"', 5)] == ["b.md"]
     store.drop_note_file("b.md")
     assert store.search('"heron"', 5) == []
+
+
+def test_export_counts_expired_snoozes_as_open(store, tmp_path):
+    a = store.create_item(kind="task", text="snooze ran out", area="general", source_entry="e-1")
+    b = store.create_item(kind="task", text="still snoozed", area="general", source_entry="e-2")
+    store.update_item(a.id, {"status": "snoozed", "snooze_until": "2020-01-01T09:00"})
+    store.update_item(b.id, {"status": "snoozed", "snooze_until": "2999-01-01T09:00"})
+    store.export_items(tmp_path)
+    md = (tmp_path/"_items"/"general.md").read_text(encoding="utf-8")
+    assert "snooze ran out" in md and "still snoozed" not in md
