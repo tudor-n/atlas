@@ -82,7 +82,15 @@ function buildField(key, value) {
   // strings, and the nullable backup_remote (empty means null)
   const input = el('input', { type: 'text', value: value ?? '', spellcheck: 'false',
     placeholder: key === 'backup_remote' ? 'https://github.com/you/brainhub-backup.git' : null });
-  return { node: wrap(input), read: () => (key === 'backup_remote' && !input.value.trim() ? null : input.value.trim()) };
+  return {
+    node: wrap(input),
+    read() {
+      const v = input.value.trim();
+      if (key === 'backup_remote') return v || null;
+      if (key === 'claude_path' && !v) throw new Error('Claude path must not be empty.');
+      return v;
+    },
+  };
 }
 
 export async function render(container) {
@@ -187,7 +195,10 @@ export async function render(container) {
       if (dead) return;
       drawBackupStatus(b);
       if (!b.remote_set) say(backupMsg, 'Set a backup remote above and save it first.');
-      else if (b.last_error) say(backupMsg, 'The push failed. The error is shown above; BrainHub will keep retrying.');
+      else if (b.last_error) {
+        say(backupMsg, b.pending ? 'The push failed. The error is shown above; BrainHub will keep retrying.'
+          : 'The push failed. The error is shown above.');
+      }
       else say(backupMsg, 'Pushed.', true);
     } catch (e) {
       say(backupMsg, `Couldn't push: ${e.message}`);

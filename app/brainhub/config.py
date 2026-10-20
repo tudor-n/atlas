@@ -13,6 +13,7 @@ DEFAULT_SETTINGS: dict = {
 }
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
 
 
 @dataclass(frozen=True)
@@ -66,10 +67,15 @@ def _check(key: str, value) -> None:
     if default is None:
         if value is not None and not isinstance(value, str):
             raise ValueError(f"{key} must be a string or null")
+        if key == "backup_remote" and value is not None and (
+                value.startswith("-") or "::" in value or not _REMOTE.match(value)):
+            raise ValueError("backup_remote must be an https://, ssh:// or user@host:path URL")
         return
     # bool is an int subclass; reject it for non-bool defaults
     if type(value) is not type(default):
         raise ValueError(f"{key} must be {type(default).__name__}")
+    if isinstance(value, str) and not value.strip() and (key == "claude_path" or key.endswith("_model")):
+        raise ValueError(f"{key} must not be empty")
 
 
 def load_settings(paths: Paths) -> dict:

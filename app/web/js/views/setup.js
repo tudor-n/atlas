@@ -29,11 +29,9 @@ function forget() {
 
 // Which step a server validation message belongs to (messages come from brainmap.validate_map).
 function stepFor(msg) {
-  if (/person/.test(msg)) return 3;
-  if (/course/.test(msg)) return 2;
-  if (/company|project/.test(msg)) return 1;
-  if (/area/.test(msg)) return 0;
-  return null;
+  if (/^at most one project/.test(msg)) return 1;
+  const word = /^(?:duplicate )?(area|project|course|person)/.exec(msg);
+  return word ? { area: 0, project: 1, course: 2, person: 3 }[word[1]] : null;
 }
 
 export async function render(container) {
@@ -42,8 +40,8 @@ export async function render(container) {
   const serverQuiet = Array.isArray(server.quiet_hours) ? server.quiet_hours : ['23:00', '08:00'];
   const saved = loadSaved();
   const st = saved
-    ? { ...saved, quiet_hours: saved.quiet_hours || serverQuiet }
-    : { step: 0, map: defaultMap(), backup_remote: '', quiet_hours: serverQuiet };
+    ? { ...saved, quiet_hours: saved.quiet_hours || [...serverQuiet] }  // copies: the inputs mutate st.quiet_hours
+    : { step: 0, map: defaultMap(), backup_remote: '', quiet_hours: [...serverQuiet] };
   let serverErrors = [];  // from a rejected Finish; cleared on the next edit
   let finishing = false;
   let done = null;  // message after a partial success

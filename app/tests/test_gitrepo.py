@@ -100,3 +100,11 @@ def test_changed_files_returns_non_ascii_names_unquoted(tmp_path):
     (tmp_path/"a.md").write_text("x", encoding="utf-8"); r.commit_all("base")
     (tmp_path/"rețete.md").write_text("sarmale", encoding="utf-8"); sha = r.commit_all("recipes")
     assert r.changed_files(sha) == ["rețete.md"]
+
+
+def test_push_treats_dash_remote_as_a_destination_not_an_option(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    (tmp_path/"a.md").write_text("x", encoding="utf-8"); r.commit_all("one")
+    marker = tmp_path.parent / "pwned.txt"
+    ok, _ = r.push(f"--receive-pack=touch {marker}")
+    assert not ok and not marker.exists()

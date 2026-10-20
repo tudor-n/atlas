@@ -254,5 +254,5 @@ async def test_notes_lists_markdown_and_rejects_private_folders(ready_client, ap
 
 async def test_backup_push_now_ignores_debounce(ready_client, app):
     app["backup"].repo = FakeRepo([True]); app["backup"].notify_commit()
-    await ready_client.put("/api/settings", json={"backup_remote": "r", "backup_debounce_s": 9999})
-    assert (await ready_client.post("/api/backup/push")).status == 200 and app["backup"].repo.pushes == ["r"]
+    await ready_client.put("/api/settings", json={"backup_remote": "https://example.com/r.git", "backup_debounce_s": 9999})
+    assert (await ready_client.post("/api/backup/push")).status == 200 and app["backup"].repo.pushes == ["https://example.com/r.git"]

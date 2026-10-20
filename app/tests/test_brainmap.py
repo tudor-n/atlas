@@ -39,3 +39,22 @@ def test_hierarchy_counts(tmp_path):
     tree = hierarchy(tmp_path, m, {"robotarm": 3})
     node = next(c for c in tree["children"] if c["slug"]=="projects")["children"][0]
     assert node["files"] == 1 and node["items"] == 3
+
+
+@pytest.mark.parametrize("key", ["projects", "courses", "people"])
+@pytest.mark.parametrize("slug", ["log", "_items", "people", "general", "projects", "uni", "personal"])
+def test_reserved_slugs_rejected_for_non_area_nodes(key, slug):
+    m = default_map()
+    getattr(m, key).append({"slug": slug, "name": "X", "projects": []})
+    assert any("reserved" in e for e in validate_map(m)) or any("invalid" in e for e in validate_map(m))
+
+
+@pytest.mark.parametrize("slug", ["log", "people"])
+def test_reserved_slug_rejected_for_custom_area(slug):
+    m = default_map()
+    m.areas.append({"slug": slug, "name": "X"})
+    assert any("reserved" in e for e in validate_map(m))
+
+
+def test_default_map_validates_and_default_areas_allowed():
+    assert validate_map(default_map()) == []

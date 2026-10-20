@@ -135,7 +135,7 @@ class BrainRepo:
             self._check(self._run("clean", "-fd"), "clean")
 
     def push(self, remote_url: str) -> tuple[bool, str]:
-        r = self._git("push", remote_url, "HEAD:refs/heads/main")
+        r = self._git("push", "--end-of-options", remote_url, "HEAD:refs/heads/main")
         return r.returncode == 0, r.stderr.strip()[-500:]
 
     # -- worktrees / cherry-pick ------------------------------------------

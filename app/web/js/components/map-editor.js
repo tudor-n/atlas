@@ -4,7 +4,8 @@
 import { el, clear } from '../dom.js';
 
 export const DEFAULT_AREAS = ['general', 'projects', 'uni', 'personal'];
-const RESERVED_AREAS = ['people', 'log'];  // folders the brain already uses for other things
+// Top-level brain folders (mirrors brainmap._RESERVED). Only the four default areas may use the default slugs.
+const RESERVED = ['log', '_items', 'people', ...DEFAULT_AREAS];
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 // Same rules as brainmap.slugify: NFKD, drop combining marks, lowercase, non-alphanumeric runs to "-", trimmed.
@@ -47,7 +48,9 @@ export function validateMap(m) {
       else if (seen.has(slug)) out[key].push(`${who}: another ${label} already uses the folder name "${slug}".`);
       seen.add(slug);
       if (!String(n.name || '').trim()) out[key].push(`The ${label} "${slug}" needs a name.`);
-      if (key === 'areas' && RESERVED_AREAS.includes(slug)) out[key].push(`"${slug}" is reserved. Pick another folder name.`);
+      if (RESERVED.includes(slug) && !(key === 'areas' && DEFAULT_AREAS.includes(slug))) {
+        out[key].push(`${who}: "${slug}" is reserved. Pick another folder name.`);
+      }
     }
   }
   if (m.projects.filter((p) => p.is_company).length > 1) out.projects.push('Only one project can be the company.');
@@ -58,6 +61,19 @@ export function validateMap(m) {
     }
   }
   return out;
+}
+
+// A project's slug changed from `from` to `to` (the project already has the new slug): its people follow.
+// If another project still owns `from`, the links belong to that project and must not move.
+export function renameProjectRefs(map, from, to) {
+  if (from === to || map.projects.some((p) => p.slug === from)) return;
+  for (const p of map.people) p.projects = p.projects.map((r) => (r === from ? to : r));
+}
+
+// A project was removed: drop its links, unless another project still has the same slug.
+export function dropProjectRefs(map, slug) {
+  if (map.projects.some((p) => p.slug === slug)) return;
+  for (const p of map.people) p.projects = p.projects.filter((r) => r !== slug);
 }
 
 export const hasErrors = (errs) => Object.values(errs).some((l) => l.length);
@@ -146,14 +162,12 @@ export function createMapEditors(map, { onChange } = {}) {
     makeRow: (a) => nameSlug(a, { slugLocked: DEFAULT_AREAS.includes(a.slug), changed }),
   });
 
-  const renameRefs = (from, to) => {
-    for (const p of map.people) p.projects = p.projects.map((r) => (r === from ? to : r));
-  };
+  const renameRefs = (from, to) => renameProjectRefs(map, from, to);
   const projectsChanged = () => { editors.people.refresh(); changed(); };
   editors.projects = rowsEditor({
     map, key: 'projects', label: 'project', addText: 'Add a project', changed: projectsChanged,
     blank: () => ({ slug: '', name: '', is_company: false, folders: [] }),
-    onRemove: (p) => { for (const person of map.people) person.projects = person.projects.filter((r) => r !== p.slug); },
+    onRemove: (p) => dropProjectRefs(map, p.slug),
     makeRow: (p) => {
       const company = el('input', { type: 'checkbox', checked: p.is_company === true,
         onchange: () => {

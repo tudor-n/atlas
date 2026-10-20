@@ -9,6 +9,8 @@ from pathlib import Path
 
 _SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _DEFAULT_AREAS = ("general", "projects", "uni", "personal")
+# Top-level folders the brain already uses. Only the area entries with the four default slugs may use those.
+_RESERVED = ("log", "_items", "people") + _DEFAULT_AREAS
 
 
 @dataclass
@@ -41,6 +43,9 @@ def validate_map(m: BrainMap) -> list[str]:
             if slug in seen:
                 errors.append(f"duplicate {label} slug: {slug}")
             seen.add(slug)
+            if isinstance(slug, str) and slug in _RESERVED and not (
+                    label == "area" and slug in _DEFAULT_AREAS):
+                errors.append(f"{label} slug is reserved: {slug}")
             if not n.get("name"):
                 errors.append(f"{label} {slug!r} has no name")
     if sum(1 for p in m.projects if p.get("is_company")) > 1:
