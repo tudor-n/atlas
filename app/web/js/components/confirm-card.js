@@ -67,7 +67,7 @@ function draftFor(entryId) {
 export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   const root = el('section', { class: 'card', 'aria-label': 'Filing review' });
   const s = {
-    data: null, map: null, items: {}, loadError: '', notice: '',
+    data: null, map: null, items: {}, loadError: '', notice: '', busy: false,
     draft: draftFor(entryId),
   };
   const unsubs = [];
@@ -100,12 +100,18 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
 
   const pending = () => (s.data ? s.data.proposals.filter((p) => p.status === 'proposed') : []);
 
+  // One action at a time: the row and card buttons stay disabled until the server answers.
   async function act(fn, errPrefix) {
+    if (s.busy) return;
     s.draft.msg = '';
+    s.busy = true;
+    render();
     try {
       await fn();
     } catch (e) {
       s.draft.msg = `${errPrefix}: ${e.message}`;
+    } finally {
+      s.busy = false;
     }
     await reload();
     if (onChange) onChange();
@@ -130,11 +136,11 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
 
   function actions(p, canConfirm) {
     return el('div', { class: 'row-actions' },
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: 'Confirm', disabled: !canConfirm || null,
+      el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: 'Confirm', disabled: !canConfirm || s.busy || null,
         onclick: () => confirmIds([p.id]) }, '✓'),
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Edit', title: 'Edit',
+      el('button', { class: 'icon', type: 'button', 'aria-label': 'Edit', title: 'Edit', disabled: s.busy || null,
         onclick: () => { s.draft.editing = p.id; render(); } }, '✎'),
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss',
+      el('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss', disabled: s.busy || null,
         onclick: () => dismissIds([p.id]) }, '✕'));
   }
 
@@ -346,8 +352,8 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
     if (list.length > 0) {
       const ok = list.filter((p) => !(p.ptype === 'update' && ((p.warnings || []).some((w) => /unknown item/i.test(w)) || !p.payload.item_id)));
       foot.appendChild(el('div', { class: 'actions' },
-        el('button', { class: 'primary', type: 'button', disabled: ok.length === 0 || null,
-          onclick: () => confirmIds(ok.map((p) => p.id)) }, 'Confirm all')));
+        el('button', { class: 'primary', type: 'button', disabled: ok.length === 0 || s.busy || null,
+          onclick: () => confirmIds(ok.map((p) => p.id)) }, s.busy ? 'Working…' : 'Confirm all')));
     }
     foot.appendChild(correctionBox());
     root.appendChild(foot);

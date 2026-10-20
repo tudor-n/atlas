@@ -1,6 +1,8 @@
 """Owner review actions: confirm / dismiss / edit proposals and items. Every change is committed."""
 from __future__ import annotations
 
+import functools
+import threading
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -54,6 +56,16 @@ def _validate_fields(fields: dict, m: BrainMap) -> None:
             raise ValueError(f"invalid date for {key}: {fields[key]!r}")
 
 
+def _serialized(method):
+    """One review action at a time: two concurrent confirms of the same proposal must not
+    both pass the "still proposed" check and create the item twice."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class Reviewer:
     def __init__(self, paths: Paths, store: Store, repo: BrainRepo,
                  on_commit: Callable[[str | None], None]):
@@ -61,6 +73,7 @@ class Reviewer:
         self.store = store
         self.repo = repo
         self.on_commit = on_commit
+        self._lock = threading.Lock()
 
     def _map(self) -> BrainMap:
         return load_map(self.paths.brain) or default_map()
@@ -70,6 +83,7 @@ class Reviewer:
         self.on_commit(self.repo.commit_all(message))
 
     # -- proposals -----------------------------------------------------------
+    @_serialized
     def confirm(self, ids: list[str]) -> list[Item]:
         pending = self.store.list_proposals(status="proposed")
         by_id = {p.id: p for p in pending}
@@ -165,6 +179,7 @@ class Reviewer:
         self._finish(message)
         return created
 
+    @_serialized
     def dismiss(self, ids: list[str]) -> None:
         pending = {p.id for p in self.store.list_proposals(status="proposed")}
         ids = list(dict.fromkeys(ids))
@@ -174,6 +189,7 @@ class Reviewer:
         self.store.set_proposal_status(ids, "dismissed")
         self.store.export_proposals(self.paths.brain)  # committed with the next hub commit
 
+    @_serialized
     def edit_proposal(self, id: str, patch: dict) -> Proposal:
         p = next((p for p in self.store.list_proposals(status="proposed") if p.id == id), None)
         if p is None:
@@ -195,6 +211,7 @@ class Reviewer:
         return out
 
     # -- items ---------------------------------------------------------------
+    @_serialized
     def edit_item(self, id: str, patch: dict) -> Item:
         item = self.store.get_item(id)
         if item is None:

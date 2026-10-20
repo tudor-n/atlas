@@ -215,3 +215,28 @@ def test_course_node_satisfies_an_items_project(rv):
         ("item", _item_payload(project="chimie"), [])])
     [item] = rv.confirm([p.id])
     assert item.project == "chimie" and any(c["slug"] == "chimie" for c in load_map(rv.paths.brain).courses)
+
+
+def test_concurrent_confirms_of_one_proposal_create_one_item(rv, monkeypatch):
+    import threading
+    import time
+    [p] = rv.store.add_proposals("e-1", [("item", _item_payload(), [])])
+    real = rv.store.create_item
+
+    def slow(**kw):
+        time.sleep(0.1)  # widen the check-then-create window
+        return real(**kw)
+
+    monkeypatch.setattr(rv.store, "create_item", slow)
+    barrier, outcomes = threading.Barrier(2), []
+
+    def go():
+        barrier.wait()
+        try:
+            rv.confirm([p.id]); outcomes.append("ok")
+        except ValueError:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    [t.start() for t in threads]; [t.join(10) for t in threads]
+    assert sorted(outcomes) == ["ok", "refused"] and len(rv.store.list_items()) == 1
