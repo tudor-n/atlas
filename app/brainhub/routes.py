@@ -403,7 +403,7 @@ async def ask_deeper(request: web.Request) -> web.StreamResponse:
 
 
 async def search(request: web.Request) -> web.Response:
-    """Instant local full-text hits. Never calls Claude."""
+    """Instant local full-text hits. Never calls Claude. A blank or missing q is a 400."""
     q = _question(request)
     settings = await t(load_settings, request.app["paths"])
     hits = await t(search_hits, request.app["store"], q, settings["recall_top_n"])
@@ -424,7 +424,7 @@ def _notes(brain: Path, prefix: str) -> list[dict] | None:
         parts = target.relative_to(root).parts
     except (ValueError, OSError):
         return None
-    if not parts or parts[0] in NOTES_HIDDEN or parts[0].startswith("."):
+    if not parts or parts[0].lower() in NOTES_HIDDEN or parts[0].startswith("."):
         return None
     files = [target] if target.is_file() else sorted(target.rglob("*.md")) if target.is_dir() else []
     out = []
@@ -434,7 +434,7 @@ def _notes(brain: Path, prefix: str) -> list[dict] | None:
         except (ValueError, OSError):
             continue
         if f.suffix != ".md" or not f.is_file() or any(
-                x in NOTES_HIDDEN or x.startswith(".") for x in rel.parts):
+                x.lower() in NOTES_HIDDEN or x.startswith(".") for x in rel.parts):
             continue
         out.append({"path": rel.as_posix(), "text": f.read_text(encoding="utf-8", errors="replace")})
         if len(out) >= NOTES_CAP:

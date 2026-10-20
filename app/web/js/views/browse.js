@@ -67,7 +67,8 @@ export function renderProject(container, params) {
       (f) => String(typeof f === 'string' ? f : (f && f.path) || '').startsWith(prefix));
     const mine = entries.filter(touches);
     body.appendChild(section('Journal entries', mine.length,
-      mine.length ? el('div', {}, mine.map((e) => entryCard(e))) : el('p', { class: 'empty' }, 'No journal entries filed here yet.')));
+      mine.length ? el('div', {}, mine.map((e) => entryCard(e))) : el('p', { class: 'empty' }, 'No journal entries filed here yet.'),
+      entries.length >= 500 ? el('p', { class: 'meta' }, 'Showing journal entries from the most recent 500; see Journal for older.') : null));
   });
 }
 

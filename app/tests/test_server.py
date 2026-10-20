@@ -225,9 +225,13 @@ def test_binds_localhost_only():
 
 
 async def test_search_endpoint_returns_hits_without_claude(ready_client, app):
-    await ready_client.post("/api/entries", json={"text": "wrist servo", "source": "pc"})
-    hits = await (await ready_client.get("/api/search", params={"q": "wrist"})).json()
-    assert hits and app["runner"].calls == []
+    eid = (await (await ready_client.post("/api/entries", json={"text": "wrist servo", "source": "pc"})).json())["entry_id"]
+    r = await ready_client.get("/api/search", params={"q": "wrist"})
+    assert r.status == 200
+    hits = await r.json()
+    assert hits[0]["ref"] == eid and app["runner"].calls == []
+    assert (await ready_client.get("/api/search", params={"q": "  "})).status == 400
+    assert (await ready_client.get("/api/search")).status == 400
 
 
 async def test_notes_rejects_path_escape(ready_client):
@@ -241,6 +245,7 @@ async def test_notes_lists_markdown_and_rejects_private_folders(ready_client, ap
     (folder / "skip.txt").write_text("no")
     got = await (await ready_client.get("/api/notes", params={"prefix": "projects/robotarm/"})).json()
     assert [n["path"] for n in got] == ["projects/robotarm/notes.md"] and "J5 servo" in got[0]["text"]
-    for bad in ("log/", "_items/x", ".git/", "projects/../log/", "", "../../etc"):
+    for bad in ("log/", "_items/x", ".git/", "projects/../log/", "", "../../etc",
+                "LOG/", "Log", "_Items/x"):
         assert (await ready_client.get("/api/notes", params={"prefix": bad})).status == 400, bad
     assert await (await ready_client.get("/api/notes", params={"prefix": "projects/none/"})).json() == []
