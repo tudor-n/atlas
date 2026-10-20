@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import date, datetime
@@ -35,6 +36,7 @@ FIX_IN_PLACE = "Fix the files in place; earlier text from this entry may already
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _DATETIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}")
+_ENTRY_ID = re.compile(r"e-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
 
 
 # -- prompt ------------------------------------------------------------------
@@ -129,6 +131,20 @@ def parse_filing_result(raw: dict, m: BrainMap, open_item_ids: set[str]
 
 
 # -- worker ------------------------------------------------------------------
+def _check_entry_id(entry_id: str) -> None:
+    """Entry ids name worktree folders: reject anything that isn't one before building a path."""
+    if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):
+        raise ValueError(f"invalid entry id: {entry_id!r}")
+
+
+def _warn(proposals: list[tuple[str, dict, list[str]]], warning: str) -> None:
+    """Attach a warning to the first proposal, or add a warning-only proposal so it is seen."""
+    if proposals:
+        proposals[0][2].append(warning)
+    else:
+        proposals.append(("update", {}, [warning]))
+
+
 def _prepare_worktree(root: Path, m: BrainMap) -> None:
     """Git carries no empty folders: recreate the full structure, custom areas included."""
     ensure_folders(root, m)
@@ -146,9 +162,13 @@ class FilingWorker:
         self.broadcast = broadcast
         self.on_commit = on_commit
         self.queue: asyncio.Queue = asyncio.Queue()
+        self._lock = asyncio.Lock()  # one filing or correction at a time
 
-    def _worktree_path(self, entry_id: str) -> Path:
-        return self.paths.data / "worktrees" / entry_id
+    def _remove_worktree(self, path: Path) -> None:
+        """Unregister and delete a worktree, including a plain leftover folder git doesn't know."""
+        self.repo.worktree_remove(path)
+        if path.exists() and path.resolve().parent == (self.paths.data / "worktrees").resolve():
+            shutil.rmtree(path)
 
     def enqueue(self, entry_id: str) -> None:
         f = self.store.get_filing(entry_id) or Filing(entry_id, "queued")
@@ -161,7 +181,10 @@ class FilingWorker:
         if leftovers.is_dir():
             for d in leftovers.iterdir():
                 if d.is_dir():
-                    self.repo.worktree_remove(d)
+                    try:
+                        self._remove_worktree(d)
+                    except Exception:  # never block startup; file_entry retries the removal
+                        log.exception("could not remove leftover worktree %s", d)
         for entry_id in self.store.unfinished_filings():
             self.enqueue(entry_id)
 
@@ -177,10 +200,18 @@ class FilingWorker:
 
     async def file_entry(self, entry_id: str, correction: str | None = None,
                          previous: dict | None = None) -> None:
+        _check_entry_id(entry_id)
+        async with self._lock:
+            await self._file_entry(entry_id, correction, previous)
+
+    async def _file_entry(self, entry_id: str, correction: str | None,
+                          previous: dict | None) -> None:
+        """The filing itself. The caller holds self._lock."""
         t = asyncio.to_thread
-        wt_path = self._worktree_path(entry_id)
+        wt_path = self.paths.data / "worktrees" / entry_id
         old = await t(self.store.get_filing, entry_id)
         filing = Filing(entry_id, "running", attempts=old.attempts if old else 0)
+        done = False
         try:
             entry = await t(self.store.get_entry, entry_id)
             if entry is None:
@@ -196,7 +227,7 @@ class FilingWorker:
             await self.broadcast("filing.started", {"entry_id": entry_id})
             # 4. isolated worktree at main HEAD
             if wt_path.exists():
-                await t(self.repo.worktree_remove, wt_path)
+                await t(self._remove_worktree, wt_path)
             wt = await t(self.repo.worktree_add, wt_path)
             m = await t(load_map, self.paths.brain) or default_map()
             await t(_prepare_worktree, wt_path, m)
@@ -215,26 +246,28 @@ class FilingWorker:
             protected = sorted(PROTECTED & {p.split("/")[0] for p in changed})
             if protected:
                 await t(wt.restore_paths, protected)
-                if proposals:
-                    proposals[0][2].append(PROTECTED_WARNING)
-                else:
-                    proposals.append(("update", {}, [PROTECTED_WARNING]))
+                _warn(proposals, PROTECTED_WARNING)
             # 7. commit in the worktree, cherry-pick onto main
-            new = None
             sha = await t(wt.commit_all, f"file {entry_id}: {synopsis[:60]}")
             if sha:
                 new = await t(self.repo.cherry_pick, sha)
                 if new is None:
                     raise RuntimeError("conflict with concurrent edits — retry")
+                filing.commit = new  # recorded at once: a later failure must not lose it
+                await t(self.store.upsert_filing, filing)
                 self.on_commit()
                 for rel in await t(self.repo.changed_files, new):
                     if rel.endswith(".md") and (self.paths.brain / rel).is_file():
-                        await t(self.store.index_note_file, self.paths.brain, rel)
+                        try:
+                            await t(self.store.index_note_file, self.paths.brain, rel)
+                        except Exception:
+                            log.exception("could not index %s", rel)
+                            _warn(proposals, f"could not index '{rel}' for search")
             # 8. proposals and outcome
             await t(self.store.add_proposals, entry_id, proposals)
-            filing.status, filing.synopsis, filing.files, filing.commit = "done", synopsis, files, new
+            filing.status, filing.synopsis, filing.files = "done", synopsis, files
             await t(self.store.upsert_filing, filing)
-            await self.broadcast("filing.done", {"entry_id": entry_id})
+            done = True
         except Exception as exc:
             # Never discard changes in the main checkout: the agent never touched it.
             log.exception("filing %s failed", entry_id)
@@ -244,23 +277,29 @@ class FilingWorker:
         finally:
             # 9. always clean up the worktree
             try:
-                await t(self.repo.worktree_remove, wt_path)
+                await t(self._remove_worktree, wt_path)
             except Exception:
                 log.exception("could not remove worktree %s", wt_path)
+        if done:  # outside the try: a broadcast error can't turn a done filing into failed
+            await self.broadcast("filing.done", {"entry_id": entry_id})
 
     async def correct(self, entry_id: str, text: str) -> None:
+        _check_entry_id(entry_id)
         t = asyncio.to_thread
-        f = await t(self.store.get_filing, entry_id)
-        proposals = await t(self.store.list_proposals, entry_id=entry_id)
-        previous = {
-            "synopsis": f.synopsis if f else "",
-            "proposals": [{"ptype": p.ptype, "payload": p.payload, "warnings": p.warnings}
-                          for p in proposals],
-        }
-        reverted = False
-        if f and f.commit and f.commit == await t(self.repo.head):
-            reverted = await t(self.repo.revert, f.commit)
-            if reverted:
-                self.on_commit()
-        correction = text if reverted else f"{text}\n\n{FIX_IN_PLACE}"
-        await self.file_entry(entry_id, correction=correction, previous=previous)
+        async with self._lock:
+            f = await t(self.store.get_filing, entry_id)
+            if f and f.status in ("queued", "running"):
+                raise ValueError("filing in progress")
+            proposals = await t(self.store.list_proposals, entry_id=entry_id)
+            previous = {
+                "synopsis": f.synopsis if f else "",
+                "proposals": [{"ptype": p.ptype, "payload": p.payload, "warnings": p.warnings}
+                              for p in proposals],
+            }
+            reverted = False
+            if f and f.commit and f.commit == await t(self.repo.head):
+                reverted = await t(self.repo.revert, f.commit)
+                if reverted:
+                    self.on_commit()
+            correction = text if reverted else f"{text}\n\n{FIX_IN_PLACE}"
+            await self._file_entry(entry_id, correction, previous)

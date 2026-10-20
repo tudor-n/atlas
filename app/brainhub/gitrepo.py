@@ -121,8 +121,9 @@ class BrainRepo:
         with self._lock:
             self._ensure_repo()
             if self._head() is not None:
-                ls = self._check(self._run("ls-tree", "-r", "--name-only", "HEAD", "--", *paths), "ls-tree")
-                if ls.stdout.split():
+                ls = self._check(
+                    self._run("ls-tree", "-r", "-z", "--name-only", "HEAD", "--", *paths), "ls-tree")
+                if ls.stdout.strip("\0"):
                     self._check(self._run("checkout", "HEAD", "--", *paths), "checkout")
             self._check(self._run("clean", "-fd", "--", *paths), "clean")
 
@@ -151,7 +152,7 @@ class BrainRepo:
             raise ValueError(f"refusing to remove {path}: it is, contains or is inside the repo {me}")
         with self._lock:
             self._ensure_repo()
-            listing = self._run("worktree", "list", "--porcelain").stdout.splitlines()
+            listing = self._run("worktree", "list", "--porcelain", "-z").stdout.split("\0")
             registered = any(
                 line.startswith("worktree ") and Path(line[9:]).resolve() == path for line in listing
             )
@@ -171,5 +172,7 @@ class BrainRepo:
             return self._head()
 
     def changed_files(self, sha: str) -> list[str]:
-        r = self._git("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
-        return [p.replace("\\", "/") for p in r.stdout.splitlines() if p]
+        # -z: names come back verbatim, not C-quoted (non-ASCII would be "re\310\233ete.md")
+        r = self._check(
+            self._git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha), "diff-tree")
+        return [p.replace("\\", "/") for p in r.stdout.split("\0") if p]

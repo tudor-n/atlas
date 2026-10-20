@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 from datetime import datetime
 from types import SimpleNamespace
@@ -146,3 +147,82 @@ async def test_cherry_pick_conflict_fails_cleanly(env):
     assert f.status == "failed" and "conflict" in f.error
     assert target.read_text(encoding="utf-8") == "owner" and not env.repo.is_dirty()
     assert not (env.paths.data/"worktrees"/env.entry.id).exists()
+
+
+class SlowRunner(FakeRunner):
+    async def run_json(self, prompt, **kwargs):
+        await asyncio.sleep(0.05)   # yield to the loop, so unserialized filings would overlap
+        return await super().run_json(prompt, **kwargs)
+
+
+async def test_concurrent_corrections_are_serialized(env):
+    def edit(cwd): (cwd/"personal"/"gift.md").write_text("present (from e-1)", encoding="utf-8")
+    w = env.worker(SlowRunner(json_result=GOOD_RESULT, on_run=edit))
+    await w.file_entry(env.entry.id)
+    results = await asyncio.gather(w.correct(env.entry.id, "it is for the 12th"),
+                                   w.correct(env.entry.id, "it is for the 13th"), return_exceptions=True)
+    assert all(r is None or (isinstance(r, ValueError) and "in progress" in str(r)) for r in results), results
+    assert env.store.get_filing(env.entry.id).status == "done"
+    assert len(env.store.list_proposals(entry_id=env.entry.id)) == 1
+    assert not env.repo.is_dirty() and not (env.paths.data/"worktrees"/env.entry.id).exists()
+
+
+async def test_correct_refuses_while_filing_queued(env):
+    env.store.upsert_filing(Filing(env.entry.id, "queued"))
+    with pytest.raises(ValueError, match="filing in progress"):
+        await env.worker(FakeRunner(json_result=GOOD_RESULT)).correct(env.entry.id, "the 12th")
+
+
+async def test_non_ascii_note_is_indexed(env):
+    def edit(cwd): (cwd/"personal"/"rețete.md").write_text("sarmale for sunday (from e-1)", encoding="utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    assert [h.ref for h in env.store.search('"sarmale"', 5)] == ["personal/rețete.md"]
+
+
+async def test_reindex_error_keeps_commit_and_proposals(env):
+    def edit(cwd): (cwd/"general"/"bad.md").write_bytes(b"\xff\xfe not utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "done" and f.commit == env.repo.head()
+    [p] = env.store.list_proposals(entry_id=env.entry.id)
+    assert any("general/bad.md" in w for w in p.warnings)
+
+
+async def test_done_broadcast_error_keeps_filing_done(env):
+    async def broadcast(type_, data):
+        if type_ == "filing.done":
+            raise RuntimeError("socket gone")
+    w = FilingWorker(env.paths, env.store, env.repo, FakeRunner(json_result=GOOD_RESULT), broadcast, lambda: None)
+    with pytest.raises(RuntimeError, match="socket gone"):
+        await w.file_entry(env.entry.id)
+    assert env.store.get_filing(env.entry.id).status == "done"
+
+
+async def test_plain_leftover_worktree_dir_does_not_block(env):
+    stale = env.paths.data/"worktrees"/env.entry.id; stale.mkdir(parents=True)
+    (stale/"junk.md").write_text("left behind by a crash", encoding="utf-8")
+    def edit(cwd): (cwd/"general"/"n.md").write_text("note (from e-1)", encoding="utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    assert env.store.get_filing(env.entry.id).status == "done"
+    assert (env.paths.brain/"general"/"n.md").exists() and not stale.exists()
+
+
+async def test_rejects_malformed_entry_id(env):
+    w = env.worker(FakeRunner(json_result=GOOD_RESULT))
+    for bad in ("../../brain", "e-1", env.entry.id + "\n"):
+        with pytest.raises(ValueError):
+            await w.file_entry(bad)
+        with pytest.raises(ValueError):
+            await w.correct(bad, "x")
+    assert not (env.paths.data/"worktrees").exists()
+
+
+async def test_failure_after_cherry_pick_keeps_commit(env):
+    def edit(cwd): (cwd/"general"/"n.md").write_text("note (from e-1)", encoding="utf-8")
+    def on_commit(): raise RuntimeError("hook down")    # first called right after the cherry-pick
+    async def broadcast(type_, data): pass
+    w = FilingWorker(env.paths, env.store, env.repo, FakeRunner(json_result=GOOD_RESULT, on_run=edit),
+                     broadcast, on_commit)
+    await w.file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "failed" and "hook down" in f.error and f.commit == env.repo.head()

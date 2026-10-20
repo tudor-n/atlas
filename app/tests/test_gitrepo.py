@@ -93,3 +93,10 @@ def test_restore_paths_rejects_bad_paths(tmp_path):
     for bad in ("", ".", "..", "a/../../b", ":(top)x", str(tmp_path), "/etc"):
         with pytest.raises(ValueError):
             r.restore_paths([bad])
+
+
+def test_changed_files_returns_non_ascii_names_unquoted(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    (tmp_path/"a.md").write_text("x", encoding="utf-8"); r.commit_all("base")
+    (tmp_path/"rețete.md").write_text("sarmale", encoding="utf-8"); sha = r.commit_all("recipes")
+    assert r.changed_files(sha) == ["rețete.md"]
