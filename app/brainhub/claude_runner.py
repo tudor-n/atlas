@@ -47,11 +47,21 @@ def child_env() -> dict:
     return env
 
 
+# Isolation from the owner's own Claude Code setup (flags checked against `claude --help`,
+# 2.1.305): only the built-in tools a run needs exist at all (--tools; "" = none), no MCP
+# servers from any config (--strict-mcp-config, and no --mcp-config is given), no skills or
+# slash commands, no session files, and no user/project/local settings files, so the owner's
+# plugins, hooks and permission allow-rules never reach these agents. Login still works:
+# auth is not a setting (smoke-checked with haiku through run_json and stream_text).
+ISOLATION_ARGS = ["--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
+                  "--setting-sources", ""]
+
+
 def build_args(*, model: str, system_prompt_file: Path, allowed_tools: list[str], max_turns: int,
                json_schema: dict | None, stream: bool) -> list[str]:
     args = ["-p", "--model", model, "--append-system-prompt-file", str(system_prompt_file),
-            "--max-turns", str(max_turns)]
-    if allowed_tools:
+            "--max-turns", str(max_turns), "--tools", ",".join(allowed_tools), *ISOLATION_ARGS]
+    if allowed_tools:  # --tools says what exists; --allowedTools lets them run unprompted
         args += ["--allowedTools", *allowed_tools]
         if _WRITE_TOOLS & set(allowed_tools):
             args += ["--permission-mode", "acceptEdits"]

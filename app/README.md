@@ -41,6 +41,8 @@ Create an **empty, private** GitHub repository, then paste its URL in Settings (
 ## Claude and `ANTHROPIC_API_KEY`
 All Claude calls run `claude -p` on your subscription. `ANTHROPIC_API_KEY` is removed from the environment of every child process **on purpose**, and `--bare` is never used, so you are never billed per token by accident. Models are settings: filing `sonnet`, quick recall `haiku`, deeper recall `sonnet`.
 
+The hub's agents run isolated from your own Claude Code setup: they load no settings files (`--setting-sources ""`), so none of your plugins, hooks or permission rules apply; no MCP servers (`--strict-mcp-config`); no skills or slash commands; no saved sessions; and only the built-in tools each job needs (`--tools`: none for quick recall, `Read Glob Grep` for dig deeper, `Read Write Edit Glob Grep` for filing). Your login still works, since it is not a setting.
+
 ## Security
 The server binds `127.0.0.1` only. Writes require `Content-Type: application/json` and a same-origin `Origin`/`Host`, so cross-site requests from other web pages are blocked. The UI renders text with `textContent` only.
 

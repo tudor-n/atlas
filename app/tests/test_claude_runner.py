@@ -140,3 +140,26 @@ async def test_run_json_error_subtype_in_message(tmp_path):
     with pytest.raises(ClaudeError, match="error_max_turns"):
         await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
                          json_schema={}, timeout_s=20, **_KW)
+
+
+ISOLATION = ["--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence"]
+
+
+@pytest.mark.parametrize("mode,tools,expected", [
+    ("quick recall", [], ""),
+    ("dig deeper", ["Read", "Glob", "Grep"], "Read,Glob,Grep"),
+    ("filing", ["Read", "Write", "Edit", "Glob", "Grep"], "Read,Write,Edit,Glob,Grep"),
+])
+def test_build_args_isolates_each_mode(mode, tools, expected):
+    a = build_args(model="haiku", system_prompt_file=Path("p.md"), allowed_tools=tools, max_turns=3,
+                   json_schema={"type": "object"} if mode == "filing" else None, stream=mode != "filing")
+    assert a[a.index("--tools") + 1] == expected
+    assert all(flag in a for flag in ISOLATION)
+    assert a[a.index("--setting-sources") + 1] == ""
+    assert "--bare" not in a and "--mcp-config" not in a
+    if tools:
+        i = a.index("--allowedTools")
+        assert a[i + 1:i + 1 + len(tools)] == tools
+    else:
+        assert "--allowedTools" not in a
+
