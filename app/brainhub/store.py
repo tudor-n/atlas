@@ -64,12 +64,20 @@ class Store:
         self._lock = threading.RLock()
         self._db = sqlite3.connect(str(db_path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA journal_mode=WAL")
+        try:
+            self._db.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            self._db.close()  # release the file so a damaged one can be moved aside
+            raise
 
     def init_schema(self) -> None:
         with self._lock:
             self._db.executescript(_SCHEMA)
             self._db.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
 
     # entries
     def add_entry(self, e: Entry) -> None:
@@ -284,6 +292,10 @@ class Store:
                     continue
                 self.index_note_file(brain, rel)
 
+    def indexed_entry_ids(self) -> set[str]:
+        with self._lock:
+            return {r[0] for r in self._db.execute("SELECT ref FROM fts WHERE kind='entry'")}
+
     def fts_count(self) -> int:
         with self._lock:
             return self._db.execute("SELECT COUNT(*) FROM fts").fetchone()[0]
@@ -317,15 +329,30 @@ class Store:
                 f.write("\n".join(lines) + "\n")
 
     def restore_items_if_empty(self, brain: Path) -> int:
+        """Rebuild the items table from brain/_items/items.json when it is empty. A corrupt
+        file raises ValueError naming it, and nothing is restored."""
         path = Path(brain) / "_items" / "items.json"
         with self._lock:
             if self._db.execute("SELECT COUNT(*) FROM items").fetchone()[0] or not path.exists():
                 return 0
-            rows = json.loads(path.read_text(encoding="utf-8"))
-            with self._db:
-                for d in rows:
-                    self._db.execute(
-                        f"INSERT OR REPLACE INTO items({','.join(_ITEM_FIELDS)})"
-                        f" VALUES({','.join('?' * len(_ITEM_FIELDS))})",
-                        [d.get(k) for k in _ITEM_FIELDS])
+            rows = _load_json_list(path)
+            try:
+                values = [[d.get(k) for k in _ITEM_FIELDS] for d in rows]
+                with self._db:
+                    for v in values:
+                        self._db.execute(
+                            f"INSERT OR REPLACE INTO items({','.join(_ITEM_FIELDS)})"
+                            f" VALUES({','.join('?' * len(_ITEM_FIELDS))})", v)
+            except (AttributeError, sqlite3.Error) as e:
+                raise ValueError(f"{path} is damaged ({e}); items were not restored") from None
         return len(rows)
+
+
+def _load_json_list(path: Path) -> list:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{path} is damaged ({e}); nothing was restored from it") from None
+    if not isinstance(data, list):
+        raise ValueError(f"{path} is damaged (not a JSON list); nothing was restored from it")
+    return data

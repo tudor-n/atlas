@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
+from datetime import datetime
 
 from aiohttp import web
 
@@ -23,28 +25,63 @@ t = asyncio.to_thread
 
 
 # -- startup -----------------------------------------------------------------
-def _startup_sync(app: web.Application) -> list[str]:
-    paths, store, repo = app["paths"], app["store"], app["repo"]
-    store.init_schema()
-    if not setup_done(app):
-        return []
-    repo.init()
+# Every step is wrapped: a failure is logged and listed in /api/state as `startup_error`, and
+# the hub keeps serving. Capture only needs the raw log to be writable.
+def _clear_stale_git_lock(app: web.Application) -> None:
+    """No hub git process runs before startup finishes, so an index.lock is a crash leftover."""
+    lock = app["paths"].brain / ".git" / "index.lock"
+    if lock.is_file():
+        lock.unlink()
+        log.warning("removed a stale %s left by a crash", lock)
+        app["startup_errors"].append(
+            "removed a stale brain/.git/index.lock left by a crash (nothing else was changed)")
+
+
+def _commit_owner_edits(app: web.Application) -> None:
+    repo = app["repo"]
     if repo.is_dirty():
         repo.commit_all("owner edits")
         app["backup"].notify_commit()
-    store.restore_items_if_empty(paths.brain)
-    try:
-        if store.fts_count() == 0:
-            store.reindex_all(paths.brain)
-        else:
-            for e in read_log(paths.brain):
-                if store.get_entry(e.id) is None:
-                    store.add_entry(e)
-                    store.index_entry(e)
-    except (ValueError, OSError) as e:  # damaged log: keep serving, never touch the file
-        log.error("raw log problem at startup: %s", e)
-        app["log_error"] = str(e)
-    return app["worker"].requeue_unfinished()
+
+
+def _backfill_log(app: web.Application) -> None:
+    """Index every intact raw-log entry the store is missing. Damage is reported, never fixed."""
+    store, problems = app["store"], []
+    entries = read_log(app["paths"].brain, problems)
+    indexed = store.indexed_entry_ids()
+    for e in entries:
+        try:
+            store.add_entry(e)  # idempotent; raises on an id holding a different entry
+            if e.id not in indexed:
+                store.index_entry(e)
+        except Exception as exc:
+            problems.append(f"{e.id}: {exc}")
+    if problems:
+        log.error("raw log problems at startup: %s", problems)
+        app["log_error"] = "; ".join(problems)
+
+
+def _startup_sync(app: web.Application) -> list[str]:
+    paths, store, repo = app["paths"], app["store"], app["repo"]
+    errors_: list[str] = app["startup_errors"]
+
+    def step(label: str, fn, *args, default=None):
+        try:
+            return fn(*args)
+        except Exception as e:
+            log.exception("startup step %r failed", label)
+            errors_.append(f"{label}: {e}")
+            return default
+
+    step("database", store.init_schema)
+    if not setup_done(app):
+        return []
+    step("git lock", _clear_stale_git_lock, app)
+    step("git setup", repo.init)
+    step("owner edits", _commit_owner_edits, app)
+    step("restoring items", store.restore_items_if_empty, paths.brain)
+    step("raw log", _backfill_log, app)
+    return step("filing queue", app["worker"].requeue_unfinished, default=[])
 
 
 async def on_startup(app: web.Application) -> None:
@@ -65,16 +102,40 @@ async def on_cleanup(app: web.Application) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    app["store"].close()
+
+
+def _open_store(paths: Paths, problems: list[str]) -> Store:
+    """hub.db is a rebuildable index: a damaged one is moved aside and rebuilt from brain/."""
+    store = None
+    try:
+        store = Store(paths.db)
+        store.init_schema()
+        return store
+    except sqlite3.DatabaseError as e:
+        if store is not None:
+            store.close()
+        aside = paths.db.with_name(f"hub.db.damaged-{datetime.now():%Y%m%d-%H%M%S}")
+        for suffix in ("", "-wal", "-shm"):
+            src = paths.db.with_name(paths.db.name + suffix)
+            if src.exists():
+                src.replace(aside.with_name(aside.name + suffix))
+        log.error("damaged %s moved to %s: %s", paths.db, aside, e)
+        problems.append(f"the index {paths.db.name} was damaged ({e}); moved it to {aside.name} "
+                        "and rebuilt it from brain/")
+        return Store(paths.db)
 
 
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.Application:
     app = web.Application(middlewares=[local_only, errors])
     paths.data.mkdir(parents=True, exist_ok=True)
-    settings = load_settings(paths)
-    store = Store(paths.db)
+    startup_errors: list[str] = []
+    settings = load_settings(paths, startup_errors)
+    store = _open_store(paths, startup_errors)
     repo = BrainRepo(paths.brain)
     app["sockets"], app["tasks"], app["background"] = set(), [], set()
     app["log_error"], app["start_workers"] = None, start_workers
+    app["startup_errors"] = startup_errors
 
     async def broadcast(type_: str, data: dict) -> None:
         extra = [("items.changed", {})] if type_ in ("filing.done", "filing.failed") else []

@@ -119,6 +119,7 @@ async def state(request: web.Request) -> web.Response:
     return web.json_response({
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
         "backup": app["backup"].status(), "log_error": app["log_error"],
+        "startup_error": list(app["startup_errors"]) or None,
         "brain_path": str(app["paths"].brain)})
 
 

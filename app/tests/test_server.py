@@ -269,3 +269,82 @@ async def test_code_paths_come_from_the_package_not_the_data_root(aiohttp_client
     assert app_paths.prompts == pkg / "prompts" and (app_paths.prompts / "filing.md").is_file()
     assert (app_paths.schemas / "filing.schema.json").is_file()
     assert not (app_paths.root / "app").exists()  # nothing created under the data root
+
+
+async def _started(aiohttp_client, app_paths):
+    app = create_app(app_paths, runner=make_runner(), start_workers=False)
+    c = await aiohttp_client(app)
+    return app, c, await (await c.get("/api/state")).json()
+
+
+def _setup_brain(app_paths):
+    from brainhub.gitrepo import BrainRepo
+    save_map(app_paths.brain, default_map())
+    repo = BrainRepo(app_paths.brain)
+    repo.init()
+    repo.commit_all("setup")
+    return repo
+
+
+async def test_stale_index_lock_is_removed_at_startup(aiohttp_client, app_paths):
+    repo = _setup_brain(app_paths)
+    lock = app_paths.brain / ".git" / "index.lock"
+    lock.write_text("", encoding="utf-8")
+    (app_paths.brain / "general" / "mine.md").parent.mkdir(parents=True, exist_ok=True)
+    (app_paths.brain / "general" / "mine.md").write_text("owner note", encoding="utf-8")
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert not lock.exists()
+    assert any("index.lock" in e for e in state["startup_error"])
+    assert not repo.is_dirty()  # the owner-edits commit after it worked
+
+
+async def test_corrupt_settings_uses_defaults_keeps_file_and_capture_works(aiohttp_client, app_paths):
+    _setup_brain(app_paths)
+    app_paths.settings_file.write_text("{not json", encoding="utf-8")
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert state["settings"]["port"] == 8090
+    assert any("settings.json" in e for e in state["startup_error"])
+    assert app_paths.settings_file.read_text(encoding="utf-8") == "{not json"  # not overwritten
+    r = await c.post("/api/entries", json={"text": "still captured", "source": "pc"})
+    assert r.status == 201
+    assert (await c.put("/api/settings", json={"nudge_days": 4})).status == 200
+    assert json.loads(app_paths.settings_file.read_text(encoding="utf-8"))["nudge_days"] == 4
+
+
+async def test_corrupt_items_json_reports_and_keeps_serving(aiohttp_client, app_paths):
+    _setup_brain(app_paths)
+    (app_paths.brain / "_items").mkdir(exist_ok=True)
+    (app_paths.brain / "_items" / "items.json").write_text("[{broken", encoding="utf-8")
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert any("items.json" in e for e in state["startup_error"])
+    assert (await c.get("/api/today")).status == 200
+    assert (await c.post("/api/entries", json={"text": "x", "source": "pc"})).status == 201
+
+
+async def test_damaged_index_db_is_moved_aside_and_rebuilt(aiohttp_client, app_paths):
+    from brainhub.rawlog import append_entry
+    _setup_brain(app_paths)
+    e = append_entry(app_paths.brain, "the gearbox whines", "pc")
+    app_paths.db.write_bytes(b"this is not a sqlite database" * 100)
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert any("damaged" in x for x in state["startup_error"])
+    assert list(app_paths.data.glob("hub.db.damaged-*"))
+    hits = await (await c.get("/api/search", params={"q": "gearbox"})).json()
+    assert [h["ref"] for h in hits] == [e.id]
+    assert (await c.post("/api/entries", json={"text": "y", "source": "pc"})).status == 201
+
+
+async def test_truncated_log_file_keeps_the_good_entries(aiohttp_client, app_paths):
+    from brainhub.rawlog import append_entry, log_path
+    _setup_brain(app_paths)
+    good = append_entry(app_paths.brain, "the good file mentions sprockets", "pc", datetime(2026, 10, 19, 9, 0, 0))
+    bad = append_entry(app_paths.brain, "this one gets cut short", "pc", datetime(2026, 10, 20, 9, 0, 0))
+    p = log_path(app_paths.brain, bad.ts)
+    p.write_bytes(p.read_bytes()[:-20])
+    before = p.read_bytes()
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert "2026-10-20.md" in state["log_error"] and "2026-10-19.md" not in state["log_error"]
+    hits = await (await c.get("/api/search", params={"q": "sprockets"})).json()
+    assert [h["ref"] for h in hits] == [good.id]
+    assert p.read_bytes() == before
+    assert state["startup_error"] is None

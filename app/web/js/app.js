@@ -8,7 +8,7 @@ import { confirmCard } from './components/confirm-card.js';
 export { el, clear, fmtWhen } from './dom.js';
 
 // -- Shared state ---------------------------------------------------------------------------
-export const state = { setup_done: true, settings: {}, backup: null, log_error: null };
+export const state = { setup_done: true, settings: {}, backup: null, log_error: null, startup_error: null };
 
 export async function refreshState() {
   try {
@@ -28,6 +28,11 @@ function renderBanner(connectionError) {
   if (state.log_error) {
     box.appendChild(el('div', { class: 'banner', role: 'alert' },
       `Your raw log file has a problem: ${state.log_error}. Nothing was changed; fix or ask for help.`));
+  }
+  if (Array.isArray(state.startup_error) && state.startup_error.length) {
+    box.appendChild(el('div', { class: 'banner', role: 'alert' },
+      'BrainHub started, but noticed problems. Capture still works.',
+      el('ul', {}, state.startup_error.map((m) => el('li', {}, m)))));
   }
 }
 

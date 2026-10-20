@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict = {
     "port": 8090, "claude_path": "claude", "filing_model": "sonnet", "recall_model": "haiku",
@@ -60,7 +64,8 @@ class Paths:
         return _PKG / "schemas"
 
 
-def _check(key: str, value) -> None:
+def validate_setting(key: str, value) -> None:
+    """Raise ValueError unless `value` is acceptable for setting `key`."""
     default = DEFAULT_SETTINGS[key]
     if key == "quiet_hours":
         ok = (isinstance(value, list) and len(value) == 2
@@ -82,11 +87,36 @@ def _check(key: str, value) -> None:
         raise ValueError(f"{key} must not be empty")
 
 
-def load_settings(paths: Paths) -> dict:
+def load_settings(paths: Paths, problems: list | None = None) -> dict:
+    """Defaults overlaid with the stored file. A missing, unreadable or corrupt file, or a bad
+    value in it, falls back to the defaults (described in `problems` when given). The file is
+    never rewritten here: the next save from Settings writes a fresh valid one."""
     settings = json.loads(json.dumps(DEFAULT_SETTINGS))
-    if paths.settings_file.exists():
-        stored = json.loads(paths.settings_file.read_text(encoding="utf-8"))
-        settings.update({k: v for k, v in stored.items() if k in DEFAULT_SETTINGS})
+    f = paths.settings_file
+    if not f.exists():
+        return settings
+    try:
+        stored = json.loads(f.read_text(encoding="utf-8"))
+        if not isinstance(stored, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as e:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+        msg = f"{f} is unreadable ({e}); using the default settings until you save them again"
+        log.warning(msg)
+        if problems is not None:
+            problems.append(msg)
+        return settings
+    for key, value in stored.items():
+        if key not in DEFAULT_SETTINGS:
+            continue
+        try:
+            validate_setting(key, value)
+        except ValueError as e:
+            msg = f"{f}: ignoring {key} ({e}); using the default"
+            log.warning(msg)
+            if problems is not None:
+                problems.append(msg)
+            continue
+        settings[key] = value
     return settings
 
 
@@ -94,9 +124,15 @@ def save_settings(paths: Paths, patch: dict) -> dict:
     for key, value in patch.items():
         if key not in DEFAULT_SETTINGS:
             raise ValueError(f"unknown setting: {key}")
-        _check(key, value)
+        validate_setting(key, value)
     settings = load_settings(paths)
     settings.update(patch)
-    paths.settings_file.parent.mkdir(parents=True, exist_ok=True)
-    paths.settings_file.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    target = paths.settings_file
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(settings, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, target)  # atomic: a crash leaves the old file or the new one, never half
     return settings
