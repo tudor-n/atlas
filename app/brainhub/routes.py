@@ -11,9 +11,9 @@ from pathlib import Path
 
 from aiohttp import web
 
-from .brainmap import BrainMap, hierarchy, load_map, save_map
+from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from .claude_runner import ClaudeError
-from .config import load_settings, save_settings
+from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
 from .rawlog import append_entry
 from .recall import deeper_answer, quick_answer, search_hits
@@ -130,8 +130,13 @@ async def setup(request: web.Request) -> web.Response:
     body = await body_dict(request)
     m = _map_from(body.get("map"))
     remote = body.get("backup_remote")
-    if remote is not None and not isinstance(remote, str):
-        raise ValueError("backup_remote must be a string or null")
+    if isinstance(remote, str):
+        remote = remote.strip() or None
+    # Validate everything before writing anything: a half-done setup can't be retried (409).
+    validate_setting("backup_remote", remote)
+    errors_ = validate_map(m)
+    if errors_:
+        raise ValueError(errors_)
     await t(save_map, paths.brain, m)
     await t(_folders, paths.brain, m)
     await t(app["repo"].init)

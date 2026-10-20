@@ -502,3 +502,19 @@ async def test_hierarchy_counts_items_filed_under_a_course(ready_client, app):
     h = await (await ready_client.get("/api/hierarchy")).json()
     uni = next(c for c in h["children"] if c["slug"] == "uni")
     assert next(c for c in uni["children"] if c["slug"] == "fizica")["items"] == 1
+
+
+async def test_setup_with_a_bad_remote_writes_nothing_then_a_good_one_works(client, app_paths):
+    r = await client.post("/api/setup", json={"map": MAP, "backup_remote": "htps://typo"})
+    assert r.status == 400 and "backup_remote" in (await r.json())["error"]
+    assert not (app_paths.brain / "map.json").exists() and not (app_paths.brain / ".git").exists()
+    assert not app_paths.settings_file.exists()
+    r = await client.post("/api/setup", json={"map": MAP, "backup_remote": "https://github.com/me/brain.git"})
+    assert r.status == 200
+    assert (await (await client.get("/api/settings")).json())["backup_remote"] == "https://github.com/me/brain.git"
+
+
+async def test_setup_with_a_bad_map_writes_nothing(client, app_paths):
+    bad = _map_with(projects=[{"slug": "log", "name": "Log", "is_company": False, "folders": []}])
+    assert (await client.post("/api/setup", json={"map": bad})).status == 400
+    assert not (app_paths.brain / "map.json").exists() and not (app_paths.brain / ".git").exists()

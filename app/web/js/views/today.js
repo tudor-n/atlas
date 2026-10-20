@@ -18,7 +18,11 @@ export function snoozeUntil(days) {
 
 const SNOOZES = [['1', '1 day', 1], ['3', '3 days', 3], ['7', '1 week', 7]];
 
-export async function render(container) {
+const NOTICES = {
+  'setup-done': 'Setup was already completed; set the backup URL in Settings.',
+};
+
+export async function render(container, _params, query) {
   const destroyers = [];   // confirm cards on screen
   const subs = [];         // event subscriptions
   let dead = false;
@@ -26,6 +30,8 @@ export async function render(container) {
   let again = false;
   let dirty = false;
 
+  const notice = query && NOTICES[query.get('notice')];
+  if (notice) container.appendChild(el('p', { class: 'banner', role: 'status' }, notice));
   const root = el('div', {});
   container.appendChild(root);
 

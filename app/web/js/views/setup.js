@@ -151,6 +151,11 @@ export async function render(container) {
     try {
       await api.post('/api/setup', { map: st.map, backup_remote: remoteUrl || null });
     } catch (e) {
+      if (e.status === 409) {  // already set up (another tab, or an earlier try that got through)
+        forget();
+        location.hash = '#/today?notice=setup-done';
+        return;
+      }
       finishing = false;
       serverErrors = String(e.message).split('; ').filter(Boolean);
       draw();
