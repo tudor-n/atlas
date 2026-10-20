@@ -16,7 +16,7 @@ from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
 from .routes import add_routes, errors, local_only, setup_done
-from .store import Store
+from .store import Store, commit_hook
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +69,13 @@ def _backfill_log(app: web.Application) -> None:
         app["log_error"] = "; ".join(problems)
 
 
+def _rebuild_notes(app: web.Application) -> None:
+    """Notes are tens of MB at most: re-index all of them on every start, so edits made while
+    the hub was off (or a deleted note) can never leave recall quoting stale text."""
+    for failure in app["store"].reindex_notes(app["paths"].brain):
+        app["startup_errors"].append(f"notes index: could not index {failure}")
+
+
 def _startup_sync(app: web.Application) -> list[str]:
     paths, store, repo = app["paths"], app["store"], app["repo"]
     errors_: list[str] = app["startup_errors"]
@@ -90,6 +97,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("raw log", _backfill_log, app)
+    step("notes index", _rebuild_notes, app)
     return step("filing queue", app["worker"].requeue_unfinished, default=[])
 
 
@@ -158,8 +166,11 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     backup = BackupPusher(repo, lambda: load_settings(paths), broadcast)
     app.update(paths=paths, store=store, repo=repo, broadcast=broadcast, backup=backup,
                runner=runner or ClaudeRunner(settings["claude_path"]))
-    app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, backup.notify_commit)
-    app["reviewer"] = Reviewer(paths, store, repo, backup.notify_commit)
+    # Every hub commit (owner edits, filing, revert, confirm, edit, setup, map edit) reports
+    # here: the notes it touched are re-indexed, then a backup is scheduled.
+    app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
+    app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
+    app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
 
     add_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root

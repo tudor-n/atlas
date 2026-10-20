@@ -109,14 +109,15 @@ class BrainRepo:
             self._ensure_repo()
             return self._head()
 
-    def revert(self, sha: str) -> bool:
+    def revert(self, sha: str) -> str | None:
+        """Revert `sha`; the new commit's sha, or None (aborted) on a conflict."""
         with self._lock:
             self._ensure_repo()
             r = self._run("revert", "--no-edit", sha)
             if r.returncode != 0:
                 self._run("revert", "--abort")
-                return False
-            return True
+                return None
+            return self._head()
 
     @staticmethod
     def _validate_rel(p: str) -> None:
@@ -188,5 +189,6 @@ class BrainRepo:
     def changed_files(self, sha: str) -> list[str]:
         # -z: names come back verbatim, not C-quoted (non-ASCII would be "re\310\233ete.md")
         r = self._check(
-            self._git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha), "diff-tree")
+            self._git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha),
+            "diff-tree")  # --root: the first commit (setup) lists its files too
         return [p.replace("\\", "/") for p in r.stdout.split("\0") if p]

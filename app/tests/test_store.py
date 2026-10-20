@@ -138,3 +138,38 @@ def test_add_entry_is_idempotent_but_never_replaces_a_different_entry(store):
     with pytest.raises(ValueError, match="collision"):
         store.add_entry(Entry(e.id, e.ts, "pc", "a different text"))
     assert store.get_entry(e.id).text == "hello" and len(store.list_entries()) == 1
+
+
+def test_reindex_notes_skips_dot_folders_and_survives_bad_files(store, tmp_path, monkeypatch):
+    (tmp_path/".obsidian").mkdir(); (tmp_path/".obsidian"/"x.md").write_text("ibis", encoding="utf-8")
+    (tmp_path/"general").mkdir(); (tmp_path/"general"/".trash").mkdir()
+    (tmp_path/"general"/".trash"/"old.md").write_text("ibis", encoding="utf-8")
+    (tmp_path/"general"/"bad.md").write_bytes(b"ibis \xff\xfe broken bytes")
+    (tmp_path/"general"/"boom.md").write_text("ibis", encoding="utf-8")
+    (tmp_path/"general"/"good.md").write_text("ibis", encoding="utf-8")
+    real = store.index_note_file
+
+    def flaky(brain, rel):
+        if rel.endswith("boom.md"):
+            raise OSError("locked by another program")
+        return real(brain, rel)
+
+    monkeypatch.setattr(store, "index_note_file", flaky)
+    failed = store.reindex_notes(tmp_path)
+    assert sorted(h.ref for h in store.search('"ibis"', 10)) == ["general/bad.md", "general/good.md"]
+    assert len(failed) == 1 and "boom.md" in failed[0]
+
+
+def test_reindex_changed_follows_a_commit(store, tmp_path):
+    from brainhub.gitrepo import BrainRepo
+    from brainhub.store import reindex_changed
+    repo = BrainRepo(tmp_path); repo.init()
+    (tmp_path/"a.md").write_text("first heron", encoding="utf-8")
+    (tmp_path/".obsidian").mkdir(); (tmp_path/".obsidian"/"w.md").write_text("heron", encoding="utf-8")
+    reindex_changed(store, tmp_path, repo, repo.commit_all("root commit"))  # --root lists files
+    assert [h.ref for h in store.search('"heron"', 5)] == ["a.md"]
+    (tmp_path/"a.md").unlink(); (tmp_path/"b.md").write_text("second heron", encoding="utf-8")
+    reindex_changed(store, tmp_path, repo, repo.commit_all("move"))
+    assert [h.ref for h in store.search('"heron"', 5)] == ["b.md"]
+    store.drop_note_file("b.md")
+    assert store.search('"heron"', 5) == []

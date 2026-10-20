@@ -14,7 +14,7 @@ def rv(paths, store):
     repo = BrainRepo(paths.brain)
     repo.init()
     repo.commit_all("setup")
-    r = Reviewer(paths, store, repo, on_commit=lambda: r.commits.append(1))
+    r = Reviewer(paths, store, repo, on_commit=lambda sha: r.commits.append(1))
     r.commits = []
     return r
 

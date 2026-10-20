@@ -373,3 +373,47 @@ async def test_startup_adds_missing_gitattributes_in_its_own_commit(aiohttp_clie
     assert (app_paths.brain / ".gitattributes").read_text(encoding="utf-8") == "* -text\n"
     assert repo._run("log", "-1", "--format=%s").stdout.strip() == "add .gitattributes"
     assert not repo.is_dirty()
+
+
+async def _refs(c, q):
+    return [h["ref"] for h in await (await c.get("/api/search", params={"q": q})).json()]
+
+
+async def test_owner_hand_edit_is_searchable_at_once_and_old_text_gone(ready_client, app, app_paths):
+    note = app_paths.brain / "personal" / "mine.md"
+    note.write_text("my quokka plans", encoding="utf-8")
+    eid = (await (await ready_client.post("/api/entries", json={"text": "x", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid)  # commits "owner edits" first
+    assert "personal/mine.md" in await _refs(ready_client, "quokka")
+    note.write_text("now about wombats", encoding="utf-8")
+    eid2 = (await (await ready_client.post("/api/entries", json={"text": "y", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid2)
+    assert "personal/mine.md" in await _refs(ready_client, "wombats")
+    assert "personal/mine.md" not in await _refs(ready_client, "quokka")
+    note.unlink()
+    eid3 = (await (await ready_client.post("/api/entries", json={"text": "z", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid3)
+    assert "personal/mine.md" not in await _refs(ready_client, "wombats")  # deleted: rows dropped
+
+
+async def test_confirm_commit_reindexes_swept_owner_edits(ready_client, app, app_paths):
+    [p] = app["store"].add_proposals("e-1", [("item", {"kind": "task", "text": "t", "area": "general"}, [])])
+    (app_paths.brain / "general" / "idea.md").write_text("a zeppelin idea", encoding="utf-8")
+    assert (await ready_client.post("/api/proposals/confirm", json={"ids": [p.id]})).status == 200
+    assert "general/idea.md" in await _refs(ready_client, "zeppelin")
+
+
+async def test_startup_rebuilds_notes_and_skips_dot_folders(aiohttp_client, app_paths):
+    _setup_brain(app_paths)
+    (app_paths.brain / "general").mkdir(exist_ok=True)
+    (app_paths.brain / "general" / "n.md").write_text("old aardvark text", encoding="utf-8")
+    app1, c1, _ = await _started(aiohttp_client, app_paths)
+    assert "general/n.md" in await _refs(c1, "aardvark")
+    await c1.close()
+    (app_paths.brain / "general" / "n.md").write_text("fresh narwhal text", encoding="utf-8")
+    (app_paths.brain / ".obsidian").mkdir()
+    (app_paths.brain / ".obsidian" / "x.md").write_text("narwhal workspace", encoding="utf-8")
+    app2, c2, state = await _started(aiohttp_client, app_paths)
+    assert await _refs(c2, "narwhal") == ["general/n.md"]
+    assert await _refs(c2, "aardvark") == []
+    assert state["log_error"] is None

@@ -11,6 +11,7 @@ from brainhub.filing import FilingWorker, build_filing_prompt, parse_filing_resu
 from brainhub.gitrepo import BrainRepo
 from brainhub.models import Entry, Filing
 from brainhub.rawlog import append_entry, read_log
+from brainhub.store import commit_hook
 from tests.fakes import FakeRunner
 
 GOOD_RESULT = {
@@ -43,7 +44,8 @@ def env(paths, store, m):
         pass
 
     def worker(runner):
-        return FilingWorker(paths, store, repo, runner, broadcast, on_commit=lambda: None)
+        return FilingWorker(paths, store, repo, runner, broadcast,
+                            on_commit=commit_hook(store, paths.brain, repo))
 
     return SimpleNamespace(paths=paths, store=store, repo=repo, entry=entry, worker=worker)
 
@@ -180,20 +182,21 @@ async def test_non_ascii_note_is_indexed(env):
     assert [h.ref for h in env.store.search('"sarmale"', 5)] == ["personal/rețete.md"]
 
 
-async def test_reindex_error_keeps_commit_and_proposals(env):
-    def edit(cwd): (cwd/"general"/"bad.md").write_bytes(b"\xff\xfe not utf-8")
+async def test_non_utf8_note_is_indexed_with_replacement_and_filing_done(env):
+    def edit(cwd): (cwd/"general"/"bad.md").write_bytes(b"\xff\xfe not utf-8 but has gizmos")
     await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
     f = env.store.get_filing(env.entry.id)
     assert f.status == "done" and f.commit == env.repo.head()
-    [p] = env.store.list_proposals(entry_id=env.entry.id)
-    assert any("general/bad.md" in w for w in p.warnings)
+    assert [h.ref for h in env.store.search('"gizmos"', 5)] == ["general/bad.md"]
+    assert len(env.store.list_proposals(entry_id=env.entry.id)) == 1
 
 
 async def test_done_broadcast_error_keeps_filing_done(env):
     async def broadcast(type_, data):
         if type_ == "filing.done":
             raise RuntimeError("socket gone")
-    w = FilingWorker(env.paths, env.store, env.repo, FakeRunner(json_result=GOOD_RESULT), broadcast, lambda: None)
+    w = FilingWorker(env.paths, env.store, env.repo, FakeRunner(json_result=GOOD_RESULT), broadcast,
+                     lambda sha: None)
     with pytest.raises(RuntimeError, match="socket gone"):
         await w.file_entry(env.entry.id)
     assert env.store.get_filing(env.entry.id).status == "done"
@@ -220,7 +223,7 @@ async def test_rejects_malformed_entry_id(env):
 
 async def test_failure_after_cherry_pick_keeps_commit(env):
     def edit(cwd): (cwd/"general"/"n.md").write_text("note (from e-1)", encoding="utf-8")
-    def on_commit(): raise RuntimeError("hook down")    # first called right after the cherry-pick
+    def on_commit(sha): raise RuntimeError("hook down")    # first called right after the cherry-pick
     async def broadcast(type_, data): pass
     w = FilingWorker(env.paths, env.store, env.repo, FakeRunner(json_result=GOOD_RESULT, on_run=edit),
                      broadcast, on_commit)

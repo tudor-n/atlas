@@ -162,7 +162,10 @@ def _prepare_worktree(root: Path, m: BrainMap) -> None:
 
 class FilingWorker:
     def __init__(self, paths: Paths, store: Store, repo: BrainRepo, runner,
-                 broadcast: Callable[[str, dict], Awaitable[None]], on_commit: Callable[[], None]):
+                 broadcast: Callable[[str, dict], Awaitable[None]],
+                 on_commit: Callable[[str | None], None]):
+        """on_commit(sha) runs (in a thread) after every commit this worker lands on main: it
+        re-indexes the notes that commit touched and schedules a backup (store.commit_hook)."""
         self.paths = paths
         self.store = store
         self.repo = repo
@@ -235,8 +238,7 @@ class FilingWorker:
                 raise ValueError(f"unknown entry: {entry_id}")
             # 1. main checkout: commit owner edits (and fresh captures) as they are
             if await t(self.repo.is_dirty):
-                await t(self.repo.commit_all, "owner edits")
-                self.on_commit()
+                await t(self.on_commit, await t(self.repo.commit_all, "owner edits"))
             # 2-3. a re-run never duplicates proposals
             await t(self.store.delete_proposals, entry_id)
             filing.attempts += 1
@@ -272,14 +274,7 @@ class FilingWorker:
                     raise RuntimeError("conflict with concurrent edits — retry")
                 filing.commit = new  # recorded at once: a later failure must not lose it
                 await t(self.store.upsert_filing, filing)
-                self.on_commit()
-                for rel in await t(self.repo.changed_files, new):
-                    if rel.endswith(".md") and (self.paths.brain / rel).is_file():
-                        try:
-                            await t(self.store.index_note_file, self.paths.brain, rel)
-                        except Exception:
-                            log.exception("could not index %s", rel)
-                            _warn(proposals, f"could not index '{rel}' for search")
+                await t(self.on_commit, new)  # re-indexes the notes it touched
             # 8. proposals and outcome
             await t(self.store.add_proposals, entry_id, proposals)
             filing.status, filing.synopsis, filing.files = "done", synopsis, files
@@ -313,10 +308,10 @@ class FilingWorker:
                 "proposals": [{"ptype": p.ptype, "payload": p.payload, "warnings": p.warnings}
                               for p in proposals],
             }
-            reverted = False
+            reverted = None
             if f and f.commit and f.commit == await t(self.repo.head):
                 reverted = await t(self.repo.revert, f.commit)
                 if reverted:
-                    self.on_commit()
+                    await t(self.on_commit, reverted)
             correction = text if reverted else f"{text}\n\n{FIX_IN_PLACE}"
             await self._file_entry(entry_id, correction, previous)

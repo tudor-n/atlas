@@ -93,9 +93,18 @@ export async function render(container, _params, query) {
     try {
       const hits = await api.get(`/api/search?q=${encodeURIComponent(q)}`);
       if (dead || mine !== seq) return;
-      clear(list).appendChild(hitList(hits, (h) => {
+      clear(list).appendChild(hitList(hits, async (h) => {
+        // The note as it is now on disk, not the indexed copy.
+        let text;
+        try {
+          const notes = await api.get(`/api/notes?prefix=${encodeURIComponent(h.ref.split('#')[0])}`);
+          text = notes.length ? notes[0].text : 'That note was not found.';
+        } catch (e) {
+          text = `Couldn't open that note: ${e.message}`;
+        }
+        if (dead || mine !== seq) return;
         clear(list).appendChild(el('h2', {}, h.ref));
-        list.appendChild(el('pre', { class: 'verbatim' }, h.text));
+        list.appendChild(el('pre', { class: 'verbatim' }, text));
         list.appendChild(el('button', { type: 'button', onclick: () => runFilter() }, 'Back to results'));
       }));
     } catch (e) {

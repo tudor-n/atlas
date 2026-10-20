@@ -5,7 +5,6 @@ import { answerNodes, hitList } from '../components/text.js';
 
 export function render(container) {
   let closeStream = null;
-  let hits = [];
   let lastQ = '';
 
   const input = el('input', { id: 'ask-q', type: 'text', autocomplete: 'off', required: true,
@@ -37,9 +36,8 @@ export function render(container) {
     if (typeof noteBox.scrollIntoView === 'function') noteBox.scrollIntoView({ block: 'nearest' });
   }
 
+  // Always the file as it is now, never the indexed copy (which may predate an edit).
   async function openNote(ref) {
-    const hit = hits.find((h) => h.ref === ref && h.kind === 'note');
-    if (hit) { showNote(ref, hit.text); return; }
     try {
       const notes = await api.get(`/api/notes?prefix=${encodeURIComponent(ref.split('#')[0])}`);
       showNote(ref, notes.length ? notes[0].text : 'That note was not found.');
@@ -80,7 +78,6 @@ export function render(container) {
     const q = input.value.trim();
     if (!q) return;
     lastQ = q;
-    hits = [];
     hitsBox.hidden = false;
     clear(hitsBody);
     clear(answer);
@@ -90,8 +87,7 @@ export function render(container) {
     clear(deeper);
     run(`/api/ask?q=${encodeURIComponent(q)}`, answer, {
       onHits: (data) => {
-        hits = Array.isArray(data) ? data : [];
-        clear(hitsBody).appendChild(hitList(hits, (h) => showNote(h.ref, h.text)));
+        clear(hitsBody).appendChild(hitList(Array.isArray(data) ? data : [], (h) => openNote(h.ref)));
       },
       onDone: () => {
         actions.appendChild(el('button', { type: 'button', onclick: dig }, 'Dig deeper'));

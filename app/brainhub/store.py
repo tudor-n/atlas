@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import secrets
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import asdict, fields
 from datetime import datetime
 from pathlib import Path
@@ -13,9 +16,19 @@ from pathlib import Path
 from .models import Entry, Filing, Hit, Item, Proposal
 from .rawlog import read_log
 
+log = logging.getLogger(__name__)
+
 _ITEM_FIELDS = [f.name for f in fields(Item)]
 _SKIP_DIRS = ("log", "_items")
 _HEADING = re.compile(r"^#+\s+(.*?)\s*$")
+
+
+def is_note_path(rel: str) -> bool:
+    """A brain-relative path the notes index covers: a .md file outside log/ and _items/ and
+    outside any dot-folder (.git, .obsidian, .trash...)."""
+    parts = rel.replace("\\", "/").split("/")
+    return (rel.lower().endswith(".md") and parts[0].lower() not in _SKIP_DIRS
+            and not any(p.startswith(".") for p in parts))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries(
@@ -256,8 +269,17 @@ class Store:
             self._db.execute("INSERT INTO fts(kind,ref,date,body) VALUES('entry',?,?,?)",
                              (e.id, e.ts.strftime("%Y-%m-%d"), e.text))
 
+    def _delete_note_rows(self, rel: str) -> None:
+        """Caller holds the lock and a transaction."""
+        escaped = re.sub(r"([\\%_])", r"\\\1", rel)
+        self._db.execute(
+            "DELETE FROM fts WHERE kind='note' AND (ref=? OR ref LIKE ? ESCAPE '\\')",
+            (rel, escaped + "#%"))
+
     def index_note_file(self, brain: Path, rel: str) -> None:
-        text = (Path(brain) / rel).read_text(encoding="utf-8")
+        """(Re)index one note, one row per heading section. Bytes that aren't UTF-8 are
+        replaced, so a stray encoding never blocks the rest of the note."""
+        text = (Path(brain) / rel).read_text(encoding="utf-8", errors="replace")
         sections: list[tuple[str, list[str]]] = [(rel, [])]
         for line in text.splitlines():
             m = _HEADING.match(line)
@@ -265,11 +287,8 @@ class Store:
                 sections.append((f"{rel}#{m.group(1)}", [line]))
             else:
                 sections[-1][1].append(line)
-        escaped = re.sub(r"([\\%_])", r"\\\1", rel)
         with self._lock, self._db:
-            self._db.execute(
-                "DELETE FROM fts WHERE kind='note' AND (ref=? OR ref LIKE ? ESCAPE '\\')",
-                (rel, escaped + "#%"))
+            self._delete_note_rows(rel)
             for ref, lines in sections:
                 body = "\n".join(lines).strip()
                 if body:
@@ -277,7 +296,26 @@ class Store:
                         "INSERT INTO fts(kind,ref,date,body) VALUES('note',?,NULL,?)",
                         (ref, body))
 
-    def reindex_all(self, brain: Path) -> None:
+    def drop_note_file(self, rel: str) -> None:
+        with self._lock, self._db:
+            self._delete_note_rows(rel)
+
+    def reindex_notes(self, brain: Path) -> list[str]:
+        """Drop every note row and index every note again. Entries are untouched. A file
+        that fails is logged, listed in the result and skipped; the rest still get indexed."""
+        brain = Path(brain)
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM fts WHERE kind='note'")
+        failed: list[str] = []
+        for rel in note_files(brain):
+            try:
+                self.index_note_file(brain, rel)
+            except Exception as e:
+                log.warning("could not index note %s: %s", rel, e)
+                failed.append(f"{rel} ({e})")
+        return failed
+
+    def reindex_all(self, brain: Path) -> list[str]:
         brain = Path(brain)
         entries = read_log(brain)
         with self._lock:
@@ -286,11 +324,7 @@ class Store:
             for e in entries:
                 self.add_entry(e)
                 self.index_entry(e)
-            for path in sorted(brain.rglob("*.md")):
-                rel = path.relative_to(brain).as_posix()
-                if rel.split("/")[0] in _SKIP_DIRS or rel.startswith(".git/"):
-                    continue
-                self.index_note_file(brain, rel)
+        return self.reindex_notes(brain)
 
     def indexed_entry_ids(self) -> set[str]:
         with self._lock:
@@ -356,3 +390,56 @@ def _load_json_list(path: Path) -> list:
     if not isinstance(data, list):
         raise ValueError(f"{path} is damaged (not a JSON list); nothing was restored from it")
     return data
+
+
+def note_files(brain: Path) -> list[str]:
+    """Brain-relative paths of every indexable note, sorted. Dot-folders, log/ and _items/
+    are pruned, not walked."""
+    brain = Path(brain)
+    out: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(brain):
+        rel_dir = Path(dirpath).relative_to(brain).as_posix()
+        top = rel_dir == "."
+        dirnames[:] = [d for d in dirnames
+                       if not d.startswith(".") and not (top and d.lower() in _SKIP_DIRS)]
+        for name in filenames:
+            rel = name if top else f"{rel_dir}/{name}"
+            if is_note_path(rel):
+                out.append(rel)
+    return sorted(out)
+
+
+def reindex_changed(store: Store, brain: Path, repo, sha: str | None) -> list[str]:
+    """Bring the notes index in line with one commit: re-index the notes it changed and drop
+    the rows of notes it deleted. Per-file failures are logged and returned, never raised."""
+    failed: list[str] = []
+    if not sha:
+        return failed
+    brain = Path(brain)
+    for rel in repo.changed_files(sha):
+        if not is_note_path(rel):
+            continue
+        try:
+            if (brain / rel).is_file():
+                store.index_note_file(brain, rel)
+            else:
+                store.drop_note_file(rel)
+        except Exception as e:
+            log.warning("could not re-index %s after %s: %s", rel, sha[:10], e)
+            failed.append(rel)
+    return failed
+
+
+def commit_hook(store: Store, brain: Path, repo,
+                notify: Callable[[], None] = lambda: None) -> Callable[[str | None], None]:
+    """The single place every hub commit reports to: `on_commit(sha)` re-indexes the notes
+    that commit touched, then calls `notify` (the backup scheduler). An indexing failure is
+    logged and never undoes or fails the commit."""
+    def on_commit(sha: str | None) -> None:
+        if sha:
+            try:
+                reindex_changed(store, brain, repo, sha)
+            except Exception:
+                log.exception("could not re-index notes after commit %s", sha)
+        notify()
+    return on_commit

@@ -51,7 +51,8 @@ def _validate_fields(fields: dict, m: BrainMap) -> None:
 
 
 class Reviewer:
-    def __init__(self, paths: Paths, store: Store, repo: BrainRepo, on_commit: Callable[[], None]):
+    def __init__(self, paths: Paths, store: Store, repo: BrainRepo,
+                 on_commit: Callable[[str | None], None]):
         self.paths = paths
         self.store = store
         self.repo = repo
@@ -62,8 +63,7 @@ class Reviewer:
 
     def _finish(self, message: str) -> None:
         self.store.export_items(self.paths.brain)
-        self.repo.commit_all(message)
-        self.on_commit()
+        self.on_commit(self.repo.commit_all(message))
 
     # -- proposals -----------------------------------------------------------
     def confirm(self, ids: list[str]) -> list[Item]:
