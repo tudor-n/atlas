@@ -292,6 +292,18 @@ async def _require_entry(app, entry_id: str) -> None:
         raise web.HTTPNotFound(reason=f"unknown entry: {entry_id}")
 
 
+FILING_STATUSES = ("queued", "running", "done", "failed")
+
+
+async def list_filings(request: web.Request) -> web.Response:
+    """GET /api/filings?status=failed -> [{entry_id, error, ts, text}], newest first. Today's
+    To review uses it, so failed filings never drop out however many entries come after."""
+    status = request.query.get("status", "failed")
+    if status not in FILING_STATUSES:
+        return err(400, f"status must be one of {list(FILING_STATUSES)}")
+    return web.json_response(await t(request.app["store"].filings_with_entries, status))
+
+
 async def get_filing(request: web.Request) -> web.Response:
     app, eid = request.app, request.match_info["entry_id"]
     await _require_entry(app, eid)
@@ -346,9 +358,11 @@ async def get_proposals(request: web.Request) -> web.Response:
     for p in proposals:
         groups.setdefault(p.entry_id, []).append(asdict(p))
     filings = {f.entry_id: f for f in await t(store.list_filings, entry_ids=list(groups))}
+    entries = {eid: await t(store.get_entry, eid) for eid in groups}
     return web.json_response([
         {"entry_id": eid, "synopsis": filings[eid].synopsis if eid in filings else "",
-         "proposals": ps} for eid, ps in groups.items()])
+         "text": entries[eid].text if entries[eid] else "", "proposals": ps}
+        for eid, ps in groups.items()])
 
 
 async def patch_proposal(request: web.Request) -> web.Response:
@@ -513,7 +527,7 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/settings", get_settings), web.put("/api/settings", put_settings),
         web.post("/api/backup/push", backup_push),
         web.post("/api/entries", post_entry), web.get("/api/entries", get_entries),
-        web.get("/api/filings/{entry_id}", get_filing),
+        web.get("/api/filings", list_filings), web.get("/api/filings/{entry_id}", get_filing),
         web.post("/api/filings/{entry_id}/retry", retry_filing),
         web.post("/api/filings/{entry_id}/correct", correct_filing),
         web.get("/api/proposals", get_proposals),

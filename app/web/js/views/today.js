@@ -46,9 +46,9 @@ export async function render(container, _params, query) {
     if (typing()) { dirty = true; return; }  // don't wipe what the owner is typing
     loading = true;
     try {
-      const [today, proposals, entries] = await Promise.all([
-        api.get('/api/today'), api.get('/api/proposals'), api.get('/api/entries?limit=200')]);
-      if (!dead) draw({ today, proposals, entries });
+      const [today, proposals, failed] = await Promise.all([
+        api.get('/api/today'), api.get('/api/proposals'), api.get('/api/filings?status=failed')]);
+      if (!dead) draw({ today, proposals, failed });
     } catch (e) {
       if (!dead) { clear(root).appendChild(el('p', { class: 'error', role: 'alert' }, `Couldn't load Today: ${e.message}`)); }
     } finally {
@@ -62,11 +62,11 @@ export async function render(container, _params, query) {
     setTimeout(() => { if (dirty && !typing()) { dirty = false; refresh(); } }, 0);
   });
 
-  function draw({ today, proposals, entries }) {
+  function draw({ today, proposals, failed }) {
     for (const d of destroyers.splice(0)) d();
     clear(root);
     root.appendChild(el('h1', {}, 'Today'));
-    root.appendChild(reviewSection(proposals, entries));
+    root.appendChild(reviewSection(proposals, failed));
     root.appendChild(section('Overdue', today.overdue, itemList));
     root.appendChild(section('Due today', today.due_today, itemList));
     root.appendChild(section('Upcoming reminders', today.upcoming, itemList));
@@ -78,10 +78,10 @@ export async function render(container, _params, query) {
   }
 
   // -- To review ----------------------------------------------------------------------------
-  function reviewSection(groups, entries) {
+  // groups: /api/proposals; failedRows: /api/filings?status=failed ({entry_id, error, ts, text}).
+  function reviewSection(groups, failedRows) {
     const inGroups = new Set(groups.map((g) => g.entry_id));
-    const failed = entries.filter((e) => e.filing && e.filing.status === 'failed' && !inGroups.has(e.id));
-    const texts = Object.fromEntries(entries.map((e) => [e.id, e.text]));
+    const failed = failedRows.filter((f) => !inGroups.has(f.entry_id));
     const total = groups.length + failed.length;
     const box = el('details', { class: 'section', open: reviewOpen || null,
       ontoggle: (ev) => { reviewOpen = ev.target.open; } },
@@ -89,9 +89,12 @@ export async function render(container, _params, query) {
     if (total === 0) box.appendChild(el('p', { class: 'empty' }, 'Nothing to review.'));
     for (const g of groups) {
       const n = g.proposals.length;
-      box.appendChild(reviewCard(g.entry_id, `${g.synopsis || texts[g.entry_id] || g.entry_id} (${n} to confirm)`, texts[g.entry_id]));
+      box.appendChild(reviewCard(g.entry_id, `${g.synopsis || g.text || g.entry_id} (${n} to confirm)`, g.text));
     }
-    for (const e of failed) box.appendChild(reviewCard(e.id, `Filing failed: ${e.text.slice(0, 100)}`, e.text));
+    for (const f of failed) {
+      const text = f.text || '';
+      box.appendChild(reviewCard(f.entry_id, `Filing failed: ${text.slice(0, 100) || f.entry_id}`, text));
+    }
     return box;
   }
 

@@ -518,3 +518,19 @@ async def test_setup_with_a_bad_map_writes_nothing(client, app_paths):
     bad = _map_with(projects=[{"slug": "log", "name": "Log", "is_company": False, "folders": []}])
     assert (await client.post("/api/setup", json={"map": bad})).status == 400
     assert not (app_paths.brain / "map.json").exists() and not (app_paths.brain / ".git").exists()
+
+
+async def test_failed_filings_endpoint_lists_every_failure(ready_client, app):
+    from brainhub.models import Filing
+    ids = []
+    for i in range(3):
+        r = await ready_client.post("/api/entries", json={"text": f"entry {i}", "source": "pc"})
+        ids.append((await r.json())["entry_id"])
+    app["store"].upsert_filing(Filing(ids[0], "failed", error="claude timed out"))
+    rows = await (await ready_client.get("/api/filings", params={"status": "failed"})).json()
+    assert rows == [{"entry_id": ids[0], "error": "claude timed out",
+                     "ts": app["store"].get_entry(ids[0]).ts.isoformat(), "text": "entry 0"}]
+    assert (await ready_client.get("/api/filings", params={"status": "bogus"})).status == 400
+    app["store"].add_proposals(ids[1], [("item", {"kind": "task", "text": "t", "area": "general"}, [])])
+    groups = await (await ready_client.get("/api/proposals")).json()
+    assert [(g["entry_id"], g["text"]) for g in groups] == [(ids[1], "entry 1")]
