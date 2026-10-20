@@ -1,4 +1,5 @@
 """Git operations on the brain/ folder (its own repo). Thread-safe per repo path."""
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +10,12 @@ from pathlib import Path
 # may ever convert line endings in brain/.
 GITATTRIBUTES = "* -text\n"
 _SHA = re.compile(r"[0-9a-f]{7,64}")
+PUSH_TIMEOUT_S = 120
+
+
+def redact(text: str) -> str:
+    """Hide the user:token part of any URL (https://user:tok@host -> https://***@host)."""
+    return re.sub(r"(?<=://)[^/@\s]+@", "***@", text)
 # The subject of a filing commit: "file <entry id>: <synopsis>" (filing.py writes it).
 _FILING_SUBJECT = re.compile(r"file (e-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}):\s?(.*)")
 
@@ -181,9 +188,22 @@ class BrainRepo:
                 self._check(self._run("reset", "--hard", "HEAD"), "reset")
             self._check(self._run("clean", "-fd"), "clean")
 
-    def push(self, remote_url: str) -> tuple[bool, str]:
-        r = self._git("push", "--end-of-options", remote_url, "HEAD:refs/heads/main")
-        return r.returncode == 0, r.stderr.strip()[-500:]
+    def push(self, remote_url: str, timeout: float = PUSH_TIMEOUT_S) -> tuple[bool, str]:
+        """Push HEAD to the remote's main. Runs WITHOUT the repo lock (a push never touches
+        the index), so a slow network can't stall commits. Never prompts: no terminal, no
+        credential-manager window, stdin closed; a hang ends at `timeout` as a failure.
+        The error text has credentials redacted before it is shortened."""
+        self._ensure_repo()
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        try:
+            r = subprocess.run(
+                ["git", "-c", "credential.interactive=never", "push", "--end-of-options",
+                 remote_url, "HEAD:refs/heads/main"],
+                cwd=self.path, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=env, stdin=subprocess.DEVNULL, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False, f"push timed out after {timeout:g}s"
+        return r.returncode == 0, redact(r.stderr.strip())[-500:]
 
     # -- worktrees / cherry-pick ------------------------------------------
     def worktree_add(self, path: Path) -> "BrainRepo":

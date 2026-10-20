@@ -162,3 +162,25 @@ async def test_force_ignores_debounce_and_backoff_but_needs_remote():
     await b.tick(force=True); assert len(repo.pushes) == 3  # nothing pending: explicit push still goes
     none = FakeRepo([True]); n = BackupPusher(none, settings(None, 0), noop, clk)
     n.notify_commit(); await n.tick(force=True); assert none.pushes == []
+
+
+async def test_forced_and_background_pushes_never_overlap():
+    import threading
+    import time as _time
+
+    class Slow:
+        def __init__(self):
+            self.active = 0; self.peak = 0; self.pushes = 0; self.guard = threading.Lock()
+
+        def push(self, remote_url):
+            with self.guard:
+                self.active += 1; self.peak = max(self.peak, self.active)
+            _time.sleep(0.05)
+            with self.guard:
+                self.active -= 1; self.pushes += 1
+            return True, ""
+
+    repo = Slow(); b = BackupPusher(repo, settings("r", 0), noop, Clock(0))
+    b.notify_commit()
+    await asyncio.gather(b.tick(), b.tick(force=True), b.tick(force=True))
+    assert repo.peak == 1 and repo.pushes == 3  # all ran, one at a time

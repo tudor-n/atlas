@@ -1,14 +1,12 @@
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
-log = logging.getLogger(__name__)
+from .gitrepo import redact as _redact
 
-def _redact(text: str) -> str:
-    return re.sub(r"(?<=://)[^/@\s]+@", "***@", text)
+log = logging.getLogger(__name__)
 
 
 RETRY_BACKOFF_S = 60
@@ -30,6 +28,7 @@ class BackupPusher:
         self._retry_at: float | None = None
         self._last_ok: str | None = None
         self._last_error: str | None = None
+        self._push_lock = asyncio.Lock()  # a forced and a background push never overlap
 
     def notify_commit(self) -> None:
         self._seq += 1
@@ -47,7 +46,12 @@ class BackupPusher:
 
     async def tick(self, force: bool = False) -> None:
         """force: an explicit "push now". Skips the debounce, the failure backoff and the
-        pending check, but still needs a remote."""
+        pending check, but still needs a remote. One push at a time: a second caller waits
+        for the first, then decides again on fresh state."""
+        async with self._push_lock:
+            await self._tick(force)
+
+    async def _tick(self, force: bool) -> None:
         if not self._pending and not force:
             return
         cfg = self._settings()

@@ -122,3 +122,62 @@ def test_filing_commits_and_in_history(tmp_path):
     assert got["e-20261020-140322-ab12"] == (new, "second", [])
     assert r.in_history(old) and r.in_history(new)
     assert not r.in_history("0" * 40) and not r.in_history("--all") and not r.in_history("")
+
+
+def _repo_with_commit(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    (tmp_path/"a.md").write_text("x", encoding="utf-8"); r.commit_all("one")
+    return r
+
+
+def test_slow_push_does_not_block_commits(tmp_path, monkeypatch):
+    import threading
+    import brainhub.gitrepo as gr
+    r = _repo_with_commit(tmp_path)
+    real = gr.subprocess.run
+    entered, release = threading.Event(), threading.Event()
+
+    def fake_run(args, **kw):
+        if "push" in args:
+            entered.set()
+            release.wait(10)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real(args, **kw)
+
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    result = {}
+    pusher = threading.Thread(target=lambda: result.update(push=r.push("https://example.com/r.git")))
+    pusher.start()
+    assert entered.wait(5)
+    (tmp_path/"b.md").write_text("y", encoding="utf-8")
+    assert r.commit_all("while pushing")      # would deadlock if push held the repo lock
+    assert pusher.is_alive()
+    release.set(); pusher.join(5)
+    assert result["push"] == (True, "")
+
+
+def test_push_is_non_interactive_and_times_out(tmp_path, monkeypatch):
+    import brainhub.gitrepo as gr
+    r = _repo_with_commit(tmp_path)
+    seen = {}
+
+    def fake_run(args, **kw):
+        seen.update(args=args, **kw)
+        raise subprocess.TimeoutExpired(args, kw["timeout"])
+
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    ok, err = r.push("https://example.com/r.git")
+    assert not ok and "timed out after 120s" in err
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and seen["env"]["GCM_INTERACTIVE"] == "never"
+    assert seen["args"][:3] == ["git", "-c", "credential.interactive=never"]
+    assert seen["stdin"] is subprocess.DEVNULL and seen["timeout"] == 120
+
+
+def test_push_redacts_credentials_before_truncating(tmp_path, monkeypatch):
+    import brainhub.gitrepo as gr
+    r = _repo_with_commit(tmp_path)
+    stderr = "fatal: could not read from https://user:SECRETTOKEN@github.com/x " + "y" * 480
+    monkeypatch.setattr(gr.subprocess, "run",
+                        lambda args, **kw: subprocess.CompletedProcess(args, 128, "", stderr))
+    ok, err = r.push("https://example.com/r.git")
+    assert not ok and "SECRET" not in err and "TOKEN" not in err and len(err) <= 500
