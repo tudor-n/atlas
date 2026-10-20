@@ -1,4 +1,5 @@
-// Journal: the verbatim history, newest first, grouped by day. Day picker, text filter (local search only).
+// Journal: the verbatim history, newest first, grouped by day. Day picker, area filter, text filter
+// (local search only).
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { entryCard, hitList } from '../components/text.js';
@@ -11,23 +12,40 @@ const dayOfId = (id) => {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
 };
 
+// The areas an entry was filed into, from its filing's files: the top folder, or projects/<slug>.
+export function entryAreas(entry) {
+  const f = entry && entry.filing;
+  const files = f && Array.isArray(f.files) ? f.files : [];
+  const out = new Set();
+  for (const x of files) {
+    const path = typeof x === 'string' ? x : (x && x.path) || '';
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    if (!parts.length) continue;
+    out.add(parts[0] === 'projects' && parts.length > 2 ? `projects/${parts[1]}` : parts[0]);
+  }
+  return [...out].sort();
+}
+
 export async function render(container, _params, query) {
   const focusId = (query && query.get('entry')) || '';
   let day = dayOfId(focusId);
   let entries = [];
   let more = false;
   let filter = '';
+  let area = '';
   let dead = false;
   let seq = 0;
   const subs = [];
 
   const dayInput = el('input', { id: 'j-day', type: 'date', value: day,
     onchange: () => { day = dayInput.value; reload(); } });
+  const areaSelect = el('select', { id: 'j-area', onchange: () => { area = areaSelect.value; draw(); } });
   const filterInput = el('input', { id: 'j-q', type: 'search', placeholder: 'Search the journal and notes' });
   const clearDay = el('button', { type: 'button', onclick: () => { day = ''; dayInput.value = ''; reload(); } }, 'All days');
   const form = el('form', { class: 'journal-controls', onsubmit: (ev) => { ev.preventDefault(); runFilter(); } },
     el('div', {}, el('label', { for: 'j-day' }, 'Day'), dayInput),
     el('div', {}, el('label', { class: 'invisible', for: 'j-day' }, ' '), clearDay),
+    el('div', {}, el('label', { for: 'j-area' }, 'Area'), areaSelect),
     el('div', { class: 'grow' }, el('label', { for: 'j-q' }, 'Find text'), filterInput),
     el('div', {}, el('label', { class: 'invisible', for: 'j-q' }, ' '), el('button', { type: 'submit' }, 'Search')));
   const msg = el('div', { class: 'error', role: 'alert' });
@@ -37,15 +55,29 @@ export async function render(container, _params, query) {
 
   const url = (extra) => `/api/entries?${new URLSearchParams({ ...(day ? { day } : {}), ...extra })}`;
 
+  // Area options come from the loaded entries; the filter is applied here, client-side.
+  function drawAreas() {
+    const keys = new Set(entries.flatMap(entryAreas));
+    if (area) keys.add(area);
+    clear(areaSelect).appendChild(el('option', { value: '' }, 'All areas'));
+    for (const k of [...keys].sort()) areaSelect.appendChild(el('option', { value: k, selected: k === area || null }, k));
+  }
+
   function draw() {
+    drawAreas();
     clear(list);
+    const shown = area ? entries.filter((e) => entryAreas(e).includes(area)) : entries;
     let current = null;
-    for (const e of entries) {
+    for (const e of shown) {
       const d = String(e.ts).slice(0, 10);
       if (d !== current) { current = d; list.appendChild(el('h2', {}, d)); }
       list.appendChild(entryCard(e, { highlight: e.id === focusId }));
     }
-    if (!entries.length) list.appendChild(el('p', { class: 'empty' }, day ? 'Nothing written that day.' : 'Nothing written yet.'));
+    if (!shown.length) {
+      const why = area ? `Nothing filed under ${area} among the entries loaded${more ? ' so far' : ''}.`
+        : day ? 'Nothing written that day.' : 'Nothing written yet.';
+      list.appendChild(el('p', { class: 'empty' }, why));
+    }
     olderBtn.hidden = !more;
   }
 
