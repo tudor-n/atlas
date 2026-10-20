@@ -29,7 +29,7 @@ FILING_SCHEMA: dict = json.loads(
 
 ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
 MAX_TURNS = 25
-PROTECTED = {"log", "_items", "map.json"}
+PROTECTED = {"log", "_items", "map.json", ".gitattributes", ".gitignore"}
 PROTECTED_WARNING = "agent tried to edit protected files"
 FIX_IN_PLACE = "Fix the files in place; earlier text from this entry may already exist."
 # English names regardless of the process locale (calendar.day_name follows LC_TIME).
@@ -145,6 +145,14 @@ def _warn(proposals: list[tuple[str, dict, list[str]]], warning: str) -> None:
         proposals.append(("update", {}, [warning]))
 
 
+def protected_tops(changed: list[str]) -> list[str]:
+    """Top-level names among `changed` the agent must not touch: the protected set (any case,
+    since Windows folders are case-insensitive) and every dot-folder or dot-file (.git*,
+    .claude, .obsidian...)."""
+    tops = {p.split("/")[0] for p in changed}
+    return sorted(t for t in tops if t.lower() in PROTECTED or t.startswith("."))
+
+
 def _prepare_worktree(root: Path, m: BrainMap) -> None:
     """Git carries no empty folders: recreate the full structure, custom areas included."""
     ensure_folders(root, m)
@@ -252,7 +260,7 @@ class FilingWorker:
             synopsis, files, proposals = parse_filing_result(raw, m, {i.id for i in open_items})
             # 6. undo any edit to protected paths, in the worktree only
             changed = await t(wt.changed_paths)
-            protected = sorted(PROTECTED & {p.split("/")[0] for p in changed})
+            protected = protected_tops(changed)
             if protected:
                 await t(wt.restore_paths, protected)
                 _warn(proposals, PROTECTED_WARNING)

@@ -44,6 +44,14 @@ def _commit_owner_edits(app: web.Application) -> None:
         app["backup"].notify_commit()
 
 
+def _ensure_gitattributes(app: web.Application) -> None:
+    """Brains set up before .gitattributes existed get it now, in a commit of its own."""
+    repo = app["repo"]
+    if repo.ensure_gitattributes():
+        repo.commit_all("add .gitattributes")
+        app["backup"].notify_commit()
+
+
 def _backfill_log(app: web.Application) -> None:
     """Index every intact raw-log entry the store is missing. Damage is reported, never fixed."""
     store, problems = app["store"], []
@@ -79,6 +87,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git lock", _clear_stale_git_lock, app)
     step("git setup", repo.init)
     step("owner edits", _commit_owner_edits, app)
+    step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("raw log", _backfill_log, app)
     return step("filing queue", app["worker"].requeue_unfinished, default=[])

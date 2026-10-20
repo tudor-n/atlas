@@ -348,3 +348,28 @@ async def test_truncated_log_file_keeps_the_good_entries(aiohttp_client, app_pat
     assert [h["ref"] for h in hits] == [good.id]
     assert p.read_bytes() == before
     assert state["startup_error"] is None
+
+
+async def test_brain_clone_with_autocrlf_keeps_the_raw_log_readable(ready_client, app_paths, tmp_path):
+    import subprocess
+    from brainhub.rawlog import append_entry
+    assert (app_paths.brain / ".gitattributes").read_text(encoding="utf-8") == "* -text\n"
+    texts = ["line one\nline two\n", "trailing\n\n", "single"]
+    for x in texts:
+        append_entry(app_paths.brain, x, "pc")
+    app = ready_client.server.app
+    app["repo"].commit_all("entries")
+    clone = tmp_path / "restored"
+    subprocess.run(["git", "-c", "core.autocrlf=true", "clone", "-q", str(app_paths.brain), str(clone)],
+                   check=True, capture_output=True)
+    assert [e.text for e in read_log(clone)] == texts
+    assert not any(b"\r\n" in p.read_bytes() for p in (clone / "log").rglob("*.md"))
+
+
+async def test_startup_adds_missing_gitattributes_in_its_own_commit(aiohttp_client, app_paths):
+    repo = _setup_brain(app_paths)
+    assert not (app_paths.brain / ".gitattributes").exists()
+    await _started(aiohttp_client, app_paths)
+    assert (app_paths.brain / ".gitattributes").read_text(encoding="utf-8") == "* -text\n"
+    assert repo._run("log", "-1", "--format=%s").stdout.strip() == "add .gitattributes"
+    assert not repo.is_dirty()

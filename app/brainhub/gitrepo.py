@@ -4,6 +4,10 @@ import subprocess
 import threading
 from pathlib import Path
 
+# Raw-log records carry exact lengths: no checkout (e.g. a clone with core.autocrlf=true)
+# may ever convert line endings in brain/.
+GITATTRIBUTES = "* -text\n"
+
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -70,6 +74,16 @@ class BrainRepo:
             self._check(self._run("config", "user.name", "BrainHub"), "config")
             self._check(self._run("config", "user.email", "brainhub@localhost"), "config")
             self._check(self._run("config", "core.autocrlf", "false"), "config")
+
+    def ensure_gitattributes(self) -> bool:
+        """Write brain/.gitattributes (`* -text`) if it is missing. True if it was created;
+        the caller commits it."""
+        f = self.path / ".gitattributes"
+        if f.exists():
+            return False
+        with open(f, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(GITATTRIBUTES)
+        return True
 
     def is_dirty(self) -> bool:
         with self._lock:

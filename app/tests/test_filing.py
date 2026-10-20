@@ -227,3 +227,17 @@ async def test_failure_after_cherry_pick_keeps_commit(env):
     await w.file_entry(env.entry.id)
     f = env.store.get_filing(env.entry.id)
     assert f.status == "failed" and "hook down" in f.error and f.commit == env.repo.head()
+
+
+async def test_dot_files_and_git_config_are_protected(env):
+    def tamper(cwd):
+        (cwd/".claude").mkdir(exist_ok=True); (cwd/".claude"/"settings.json").write_text("{}", encoding="utf-8")
+        (cwd/".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+        (cwd/".gitignore").write_text("*.md\n", encoding="utf-8")
+        (cwd/"general"/"ok.md").write_text("fine (from e-1)", encoding="utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=tamper)).file_entry(env.entry.id)
+    b = env.paths.brain
+    assert not (b/".claude").exists() and not (b/".gitignore").exists()
+    assert not (b/".gitattributes").exists() or "text=auto" not in (b/".gitattributes").read_text(encoding="utf-8")
+    assert (b/"general"/"ok.md").exists()
+    assert any("protected" in w for p in env.store.list_proposals() for w in p.warnings)
