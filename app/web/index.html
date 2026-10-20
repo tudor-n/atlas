@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>BrainHub</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <span class="brand">BrainHub</span>
+    <nav id="nav" aria-label="Main"></nav>
+  </header>
+  <div id="banner"></div>
+  <section id="capture" aria-label="Capture"></section>
+  <div id="tray"></div>
+  <main id="view"></main>
+</div>
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
