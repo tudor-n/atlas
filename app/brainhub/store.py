@@ -111,6 +111,19 @@ class Store:
             r = self._db.execute("SELECT * FROM filings WHERE entry_id=?", (entry_id,)).fetchone()
         return _filing(r) if r else None
 
+    def list_filings(self, status: str | None = None,
+                     entry_ids: list[str] | None = None) -> list[Filing]:
+        sql, args = "SELECT * FROM filings WHERE 1=1", []
+        if status is not None:
+            sql += " AND status=?"
+            args.append(status)
+        if entry_ids is not None:
+            sql += f" AND entry_id IN ({','.join('?' * len(entry_ids))})"
+            args += entry_ids
+        with self._lock:
+            rows = self._db.execute(sql + " ORDER BY entry_id", args).fetchall()
+        return [_filing(r) for r in rows]
+
     def unfinished_filings(self) -> list[str]:
         with self._lock:
             rows = self._db.execute(
@@ -263,6 +276,10 @@ class Store:
                 if rel.split("/")[0] in _SKIP_DIRS or rel.startswith(".git/"):
                     continue
                 self.index_note_file(brain, rel)
+
+    def fts_count(self) -> int:
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM fts").fetchone()[0]
 
     def search(self, fts_query: str, limit: int) -> list[Hit]:
         with self._lock:

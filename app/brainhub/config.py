@@ -52,7 +52,7 @@ class Paths:
 
     @property
     def schemas(self) -> Path:
-        return self.prompts / "schemas"
+        return self.app / "brainhub" / "schemas"
 
 
 def _check(key: str, value) -> None:
