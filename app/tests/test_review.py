@@ -117,3 +117,60 @@ def test_edit_item_commits_and_validates(rv):
     assert rv.edit_item(it.id, {"status": "open"}).snooze_until is None
     with pytest.raises(ValueError):
         rv.edit_item("i-ghost", {"text": "x"})
+
+
+def test_item_pulls_in_same_entry_node(rv):
+    [n, p] = rv.store.add_proposals("e-1", [
+        ("node", {"type": "project", "name": "Vibedine", "parent": None}, []),
+        ("item", _item_payload(project="vibedine"), [])])
+    [item] = rv.confirm([p.id])
+    assert item.project == "vibedine"
+    assert any(x["slug"] == "vibedine" for x in load_map(rv.paths.brain).projects)
+    assert rv.store.list_proposals() == []
+    assert "(+ node vibedine)" in rv.repo._run("log", "-1", "--format=%s").stdout
+
+
+def test_duplicate_node_is_skipped(rv):
+    [p] = rv.store.add_proposals("e-1", [("node", {"type": "project", "name": "RobotArm", "parent": None}, [])])
+    rv.confirm([p.id])
+    assert rv.store.list_proposals(status="confirmed")[0].id == p.id
+
+
+def test_mid_apply_failure_leaves_consistent_state(rv, monkeypatch):
+    ps = rv.store.add_proposals("e-1", [("item", _item_payload(text=f"t{i}"), []) for i in range(3)])
+    real = rv.store.create_item
+    calls = []
+
+    def flaky(**kw):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return real(**kw)
+
+    monkeypatch.setattr(rv.store, "create_item", flaky)
+    with pytest.raises(RuntimeError):
+        rv.confirm([p.id for p in ps])
+    assert [i.text for i in rv.store.list_items()] == ["t0"]
+    assert [p.id for p in rv.store.list_proposals(status="confirmed")] == [ps[0].id]
+    monkeypatch.undo()
+    rv.confirm([p.id for p in rv.store.list_proposals()])
+    assert sorted(i.text for i in rv.store.list_items()) == ["t0", "t1", "t2"]
+
+
+def test_dismiss_validates(rv):
+    [p] = rv.store.add_proposals("e-1", [("item", _item_payload(), [])])
+    rv.confirm([p.id])
+    with pytest.raises(ValueError):
+        rv.dismiss([p.id])
+    with pytest.raises(ValueError):
+        rv.dismiss(["p-nope"])
+
+
+def test_update_and_node_edit_rules(rv):
+    [u, n] = rv.store.add_proposals("e-1", [("update", {"item_id": "i-1", "status": "done"}, []),
+                                            ("node", {"type": "project", "name": "X", "parent": None}, [])])
+    with pytest.raises(ValueError):
+        rv.edit_proposal(u.id, {"status": "snoozed"})
+    with pytest.raises(ValueError):
+        rv.edit_proposal(n.id, {"name": "  "})
+    rv.edit_proposal(u.id, {"status": "to_read"})

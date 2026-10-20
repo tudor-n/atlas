@@ -4,9 +4,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from .brainmap import BrainMap, add_node, default_map, ensure_folders, load_map, save_map
+from .brainmap import BrainMap, add_node, default_map, ensure_folders, load_map, save_map, slugify
 from .config import Paths, load_settings
-from .filing import _valid_date
+from .filing import valid_date
 from .gitrepo import BrainRepo
 from .models import Item, Proposal
 from .store import Store
@@ -20,6 +20,7 @@ _PROPOSAL_KEYS = {
     "update": ("status", "note"),
     "node": ("type", "name", "parent"),
 }
+_UPDATE_STATUSES = ("to_read", "done")
 _ITEM_PATCH_KEYS = _ITEM_KEYS + ("status", "snooze_until")
 
 
@@ -45,7 +46,7 @@ def _validate_fields(fields: dict, m: BrainMap) -> None:
         if fields.get(key) is not None and fields[key] not in slugs[key]:
             raise ValueError(f"unknown {key}: {fields[key]!r}")
     for key in ("due", "remind_at", "snooze_until"):
-        if fields.get(key) is not None and not _valid_date(fields[key]):
+        if fields.get(key) is not None and not valid_date(fields[key]):
             raise ValueError(f"invalid date for {key}: {fields[key]!r}")
 
 
@@ -66,21 +67,44 @@ class Reviewer:
 
     # -- proposals -----------------------------------------------------------
     def confirm(self, ids: list[str]) -> list[Item]:
-        by_id = {p.id: p for p in self.store.list_proposals(status="proposed")}
+        pending = self.store.list_proposals(status="proposed")
+        by_id = {p.id: p for p in pending}
         proposals: list[Proposal] = []
         for i in dict.fromkeys(ids):
             if i not in by_id:
                 raise ValueError(f"unknown or already handled proposal: {i}")
             proposals.append(by_id[i])
         lead = load_settings(self.paths)["default_lead_days"]
+        original = self._map()
+
+        # Pull in pending node proposals of the same entry that a selected item depends on.
+        chosen = {p.id for p in proposals}
+        wanted = {(t, p.entry_id, p.payload.get(t)) for p in proposals if p.ptype == "item"
+                  for t in ("area", "project", "person") if p.payload.get(t)}
+        auto = [n for n in pending
+                if n.ptype == "node" and n.id not in chosen
+                and (n.payload.get("type"), n.entry_id,
+                     slugify(str(n.payload.get("name", "")))) in wanted]
+        auto_ids = {n.id for n in auto}
+        requested = len(proposals)
+        proposals = proposals + auto
 
         # Dry run: nothing is touched until every proposal is known to apply.
-        original = self._map()
         m = original
+        node_names: list[str] = []
         for p in (p for p in proposals if p.ptype == "node"):
-            m = add_node(m, p.payload.get("type"), p.payload.get("name"), p.payload.get("parent"))
-        new_items: list[dict] = []
-        updates: list[tuple[str, str]] = []
+            ntype, name = p.payload.get("type"), p.payload.get("name")
+            if ntype not in _NODE_TYPES or not isinstance(name, str):
+                raise ValueError(f"invalid node proposal: {p.id}")
+            existing = {"area": m.areas, "project": m.projects, "course": m.courses,
+                        "person": m.people}[ntype]
+            if any(x["slug"] == slugify(name) for x in existing):
+                continue  # already in the map: a no-op, still marked confirmed
+            m = add_node(m, ntype, name, p.payload.get("parent"))
+            if p.id in auto_ids:
+                node_names.append(slugify(name))
+        new_items: list[tuple[Proposal, dict]] = []
+        updates: list[tuple[Proposal, str, str]] = []
         for p in proposals:
             if p.ptype == "item":
                 fields = {k: p.payload.get(k) for k in _ITEM_KEYS}
@@ -89,32 +113,50 @@ class Reviewer:
                 _validate_fields(fields, m)
                 if fields["due"] and not fields["remind_at"]:
                     fields["remind_at"] = _default_remind(fields["due"], lead)
-                new_items.append(fields | {"source_entry": p.entry_id})
+                new_items.append((p, fields | {"source_entry": p.entry_id}))
             elif p.ptype == "update":
                 item_id = p.payload.get("item_id")
                 if not item_id or "unknown item id" in p.warnings:
                     raise ValueError(f"update proposal {p.id} has no valid item id")
                 if self.store.get_item(item_id) is None:
                     raise ValueError(f"unknown item: {item_id}")
-                _validate_fields({"status": p.payload.get("status")}, m)
-                updates.append((item_id, p.payload["status"]))
+                status = p.payload.get("status")
+                if status not in _UPDATE_STATUSES:
+                    raise ValueError(f"invalid status for an update: {status!r}")
+                updates.append((p, item_id, status))
             elif p.ptype != "node":
                 raise ValueError(f"unknown proposal type: {p.ptype}")
 
+        # Apply. Each proposal is marked confirmed right after its own step, so a failure
+        # part-way never leaves an applied change with a still-proposed proposal.
         if m is not original:
             save_map(self.paths.brain, m)
             ensure_folders(self.paths.brain, m)
             for a in m.areas:  # ensure_folders does not create custom areas
                 (self.paths.brain / a["slug"]).mkdir(parents=True, exist_ok=True)
-        created = [self.store.create_item(**f, status="open") for f in new_items]
-        for item_id, status in updates:
+        self.store.set_proposal_status([p.id for p in proposals if p.ptype == "node"], "confirmed")
+        created = []
+        for p, fields in new_items:
+            created.append(self.store.create_item(**fields, status="open"))
+            self.store.set_proposal_status([p.id], "confirmed")
+        for p, item_id, status in updates:
             self.store.update_item(item_id, {"status": status})
-        self.store.set_proposal_status([p.id for p in proposals], "confirmed")
-        self._finish(f"confirm: {len(proposals)} items")
+            self.store.set_proposal_status([p.id], "confirmed")
+        # If export or commit fails the exception propagates: SQLite is already consistent
+        # and the next commit sweeps up the files.
+        message = f"confirm: {requested} items"
+        if node_names:
+            message += " (+ node " + ", ".join(node_names) + ")"
+        self._finish(message)
         return created
 
     def dismiss(self, ids: list[str]) -> None:
-        self.store.set_proposal_status(list(ids), "dismissed")
+        pending = {p.id for p in self.store.list_proposals(status="proposed")}
+        ids = list(dict.fromkeys(ids))
+        for i in ids:
+            if i not in pending:
+                raise ValueError(f"unknown or already handled proposal: {i}")
+        self.store.set_proposal_status(ids, "dismissed")
 
     def edit_proposal(self, id: str, patch: dict) -> Proposal:
         p = next((p for p in self.store.list_proposals(status="proposed") if p.id == id), None)
@@ -125,6 +167,11 @@ class Reviewer:
             raise ValueError(f"cannot edit {sorted(bad)} on a {p.ptype} proposal")
         if p.ptype == "node" and "type" in patch and patch["type"] not in _NODE_TYPES:
             raise ValueError(f"invalid node type: {patch['type']!r}")
+        if p.ptype == "node" and "name" in patch and not (
+                isinstance(patch["name"], str) and patch["name"].strip()):
+            raise ValueError("name must be a non-empty string")
+        if p.ptype == "update" and patch.get("status", "done") not in _UPDATE_STATUSES:
+            raise ValueError(f"invalid status for an update: {patch['status']!r}")
         _validate_fields(patch if p.ptype == "item" else {k: v for k, v in patch.items() if k == "status"},
                          self._map())
         return self.store.update_proposal_payload(id, patch)

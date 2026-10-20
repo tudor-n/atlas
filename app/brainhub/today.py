@@ -36,7 +36,7 @@ def compute_today(items: list[Item], proposals: list, failed_entry_ids: list[str
                 out["overdue"].append(d)
             elif due_day == today:
                 out["due_today"].append(d)
-            if i.remind_at and _dt(i.remind_at) <= now < _dt(i.due):
+            elif i.remind_at and _dt(i.remind_at) <= now < _dt(i.due):
                 out["upcoming"].append(d)
         if i.kind == "next_time":
             out["next_time"].setdefault(i.project or i.area, []).append(d)

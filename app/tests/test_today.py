@@ -36,3 +36,8 @@ def test_remind_at_date_only_means_midnight_and_recent_waiting_no_nudge():
              mk(kind="waiting", created="2026-10-19T09:00:00")]
     t = compute_today(items, [], [], NOW, 3)
     assert t["upcoming"] == [] and t["waiting"][0]["nudge"] is False
+
+
+def test_due_today_not_also_upcoming():
+    t = compute_today([mk(kind="deadline", due="2026-10-20T15:00", remind_at="2026-10-18")], [], [], NOW, 3)
+    assert len(t["due_today"]) == 1 and t["upcoming"] == []

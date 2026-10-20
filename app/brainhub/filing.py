@@ -68,7 +68,7 @@ def build_filing_prompt(entry: Entry, m: BrainMap, open_items: list[Item],
 
 
 # -- parsing -----------------------------------------------------------------
-def _valid_date(value) -> bool:
+def valid_date(value) -> bool:
     if not isinstance(value, str):
         return False
     try:
@@ -116,7 +116,7 @@ def parse_filing_result(raw: dict, m: BrainMap, open_item_ids: set[str]
                 payload[key] = None
         for key in ("due", "remind_at"):
             value = payload[key]
-            if value is not None and not _valid_date(value):
+            if value is not None and not valid_date(value):
                 warnings.append(f"could not read date '{value}'")
                 payload[key] = None
         proposals.append(("item", payload, warnings))
