@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from brainhub.gitrepo import BrainRepo
 
 
@@ -57,3 +59,37 @@ def test_cherry_pick_conflict_aborts(tmp_path):
     assert r.cherry_pick(sha) is None and not r.is_dirty()
     assert (tmp_path/"b"/"a.md").read_text(encoding="utf-8") == "owner"
     r.worktree_remove(tmp_path/"wt")
+
+
+def test_worktree_remove_refuses_main_repo(tmp_path):
+    r = BrainRepo(tmp_path/"b"); r.init()
+    (tmp_path/"b"/"a.md").write_text("x", encoding="utf-8"); r.commit_all("c")
+    for bad in (tmp_path/"b", tmp_path, tmp_path/"b"/"sub"):
+        with pytest.raises(ValueError):
+            r.worktree_remove(bad)
+    assert (tmp_path/"b"/".git").exists() and (tmp_path/"b"/"a.md").exists()
+
+
+def test_refuses_when_not_repo_root(tmp_path):
+    parent = BrainRepo(tmp_path); parent.init()
+    (tmp_path/"f.md").write_text("1", encoding="utf-8"); parent.commit_all("c")
+    (tmp_path/"f.md").write_text("modified", encoding="utf-8")
+    sub = tmp_path/"brain"; sub.mkdir()
+    with pytest.raises(RuntimeError):
+        BrainRepo(sub).discard_changes()
+    assert (tmp_path/"f.md").read_text(encoding="utf-8") == "modified"
+
+
+def test_git_failure_raises(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    (tmp_path/"a.md").write_text("x", encoding="utf-8")
+    (tmp_path/".git"/"index.lock").write_text("", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        r.commit_all("fails")
+
+
+def test_restore_paths_rejects_bad_paths(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    for bad in ("", ".", "..", "a/../../b", ":(top)x", str(tmp_path), "/etc"):
+        with pytest.raises(ValueError):
+            r.restore_paths([bad])

@@ -28,7 +28,18 @@ class BrainRepo:
 
     def _git(self, *args: str) -> subprocess.CompletedProcess:
         with self._lock:
+            self._ensure_repo()
             return self._run(*args)
+
+    def _ensure_repo(self) -> None:
+        """Refuse to act unless self.path is itself a git repo root (dir or worktree file)."""
+        if not (self.path / ".git").exists():
+            raise RuntimeError(f"{self.path} is not a git repository root (no .git)")
+
+    def _check(self, r: subprocess.CompletedProcess, what: str) -> subprocess.CompletedProcess:
+        if r.returncode != 0:
+            raise RuntimeError(f"git {what} failed: {r.stderr.strip()[-500:]}")
+        return r
 
     def _head(self) -> str | None:
         r = self._run("rev-parse", "--verify", "-q", "HEAD")
@@ -54,56 +65,73 @@ class BrainRepo:
         with self._lock:
             self.path.mkdir(parents=True, exist_ok=True)
             if not (self.path / ".git").exists():
-                self._run("init", "-b", "main")
-            self._run("config", "user.name", "BrainHub")
-            self._run("config", "user.email", "brainhub@localhost")
-            self._run("config", "core.autocrlf", "false")
+                self._check(self._run("init", "-b", "main"), "init")
+            self._ensure_repo()
+            self._check(self._run("config", "user.name", "BrainHub"), "config")
+            self._check(self._run("config", "user.email", "brainhub@localhost"), "config")
+            self._check(self._run("config", "core.autocrlf", "false"), "config")
 
     def is_dirty(self) -> bool:
         with self._lock:
+            self._ensure_repo()
             return bool(self._changed())
 
     def changed_paths(self) -> list[str]:
         with self._lock:
+            self._ensure_repo()
             return self._changed()
 
     def commit_all(self, message: str) -> str | None:
         with self._lock:
-            self._run("add", "-A")
+            self._ensure_repo()
+            self._check(self._run("add", "-A"), "add")
             if not self._changed():
                 return None
-            r = self._run("commit", "-m", message)
-            if r.returncode != 0:
-                return None
+            self._check(self._run("commit", "-m", message), "commit")
             return self._head()
 
     def head(self) -> str | None:
         with self._lock:
+            self._ensure_repo()
             return self._head()
 
     def revert(self, sha: str) -> bool:
         with self._lock:
+            self._ensure_repo()
             r = self._run("revert", "--no-edit", sha)
             if r.returncode != 0:
                 self._run("revert", "--abort")
                 return False
             return True
 
+    @staticmethod
+    def _validate_rel(p: str) -> None:
+        norm = p.replace("\\", "/")
+        if (
+            not p or p == "." or p.startswith(":") or Path(p).is_absolute()
+            or norm.startswith("/") or ".." in norm.split("/")
+        ):
+            raise ValueError(f"invalid repo-relative path: {p!r}")
+
     def restore_paths(self, paths: list[str]) -> None:
+        for p in paths:
+            self._validate_rel(p)
         if not paths:
             return
         with self._lock:
+            self._ensure_repo()
             if self._head() is not None:
-                tracked = self._run("ls-tree", "-r", "--name-only", "HEAD", "--", *paths).stdout.split()
-                if tracked:
-                    self._run("checkout", "HEAD", "--", *paths)
-            self._run("clean", "-fd", "--", *paths)
+                ls = self._check(self._run("ls-tree", "-r", "--name-only", "HEAD", "--", *paths), "ls-tree")
+                if ls.stdout.split():
+                    self._check(self._run("checkout", "HEAD", "--", *paths), "checkout")
+            self._check(self._run("clean", "-fd", "--", *paths), "clean")
 
     def discard_changes(self) -> None:
         with self._lock:
+            self._ensure_repo()
             if self._head() is not None:
-                self._run("reset", "--hard", "HEAD")
-            self._run("clean", "-fd")
+                self._check(self._run("reset", "--hard", "HEAD"), "reset")
+            self._check(self._run("clean", "-fd"), "clean")
 
     def push(self, remote_url: str) -> tuple[bool, str]:
         r = self._git("push", remote_url, "HEAD:refs/heads/main")
@@ -111,20 +139,31 @@ class BrainRepo:
 
     # -- worktrees / cherry-pick ------------------------------------------
     def worktree_add(self, path: Path) -> "BrainRepo":
+        path = Path(path).resolve()
         r = self._git("worktree", "add", "--detach", str(path), "HEAD")
-        if r.returncode != 0:
-            raise RuntimeError(f"git worktree add failed: {r.stderr.strip()}")
-        return BrainRepo(Path(path))
+        self._check(r, "worktree add")
+        return BrainRepo(path)
 
     def worktree_remove(self, path: Path) -> None:
+        path = Path(path).resolve()
+        me = self.path.resolve()
+        if path == me or path in me.parents or me in path.parents:
+            raise ValueError(f"refusing to remove {path}: it is, contains or is inside the repo {me}")
         with self._lock:
-            self._run("worktree", "remove", "--force", str(path))
-            if Path(path).exists():  # e.g. not a registered worktree, or Windows left residue
-                shutil.rmtree(path, ignore_errors=True)
+            self._ensure_repo()
+            listing = self._run("worktree", "list", "--porcelain").stdout.splitlines()
+            registered = any(
+                line.startswith("worktree ") and Path(line[9:]).resolve() == path for line in listing
+            )
+            if registered:
+                self._run("worktree", "remove", "--force", str(path))
+                if path.exists():  # Windows may leave residue after git removed the registration
+                    shutil.rmtree(path, ignore_errors=True)
             self._run("worktree", "prune")
 
     def cherry_pick(self, sha: str) -> str | None:
         with self._lock:
+            self._ensure_repo()
             r = self._run("cherry-pick", sha)
             if r.returncode != 0:
                 self._run("cherry-pick", "--abort")
