@@ -222,3 +222,25 @@ async def test_startup_backfills_entry_missing_from_store_and_fts(aiohttp_client
 
 def test_binds_localhost_only():
     assert DEFAULT_HOST == "127.0.0.1"
+
+
+async def test_search_endpoint_returns_hits_without_claude(ready_client, app):
+    await ready_client.post("/api/entries", json={"text": "wrist servo", "source": "pc"})
+    hits = await (await ready_client.get("/api/search", params={"q": "wrist"})).json()
+    assert hits and app["runner"].calls == []
+
+
+async def test_notes_rejects_path_escape(ready_client):
+    assert (await ready_client.get("/api/notes", params={"prefix": "../"})).status == 400
+
+
+async def test_notes_lists_markdown_and_rejects_private_folders(ready_client, app_paths):
+    folder = app_paths.brain / "projects" / "robotarm"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "notes.md").write_bytes("J5 servo é".encode("utf-8") + b"\xff")
+    (folder / "skip.txt").write_text("no")
+    got = await (await ready_client.get("/api/notes", params={"prefix": "projects/robotarm/"})).json()
+    assert [n["path"] for n in got] == ["projects/robotarm/notes.md"] and "J5 servo" in got[0]["text"]
+    for bad in ("log/", "_items/x", ".git/", "projects/../log/", "", "../../etc"):
+        assert (await ready_client.get("/api/notes", params={"prefix": bad})).status == 400, bad
+    assert await (await ready_client.get("/api/notes", params={"prefix": "projects/none/"})).json() == []

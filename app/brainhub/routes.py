@@ -7,6 +7,7 @@ import json
 import logging
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 
 from aiohttp import web
 
@@ -401,6 +402,53 @@ async def ask_deeper(request: web.Request) -> web.StreamResponse:
         app["runner"], q, settings, paths.prompts, paths.brain))
 
 
+async def search(request: web.Request) -> web.Response:
+    """Instant local full-text hits. Never calls Claude."""
+    q = _question(request)
+    settings = await t(load_settings, request.app["paths"])
+    hits = await t(search_hits, request.app["store"], q, settings["recall_top_n"])
+    return web.json_response([asdict(h) for h in hits])
+
+
+NOTES_HIDDEN = ("log", "_items", ".git")
+NOTES_CAP = 200
+
+
+def _notes(brain: Path, prefix: str) -> list[dict] | None:
+    """Markdown notes under brain/<prefix>; None when the prefix is not allowed."""
+    root = brain.resolve()
+    if not prefix.strip() or "\0" in prefix:
+        return None
+    try:
+        target = (root / prefix).resolve()
+        parts = target.relative_to(root).parts
+    except (ValueError, OSError):
+        return None
+    if not parts or parts[0] in NOTES_HIDDEN or parts[0].startswith("."):
+        return None
+    files = [target] if target.is_file() else sorted(target.rglob("*.md")) if target.is_dir() else []
+    out = []
+    for f in files:
+        try:
+            rel = f.resolve().relative_to(root)
+        except (ValueError, OSError):
+            continue
+        if f.suffix != ".md" or not f.is_file() or any(
+                x in NOTES_HIDDEN or x.startswith(".") for x in rel.parts):
+            continue
+        out.append({"path": rel.as_posix(), "text": f.read_text(encoding="utf-8", errors="replace")})
+        if len(out) >= NOTES_CAP:
+            break
+    return out
+
+
+async def get_notes(request: web.Request) -> web.Response:
+    notes = await t(_notes, request.app["paths"].brain, request.query.get("prefix", ""))
+    if notes is None:
+        return err(400, "prefix must be a folder inside the brain notes")
+    return web.json_response(notes)
+
+
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
@@ -428,6 +476,7 @@ def add_routes(app: web.Application) -> None:
         web.patch("/api/proposals/{id}", patch_proposal),
         web.get("/api/items", get_items), web.patch("/api/items/{id}", patch_item),
         web.get("/api/today", get_today),
+        web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
         web.get("/ws", ws_handler),
     ])

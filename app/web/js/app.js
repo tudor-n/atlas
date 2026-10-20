@@ -45,11 +45,11 @@ function comingSoon(title) {
 
 export const views = {
   today: () => import('./views/today.js'),
-  ask: comingSoon('Ask'),
-  journal: comingSoon('Journal'),
-  project: comingSoon('Project'),
-  people: comingSoon('People'),
-  deadlines: comingSoon('Deadlines'),
+  ask: () => import('./views/ask.js'),
+  journal: () => import('./views/journal.js'),
+  project: () => import('./views/browse.js').then((m) => ({ render: m.renderProject })),
+  people: () => import('./views/browse.js').then((m) => ({ render: m.renderPeople })),
+  deadlines: () => import('./views/browse.js').then((m) => ({ render: m.renderDeadlines })),
   settings: comingSoon('Settings'),
   setup: comingSoon('Setup'),
 };
@@ -61,9 +61,11 @@ const NAV = [['today', 'Today'], ['ask', 'Ask'], ['journal', 'Journal'], ['peopl
 let cleanup = null;
 let routeToken = 0;
 
+// "#/journal?entry=e-1" -> name 'journal', params [], query URLSearchParams(entry=e-1)
 function parseHash() {
-  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  return { name: parts[0] || 'today', params: parts.slice(1) };
+  const [path, qs = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
+  return { name: parts[0] || 'today', params: parts.slice(1), query: new URLSearchParams(qs) };
 }
 
 function renderNav(name) {
@@ -75,7 +77,7 @@ function renderNav(name) {
 
 async function route() {
   const token = ++routeToken;
-  const { name, params } = parseHash();
+  const { name, params, query } = parseHash();
   await refreshState();
   if (token !== routeToken) return;
   if (!state.setup_done && name !== 'setup') {
@@ -93,7 +95,7 @@ async function route() {
   try {
     const mod = await loader();
     if (token !== routeToken) return;
-    const result = await mod.render(container, params);
+    const result = await mod.render(container, params, query);
     if (token !== routeToken) { if (typeof result === 'function') result(); return; }
     cleanup = typeof result === 'function' ? result : null;
   } catch (e) {
