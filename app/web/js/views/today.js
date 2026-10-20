@@ -1,4 +1,5 @@
-// Today (spec 3.2): To review, Overdue, Due today, Upcoming reminders, Next time, Waiting, To read, Open tasks.
+// Today (spec 3.2): To review, Overdue, Due today, Upcoming reminders, Next time, Waiting, To read, Open tasks,
+// and Other open items (anything open that fits nowhere else, so nothing confirmed ever vanishes).
 import * as api from '../api.js';
 import { el, clear, fmtWhen } from '../dom.js';
 import { confirmCard } from '../components/confirm-card.js';
@@ -67,6 +68,7 @@ export async function render(container) {
     root.appendChild(section('Waiting', today.waiting, waitingList));
     root.appendChild(section('To read', today.to_read, itemList));
     root.appendChild(section('Open tasks', today.open_tasks, itemList));
+    root.appendChild(section('Other open items', today.other || [], itemList));
   }
 
   // -- To review ----------------------------------------------------------------------------

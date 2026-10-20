@@ -95,8 +95,10 @@ export function renderPeople(container) {
 // -- #/deadlines ---------------------------------------------------------------------------
 export function renderDeadlines(container) {
   return page(container, 'Deadlines', async (body, isDead) => {
-    const items = live(await api.get('/api/items')).filter((i) => i.due)
-      .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+    // Dated means a due date or, failing that, a reminder date.
+    const when = (i) => i.due || i.remind_at;
+    const items = live(await api.get('/api/items')).filter(when)
+      .sort((a, b) => (when(a) < when(b) ? -1 : when(a) > when(b) ? 1 : 0));
     if (isDead()) return;
     body.appendChild(items.length ? itemList(items) : el('p', { class: 'empty' }, 'No dated items.'));
   });
