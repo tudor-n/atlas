@@ -34,6 +34,7 @@ from pathlib import Path
 
 _WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 _STDERR_TAIL = 2000
+_STREAM_LIMIT = 16 * 1024 * 1024
 
 
 class ClaudeError(Exception):
@@ -73,7 +74,7 @@ class ClaudeRunner:
         proc = await asyncio.create_subprocess_exec(
             self.claude_path, *args, cwd=str(cwd), env=child_env(),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=16 * 1024 * 1024)
+            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT)
         try:
             proc.stdin.write(prompt.encode("utf-8"))
             await proc.stdin.drain()
@@ -132,7 +133,9 @@ class ClaudeRunner:
             raise ClaudeError("unparsable claude output: not an object")
         structured = data.get("structured_output")
         if not isinstance(structured, dict):
-            raise ClaudeError("claude returned no structured output")
+            raise ClaudeError(
+                f"claude returned no structured output (subtype={data.get('subtype')!r}, "
+                f"is_error={data.get('is_error')!r}, result={str(data.get('result'))[:300]!r})")
         return structured
 
     async def stream_text(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
@@ -156,23 +159,30 @@ class ClaudeRunner:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise asyncio.TimeoutError
-                line = await asyncio.wait_for(proc.stdout.readline(), remaining)
+                try:
+                    line = await asyncio.wait_for(proc.stdout.readline(), remaining)
+                except (ValueError, asyncio.LimitOverrunError):
+                    raise ClaudeError("stream line too long") from None
                 if not line:
                     break
                 try:
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                if ev.get("type") != "stream_event":
+                if not isinstance(ev, dict) or ev.get("type") != "stream_event":
                     continue
-                inner = ev.get("event") or {}
-                delta = inner.get("delta") or {}
+                inner = ev.get("event")
+                if not isinstance(inner, dict):
+                    continue
+                delta = inner.get("delta")
+                if not isinstance(delta, dict):
+                    continue
                 if inner.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
                     text = delta.get("text")
                     if text:
                         yield text
             await asyncio.wait_for(proc.wait(), max(deadline - time.monotonic(), 0.1))
-            await drain_task
+            await asyncio.wait_for(drain_task, max(deadline - time.monotonic(), 0.1))
             if proc.returncode != 0:
                 raise ClaudeError(f"claude exited {proc.returncode}: {self._tail(bytes(stderr_buf))}")
         except asyncio.TimeoutError:

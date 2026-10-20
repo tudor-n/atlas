@@ -109,3 +109,34 @@ async def test_fake_runner_records_and_behaves(tmp_path):
     boom = FakeRunner(raise_error=ClaudeError("no"))
     with pytest.raises(ClaudeError):
         await boom.run_json("p", cwd=tmp_path)
+
+
+_JUNK = (
+    "import sys,json\nsys.stdin.read()\n"
+    "print('42')\nprint('[1]')\nprint('null')\nprint('not json')\nprint('{\"type\":')\n"
+    "print(json.dumps({'type':'stream_event','event':'oops'}))\n"
+    "print(json.dumps({'type':'stream_event','event':{'type':'content_block_delta','delta':[1]}}))\n"
+    "print(json.dumps({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'ok'}}}))\n")
+
+
+async def test_stream_text_ignores_malformed_lines(tmp_path):
+    r = ClaudeRunner(_fake_cli(tmp_path, _JUNK))
+    got = [c async for c in r.stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                          timeout_s=20, **_KW)]
+    assert got == ["ok"]
+
+
+async def test_stream_text_line_too_long(tmp_path, monkeypatch):
+    import brainhub.claude_runner as cr
+    monkeypatch.setattr(cr, "_STREAM_LIMIT", 1024)
+    r = ClaudeRunner(_fake_cli(tmp_path, "import sys,time\nsys.stdin.read()\nprint('x'*5000,flush=True)\ntime.sleep(30)\n"))
+    with pytest.raises(ClaudeError, match="too long"):
+        [c async for c in r.stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                        timeout_s=20, **_KW)]
+
+
+async def test_run_json_error_subtype_in_message(tmp_path):
+    r = ClaudeRunner(_fake_cli(tmp_path, "print('{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"result\":\"ran out\"}')\n"))
+    with pytest.raises(ClaudeError, match="error_max_turns"):
+        await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                         json_schema={}, timeout_s=20, **_KW)
