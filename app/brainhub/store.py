@@ -73,9 +73,16 @@ class Store:
 
     # entries
     def add_entry(self, e: Entry) -> None:
+        """Idempotent for the same entry; a different entry under an existing id raises
+        ValueError instead of silently replacing it."""
+        row = (e.id, e.ts.isoformat(), e.source, e.text)
         with self._lock, self._db:
-            self._db.execute("INSERT OR REPLACE INTO entries VALUES(?,?,?,?)",
-                             (e.id, e.ts.isoformat(), e.source, e.text))
+            r = self._db.execute("SELECT * FROM entries WHERE id=?", (e.id,)).fetchone()
+            if r is not None:
+                if tuple(r) != row:
+                    raise ValueError(f"entry id collision: {e.id} already holds a different entry")
+                return
+            self._db.execute("INSERT INTO entries VALUES(?,?,?,?)", row)
 
     def get_entry(self, id: str) -> Entry | None:
         with self._lock:

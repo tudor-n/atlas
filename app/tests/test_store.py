@@ -130,3 +130,11 @@ def test_export_format_grouping_and_determinism(store, tmp_path):
     assert [d["id"] for d in data] == sorted(d["id"] for d in data) and len(data) == 2
     store.export_items(tmp_path)
     assert (tmp_path/"_items"/"items.json").read_text(encoding="utf-8") == first
+
+
+def test_add_entry_is_idempotent_but_never_replaces_a_different_entry(store):
+    e = Entry("e-20261020-140322-ab12", datetime(2026,10,20,14,3,22), "pc", "hello")
+    store.add_entry(e); store.add_entry(e)
+    with pytest.raises(ValueError, match="collision"):
+        store.add_entry(Entry(e.id, e.ts, "pc", "a different text"))
+    assert store.get_entry(e.id).text == "hello" and len(store.list_entries()) == 1
