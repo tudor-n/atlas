@@ -23,3 +23,26 @@ class FakeRunner:
         self._begin(prompt, kwargs)
         for chunk in self.stream_chunks:
             yield chunk
+
+
+class FakeRepo:
+    """Test double for BrainRepo.push. Records remotes in `.pushes`; `results` scripts ok/fail."""
+
+    def __init__(self, results: list[bool]):
+        self.results = list(results)
+        self.pushes: list[str] = []
+
+    def push(self, remote_url: str) -> tuple[bool, str]:
+        self.pushes.append(remote_url)
+        ok = self.results.pop(0)
+        return ok, "" if ok else "err"
+
+
+class Clock:
+    """Callable fake clock with a settable `.t`."""
+
+    def __init__(self, t: float = 0):
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
