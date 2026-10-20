@@ -35,7 +35,7 @@ export const put = (path, body) => request('PUT', path, body);
 // first connect), so views can refetch what they missed while the socket was down.
 const listeners = new Map();
 let started = false;
-let opened = false;
+let wasConnected = false;
 
 function dispatch(type, msg) {
   for (const fn of [...(listeners.get(type) || [])]) {
@@ -47,8 +47,8 @@ function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const socket = new WebSocket(`${proto}://${location.host}/ws`);
   socket.onopen = () => {
-    if (opened) dispatch('ws.open', { type: 'ws.open', data: {} });
-    opened = true;
+    if (wasConnected) dispatch('ws.open', { type: 'ws.open', data: {} });
+    wasConnected = true;
   };
   socket.onmessage = (ev) => {
     let msg;

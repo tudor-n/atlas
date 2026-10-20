@@ -1,7 +1,7 @@
 // Confirm card (spec 5.3): what was filed, one row per proposal, confirm / edit / dismiss,
 // "Confirm all", "Tell it what's wrong", and Retry for failed filings.
 import * as api from '../api.js';
-import { el, clear, fmtWhen } from '../app.js';
+import { el, clear, fmtWhen } from '../dom.js';
 
 // -- map cache (project options) ------------------------------------------------------------
 let mapCache = null;
@@ -55,11 +55,19 @@ function orderProposals(proposals) {
   return out;
 }
 
+// Per-entry UI drafts (typed correction, open edit and its field values, last message). They live
+// outside the card so a re-render, reload or recreated card never loses what the owner typed.
+const drafts = new Map();
+function draftFor(entryId) {
+  if (!drafts.has(entryId)) drafts.set(entryId, { correction: '', editing: null, edits: {}, msg: '' });
+  return drafts.get(entryId);
+}
+
 export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   const root = el('section', { class: 'card', 'aria-label': 'Filing review' });
   const s = {
-    data: null, map: null, items: {}, editing: null, msg: '', correction: '', loadError: '', busy: false,
-    notice: '',
+    data: null, map: null, items: {}, loadError: '', notice: '',
+    draft: draftFor(entryId),
   };
   const unsubs = [];
   let destroyed = false;
@@ -92,11 +100,11 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   const pending = () => (s.data ? s.data.proposals.filter((p) => p.status === 'proposed') : []);
 
   async function act(fn, errPrefix) {
-    s.msg = '';
+    s.draft.msg = '';
     try {
       await fn();
     } catch (e) {
-      s.msg = `${errPrefix}: ${e.message}`;
+      s.draft.msg = `${errPrefix}: ${e.message}`;
     }
     await reload();
     if (onChange) onChange();
@@ -124,7 +132,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: 'Confirm', disabled: !canConfirm || null,
         onclick: () => confirmIds([p.id]) }, '✓'),
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Edit', title: 'Edit',
-        onclick: () => { s.editing = p.id; render(); } }, '✎'),
+        onclick: () => { s.draft.editing = p.id; render(); } }, '✎'),
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss',
         onclick: () => dismissIds([p.id]) }, '✕'));
   }
@@ -177,34 +185,50 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
 
   function editRow(p) {
     const pl = p.payload;
-    const cancel = () => { s.editing = null; render(); };
+    const saved = s.draft.edits[p.id] || (s.draft.edits[p.id] = {});
+    // Field values are mirrored into the draft as they change, so a redraw restores them.
+    const track = (key, ctrl) => {
+      if (saved[key] !== undefined) ctrl.value = saved[key];
+      const store = () => { saved[key] = ctrl.value; };
+      ctrl.addEventListener('input', store);
+      ctrl.addEventListener('change', store);
+      return ctrl;
+    };
+    const close = () => { s.draft.editing = null; delete s.draft.edits[p.id]; };
+    const cancel = () => { close(); render(); };
     const keys = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); cancel(); } };
     let controls;
     let collect;
     if (p.ptype === 'item') {
-      const text = el('input', { type: 'text', value: pl.text || '' });
-      const kind = select(KINDS.map((k) => [k, KIND_LABEL[k]]), pl.kind);
+      const text = track('text', el('input', { type: 'text', value: pl.text || '' }));
+      const kind = track('kind', select(KINDS.map((k) => [k, KIND_LABEL[k]]), pl.kind));
       const projects = (s.map && s.map.projects) || [];
       const opts = [['', '(none)'], ...projects.map((x) => [x.slug, x.name || x.slug])];
       if (pl.project && !opts.some(([v]) => v === pl.project)) opts.push([pl.project, `${pl.project} (new)`]);
-      const project = select(opts, pl.project || '');
-      const timed = pl.due && pl.due.length > 10;
-      const due = el('input', { type: timed ? 'datetime-local' : 'date', value: pl.due || '' });
-      controls = [field('What', text, true), field('Kind', kind), field('Project', project), field('Date', due)];
+      const project = track('project', select(opts, pl.project || ''));
+      // A reminder (or an item with only a remind time) edits remind_at; everything else edits due.
+      const key = (pl.kind === 'reminder' || (pl.remind_at && !pl.due)) ? 'remind_at' : 'due';
+      const current = pl[key] || '';
+      const date = track(key, el('input', { type: current.length > 10 ? 'datetime-local' : 'date', value: current }));
+      controls = [field('What', text, true), field('Kind', kind), field('Project', project),
+        field(key === 'remind_at' ? 'Remind at' : 'Date', date)];
       collect = () => {
         const patch = {};
         if (text.value !== (pl.text || '')) patch.text = text.value;
         if (kind.value !== pl.kind) patch.kind = kind.value;
         if ((project.value || null) !== (pl.project || null)) patch.project = project.value || null;
-        if ((due.value || null) !== (pl.due || null)) { patch.due = due.value || null; patch.remind_at = null; }
+        if (date.value !== current) {
+          patch[key] = date.value || null;
+          if (key === 'due') patch.remind_at = null;
+        }
         return patch;
       };
     } else if (p.ptype === 'node') {
-      const name = el('input', { type: 'text', value: pl.name || '' });
+      const name = track('name', el('input', { type: 'text', value: pl.name || '' }));
       controls = [field('Name', name, true)];
       collect = () => (name.value !== (pl.name || '') ? { name: name.value } : {});
     } else {
-      const status = select(UPDATE_STATUSES.map((v) => [v, v === 'done' ? 'done' : 'to read']), pl.status);
+      const status = track('status', select(UPDATE_STATUSES.map((v) => [v, v === 'done' ? 'done' : 'to read']), pl.status));
       controls = [field('New status', status)];
       collect = () => (status.value !== pl.status ? { status: status.value } : {});
     }
@@ -215,8 +239,8 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
       saveBtn.disabled = true;
       try {
         await api.patch(`/api/proposals/${encodeURIComponent(p.id)}`, patch);
-        s.editing = null;
-        s.msg = '';
+        close();
+        s.draft.msg = '';
         await reload();
       } catch (e) {
         errBox.textContent = `Not saved: ${e.message}`;
@@ -233,8 +257,8 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   // -- correction and retry -----------------------------------------------------------------
   function correctionBox() {
     const ta = el('textarea', { id: `fix-${entryId}`, rows: 2, placeholder: 'e.g. the present is for the 12th',
-      oninput: () => { s.correction = ta.value; } });
-    ta.value = s.correction;
+      oninput: () => { s.draft.correction = ta.value; } });
+    ta.value = s.draft.correction;
     const err = el('div', { class: 'error', role: 'alert' });
     const btn = el('button', { type: 'button', onclick: async () => {
       const text = ta.value.trim();
@@ -243,7 +267,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
       err.textContent = '';
       try {
         await api.post(`/api/filings/${encodeURIComponent(entryId)}/correct`, { text });
-        s.correction = '';
+        s.draft.correction = '';
         ta.value = '';
         s.notice = 'Re-filing with your correction…';
         render();
@@ -301,11 +325,11 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
       root.appendChild(el('p', { class: 'empty' }, 'Nothing left to review.'));
     } else {
       root.appendChild(el('ul', { class: 'rows' }, orderProposals(list).map((p) => {
-        if (s.editing === p.id) return editRow(p);
+        if (s.draft.editing === p.id) return editRow(p);
         return p.ptype === 'node' ? nodeRow(p) : p.ptype === 'update' ? updateRow(p) : itemRow(p);
       })));
     }
-    if (s.msg) root.appendChild(el('div', { class: 'error', role: 'alert' }, s.msg));
+    if (s.draft.msg) root.appendChild(el('div', { class: 'error', role: 'alert' }, s.draft.msg));
     const foot = el('div', { class: 'card-foot' });
     if (list.length > 0) {
       const ok = list.filter((p) => !(p.ptype === 'update' && ((p.warnings || []).some((w) => /unknown item/i.test(w)) || !p.payload.item_id)));

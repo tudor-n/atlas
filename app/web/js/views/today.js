@@ -1,6 +1,6 @@
 // Today (spec 3.2): To review, Overdue, Due today, Upcoming reminders, Next time, Waiting, To read, Open tasks.
 import * as api from '../api.js';
-import { el, clear, fmtWhen } from '../app.js';
+import { el, clear, fmtWhen } from '../dom.js';
 import { confirmCard } from '../components/confirm-card.js';
 
 const openCards = new Set();   // entry ids the owner expanded; survives re-renders
@@ -30,7 +30,7 @@ export async function render(container) {
 
   function typing() {
     const a = document.activeElement;
-    return a && root.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT');
+    return a && root.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT');
   }
 
   async function refresh() {
@@ -50,7 +50,8 @@ export async function render(container) {
     }
   }
 
-  root.addEventListener('focusout', () => {
+  root.addEventListener('focusout', (ev) => {
+    if (ev.relatedTarget && root.contains(ev.relatedTarget)) return;  // moving to a button inside the view
     setTimeout(() => { if (dirty && !typing()) { dirty = false; refresh(); } }, 0);
   });
 

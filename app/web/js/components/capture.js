@@ -1,6 +1,6 @@
 // The always-visible capture box. Text is cleared only after the server answers 201.
 import * as api from '../api.js';
-import { el } from '../app.js';
+import { el } from '../dom.js';
 
 export function mountCapture(root, { onSaved }) {
   const input = el('textarea', {
@@ -28,7 +28,7 @@ export function mountCapture(root, { onSaved }) {
     status.textContent = 'Saving…';
     try {
       const res = await api.post('/api/entries', { text, source: 'pc' });
-      input.value = '';  // 201: the log has it, so it is safe to clear
+      if (input.value === text) input.value = '';  // 201: the log has it; keep anything typed meanwhile
       status.textContent = 'Saved · filing…';
       onSaved(res.entry_id, text);
     } catch (e) {
