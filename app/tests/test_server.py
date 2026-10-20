@@ -417,3 +417,52 @@ async def test_startup_rebuilds_notes_and_skips_dot_folders(aiohttp_client, app_
     assert await _refs(c2, "narwhal") == ["general/n.md"]
     assert await _refs(c2, "aardvark") == []
     assert state["log_error"] is None
+
+
+def _delete_db(app_paths):
+    for suffix in ("", "-wal", "-shm"):
+        f = app_paths.db.with_name(app_paths.db.name + suffix)
+        if f.exists():
+            f.unlink()
+
+
+async def test_rebuilt_index_marks_filed_entries_done_and_keeps_pending_proposals(
+        ready_client, app, aiohttp_client, app_paths):
+    eid = (await (await ready_client.post("/api/entries", json={"text": "wrist servo", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid)
+    before = app["store"].get_filing(eid)
+    pending = [p.id for p in app["store"].list_proposals(entry_id=eid)]
+    assert before.status == "done" and before.commit and pending
+    await ready_client.close()
+    _delete_db(app_paths)
+    app2, c2, state = await _started(aiohttp_client, app_paths)
+    f = app2["store"].get_filing(eid)
+    assert f.status == "done" and f.commit == before.commit
+    assert f.synopsis and before.synopsis.startswith(f.synopsis)
+    assert app2["worker"].queue.qsize() == 0          # never re-filed
+    assert [p.id for p in app2["store"].list_proposals(entry_id=eid)] == pending
+    card = await (await c2.get(f"/api/filings/{eid}")).json()
+    assert card["filing"]["status"] == "done" and len(card["proposals"]) == len(pending)
+    assert state["startup_error"] is None
+
+
+async def test_many_unfiled_entries_wait_for_retry_few_are_queued(aiohttp_client, app_paths, tmp_path):
+    from brainhub.filing import UNFILED_AT_STARTUP
+    from brainhub.rawlog import append_entry
+    _setup_brain(app_paths)
+    ids = [append_entry(app_paths.brain, f"backlog {i}", "pc").id for i in range(11)]
+    app, c, _ = await _started(aiohttp_client, app_paths)
+    assert app["worker"].queue.qsize() == 0
+    assert all(app["store"].get_filing(i).status == "failed" for i in ids)
+    assert app["store"].get_filing(ids[0]).error == UNFILED_AT_STARTUP
+    r = await c.post(f"/api/filings/{ids[0]}/retry")
+    assert r.status == 202 and app["worker"].queue.qsize() == 1
+
+
+async def test_ten_unfiled_entries_are_queued(aiohttp_client, app_paths):
+    from brainhub.rawlog import append_entry
+    _setup_brain(app_paths)
+    for i in range(10):
+        append_entry(app_paths.brain, f"backlog {i}", "pc")
+    app, c, _ = await _started(aiohttp_client, app_paths)
+    assert app["worker"].queue.qsize() == 10

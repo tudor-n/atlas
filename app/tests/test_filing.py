@@ -24,6 +24,12 @@ GOOD_RESULT = {
 }
 
 
+def only_proposals_pending(repo) -> bool:
+    """After a filing the main checkout is clean except the hub's own proposals mirror, which
+    rides along with the next hub commit."""
+    return set(repo.changed_paths()) <= {"_items/proposals.json"}
+
+
 @pytest.fixture
 def m():
     mm = add_node(default_map(), "project", "RobotArm", None)
@@ -78,7 +84,7 @@ async def test_file_entry_happy_path(env):           # env: paths, store, repo, 
     worker = env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit))
     await worker.file_entry(env.entry.id)
     f = env.store.get_filing(env.entry.id)
-    assert f.status == "done" and f.commit == env.repo.head() and not env.repo.is_dirty()
+    assert f.status == "done" and f.commit == env.repo.head() and only_proposals_pending(env.repo)
     assert [p.ptype for p in env.store.list_proposals(entry_id=env.entry.id)] == ["item"]
     assert env.store.search('"wrist"', 5)
 
@@ -148,7 +154,7 @@ async def test_cherry_pick_conflict_fails_cleanly(env):
     await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=conflict)).file_entry(env.entry.id)
     f = env.store.get_filing(env.entry.id)
     assert f.status == "failed" and "conflict" in f.error
-    assert target.read_text(encoding="utf-8") == "owner" and not env.repo.is_dirty()
+    assert target.read_text(encoding="utf-8") == "owner" and only_proposals_pending(env.repo)
     assert not (env.paths.data/"worktrees"/env.entry.id).exists()
 
 
@@ -167,7 +173,7 @@ async def test_concurrent_corrections_are_serialized(env):
     assert all(r is None or (isinstance(r, ValueError) and "in progress" in str(r)) for r in results), results
     assert env.store.get_filing(env.entry.id).status == "done"
     assert len(env.store.list_proposals(entry_id=env.entry.id)) == 1
-    assert not env.repo.is_dirty() and not (env.paths.data/"worktrees"/env.entry.id).exists()
+    assert only_proposals_pending(env.repo) and not (env.paths.data/"worktrees"/env.entry.id).exists()
 
 
 async def test_correct_refuses_while_filing_queued(env):
@@ -244,3 +250,35 @@ async def test_dot_files_and_git_config_are_protected(env):
     assert not (b/".gitattributes").exists() or "text=auto" not in (b/".gitattributes").read_text(encoding="utf-8")
     assert (b/"general"/"ok.md").exists()
     assert any("protected" in w for p in env.store.list_proposals() for w in p.warnings)
+
+
+async def test_filing_with_no_file_changes_still_leaves_a_filing_commit(env):
+    await env.worker(FakeRunner(json_result=GOOD_RESULT)).file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.commit == env.repo.head()
+    subject = env.repo._run("log", "-1", "--format=%s").stdout.strip()
+    assert subject.startswith(f"file {env.entry.id}: ")
+    assert env.repo.filing_commits()[env.entry.id][0] == f.commit
+
+
+async def test_pending_proposals_are_mirrored_and_swept_as_sync_items(env):
+    import json as _json
+    second = append_entry(env.paths.brain, "another", "pc"); env.store.add_entry(second)
+    env.repo.commit_all("capture")
+    w = env.worker(FakeRunner(json_result=GOOD_RESULT))
+    await w.file_entry(env.entry.id)
+    mirror = _json.loads((env.paths.brain/"_items"/"proposals.json").read_text(encoding="utf-8"))
+    assert [d["id"] for d in mirror] == [p.id for p in env.store.list_proposals()]
+    assert env.repo.changed_paths() == ["_items/proposals.json"]
+    await w.file_entry(second.id)  # sweeps the mirror before filing
+    subjects = env.repo._run("log", "--format=%s").stdout.splitlines()
+    assert "sync _items" in subjects and "owner edits" not in subjects
+
+
+def test_recover_from_history_marks_done(env):
+    sha = env.repo.commit_all(f"file {env.entry.id}: wrist check", allow_empty=True)
+    w = env.worker(FakeRunner())
+    assert w.recover_from_history() == 1
+    f = env.store.get_filing(env.entry.id)
+    assert (f.status, f.commit, f.synopsis) == ("done", sha, "wrist check")
+    assert w.requeue_unfinished() == []

@@ -108,3 +108,17 @@ def test_push_treats_dash_remote_as_a_destination_not_an_option(tmp_path):
     marker = tmp_path.parent / "pwned.txt"
     ok, _ = r.push(f"--receive-pack=touch {marker}")
     assert not ok and not marker.exists()
+
+
+def test_filing_commits_and_in_history(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    assert r.filing_commits() == {}
+    (tmp_path/"rețete.md").write_text("x", encoding="utf-8")
+    old = r.commit_all("file e-20261020-140322-ab12: first try")
+    new = r.commit_all("file e-20261020-140322-ab12: second", allow_empty=True)
+    r.commit_all('Revert "file e-20261020-150000-cd34: x"', allow_empty=True)
+    got = r.filing_commits()
+    assert list(got) == ["e-20261020-140322-ab12"]
+    assert got["e-20261020-140322-ab12"] == (new, "second", [])
+    assert r.in_history(old) and r.in_history(new)
+    assert not r.in_history("0" * 40) and not r.in_history("--all") and not r.in_history("")

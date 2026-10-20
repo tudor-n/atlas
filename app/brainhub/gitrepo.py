@@ -1,4 +1,5 @@
 """Git operations on the brain/ folder (its own repo). Thread-safe per repo path."""
+import re
 import shutil
 import subprocess
 import threading
@@ -7,6 +8,9 @@ from pathlib import Path
 # Raw-log records carry exact lengths: no checkout (e.g. a clone with core.autocrlf=true)
 # may ever convert line endings in brain/.
 GITATTRIBUTES = "* -text\n"
+_SHA = re.compile(r"[0-9a-f]{7,64}")
+# The subject of a filing commit: "file <entry id>: <synopsis>" (filing.py writes it).
+_FILING_SUBJECT = re.compile(r"file (e-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}):\s?(.*)")
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -95,19 +99,47 @@ class BrainRepo:
             self._ensure_repo()
             return self._changed()
 
-    def commit_all(self, message: str) -> str | None:
+    def commit_all(self, message: str, allow_empty: bool = False) -> str | None:
+        """Commit everything; None when there is nothing to commit (unless allow_empty)."""
         with self._lock:
             self._ensure_repo()
             self._check(self._run("add", "-A"), "add")
-            if not self._changed():
+            if not self._changed() and not allow_empty:
                 return None
-            self._check(self._run("commit", "-m", message), "commit")
+            self._check(self._run("commit", "--allow-empty", "-m", message), "commit")
             return self._head()
 
     def head(self) -> str | None:
         with self._lock:
             self._ensure_repo()
             return self._head()
+
+    def in_history(self, sha: str) -> bool:
+        """True if `sha` is a commit reachable from HEAD."""
+        if not sha or not _SHA.fullmatch(sha):
+            return False
+        with self._lock:
+            self._ensure_repo()
+            return self._run("merge-base", "--is-ancestor", sha, "HEAD").returncode == 0
+
+    def filing_commits(self) -> dict[str, tuple[str, str, list[str]]]:
+        """{entry id: (sha, synopsis, files)} from every `file <entry id>: <synopsis>` commit
+        in history, newest per entry. Lets a rebuilt index know what was already filed."""
+        with self._lock:
+            self._ensure_repo()
+            if self._head() is None:
+                return {}
+            r = self._check(self._run("-c", "core.quotepath=false", "log", "--name-only",
+                                      "--format=%x1e%H%x1f%s"), "log")
+        out: dict[str, tuple[str, str, list[str]]] = {}
+        for record in r.stdout.split("\x1e"):
+            head, _, rest = record.partition("\n")
+            sha, _, subject = head.partition("\x1f")
+            m = _FILING_SUBJECT.match(subject)
+            if m and m.group(1) not in out:  # git log is newest first
+                files = [ln.strip() for ln in rest.splitlines() if ln.strip()]
+                out[m.group(1)] = (sha.strip(), m.group(2).strip(), files)
+        return out
 
     def revert(self, sha: str) -> str | None:
         """Revert `sha`; the new commit's sha, or None (aborted) on a conflict."""
@@ -180,7 +212,8 @@ class BrainRepo:
     def cherry_pick(self, sha: str) -> str | None:
         with self._lock:
             self._ensure_repo()
-            r = self._run("cherry-pick", sha)
+            # A filing that changed no files is still a commit (its record in history).
+            r = self._run("cherry-pick", "--allow-empty", "--keep-redundant-commits", sha)
             if r.returncode != 0:
                 self._run("cherry-pick", "--abort")
                 return None

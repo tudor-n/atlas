@@ -32,6 +32,10 @@ MAX_TURNS = 25
 PROTECTED = {"log", "_items", "map.json", ".gitattributes", ".gitignore"}
 PROTECTED_WARNING = "agent tried to edit protected files"
 FIX_IN_PLACE = "Fix the files in place; earlier text from this entry may already exist."
+# Startup never mass-files a backlog it can't account for (e.g. after a lost index): past this
+# many entries with no filing record and no filing commit, they wait for the owner's Retry.
+MAX_AUTO_REQUEUE = 10
+UNFILED_AT_STARTUP = "not filed yet (found at startup) — press Retry when ready"
 # English names regardless of the process locale (calendar.day_name follows LC_TIME).
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -145,6 +149,12 @@ def _warn(proposals: list[tuple[str, dict, list[str]]], warning: str) -> None:
         proposals.append(("update", {}, [warning]))
 
 
+def sweep_message(changed: list[str]) -> str:
+    """Message for committing whatever is pending in the main checkout: "owner edits", unless
+    every change is the hub's own _items/ mirror (proposals.json after a filing or dismiss)."""
+    return "owner edits" if any(not p.startswith("_items/") for p in changed) else "sync _items"
+
+
 def protected_tops(changed: list[str]) -> list[str]:
     """Top-level names among `changed` the agent must not touch: the protected set (any case,
     since Windows folders are case-insensitive) and every dot-folder or dot-file (.git*,
@@ -192,9 +202,27 @@ class FilingWorker:
         self.mark_queued(entry_id)
         self.queue.put_nowait(entry_id)
 
+    def recover_from_history(self) -> int:
+        """Entries with no filing row whose `file <id>:` commit is in brain's history were
+        filed before the index was lost: record them as done, never file them again."""
+        missing = self.store.unfiled_entry_ids()
+        if not missing:
+            return 0
+        commits = self.repo.filing_commits()
+        n = 0
+        for entry_id in missing:
+            found = commits.get(entry_id)
+            if found:
+                sha, synopsis, files = found
+                self.store.upsert_filing(Filing(entry_id, "done", synopsis, files, commit=sha))
+                n += 1
+        return n
+
     def requeue_unfinished(self) -> list[str]:
         """Mark unfinished filings queued and return their ids; the caller puts them on the
-        queue from the event loop (asyncio.Queue is not thread-safe)."""
+        queue from the event loop (asyncio.Queue is not thread-safe). Interrupted filings are
+        always re-queued; entries never filed are queued only when there are at most
+        MAX_AUTO_REQUEUE of them, otherwise they are marked failed for the owner to retry."""
         leftovers = self.paths.data / "worktrees"
         if leftovers.is_dir():
             for d in leftovers.iterdir():
@@ -204,6 +232,13 @@ class FilingWorker:
                     except Exception:  # never block startup; file_entry retries the removal
                         log.exception("could not remove leftover worktree %s", d)
         ids = self.store.unfinished_filings()
+        unfiled = self.store.unfiled_entry_ids()
+        if len(unfiled) > MAX_AUTO_REQUEUE:
+            log.warning("%d unfiled entries at startup: marked failed, waiting for Retry", len(unfiled))
+            for entry_id in unfiled:
+                self.store.upsert_filing(Filing(entry_id, "failed", error=UNFILED_AT_STARTUP))
+            skip = set(unfiled)
+            ids = [i for i in ids if i not in skip]
         for entry_id in ids:
             self.mark_queued(entry_id)
         return ids
@@ -237,8 +272,9 @@ class FilingWorker:
             if entry is None:
                 raise ValueError(f"unknown entry: {entry_id}")
             # 1. main checkout: commit owner edits (and fresh captures) as they are
-            if await t(self.repo.is_dirty):
-                await t(self.on_commit, await t(self.repo.commit_all, "owner edits"))
+            pending = await t(self.repo.changed_paths)
+            if pending:
+                await t(self.on_commit, await t(self.repo.commit_all, sweep_message(pending)))
             # 2-3. a re-run never duplicates proposals
             await t(self.store.delete_proposals, entry_id)
             filing.attempts += 1
@@ -266,8 +302,9 @@ class FilingWorker:
             if protected:
                 await t(wt.restore_paths, protected)
                 _warn(proposals, PROTECTED_WARNING)
-            # 7. commit in the worktree, cherry-pick onto main
-            sha = await t(wt.commit_all, f"file {entry_id}: {synopsis[:60]}")
+            # 7. commit in the worktree, cherry-pick onto main. Always a commit, even with no
+            # file changes: "file <id>:" in history is how a rebuilt index knows it was filed.
+            sha = await t(wt.commit_all, f"file {entry_id}: {synopsis[:60]}", True)
             if sha:
                 new = await t(self.repo.cherry_pick, sha)
                 if new is None:
@@ -287,11 +324,15 @@ class FilingWorker:
             await t(self.store.upsert_filing, filing)
             await self.broadcast("filing.failed", {"entry_id": entry_id, "error": filing.error})
         finally:
-            # 9. always clean up the worktree
+            # 9. always clean up the worktree; mirror pending proposals into brain/_items
             try:
                 await t(self._remove_worktree, wt_path)
             except Exception:
                 log.exception("could not remove worktree %s", wt_path)
+            try:
+                await t(self.store.export_proposals, self.paths.brain)
+            except Exception:
+                log.exception("could not export proposals")
         if done:  # outside the try: a broadcast error can't turn a done filing into failed
             await self.broadcast("filing.done", {"entry_id": entry_id})
 

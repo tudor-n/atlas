@@ -28,8 +28,10 @@ Then open <http://127.0.0.1:8090>. `--port N` overrides the port (default 8090, 
 The setup wizard asks for your map: areas, projects (and which are companies, with their folders), courses and people, plus quiet hours and an optional backup remote. Finishing it creates the `brain/` git repo (commit `setup`). You can edit the map later in Settings.
 
 ## Where data lives
-- `brain/`: your Markdown notes, its own git repo. `log/` holds the verbatim raw entries, `_items/` the confirmed items, `map.json` the map. Every filing, confirmation and item edit is a commit; your own edits are committed as they are ("owner edits"). The agent never modifies `log/`, `_items/` or `map.json`.
-- `data/`: the SQLite index (`hub.db`), settings, and agent worktrees. Rebuildable from `brain/`, safe to delete.
+- `brain/`: your Markdown notes, its own git repo. `log/` holds the verbatim raw entries, `_items/` the confirmed items (`items.json`) and the proposals still waiting for you (`proposals.json`), `map.json` the map. Every filing, confirmation and item edit is a commit (a filing is `file <entry id>: <synopsis>`); your own edits are committed as they are ("owner edits"). The agent never modifies `log/`, `_items/`, `map.json` or any dot-file.
+- `data/hub.db`: the search index and filing state. It is a rebuildable index: if it is lost or damaged, the next start rebuilds it from `brain/` (entries filed before are recognised from their `file <entry id>:` commits and are not filed again; pending proposals come back from `_items/proposals.json`; if more than 10 entries turn out never to have been filed, they wait in To review for you to press Retry instead of all being filed at once).
+- `data/settings.json`: your preferences and the backup URL. Keep it; it is not in `brain/`.
+- `data/worktrees/`: temporary agent checkouts, removed after each filing.
 
 Both are git-ignored by the code repo.
 

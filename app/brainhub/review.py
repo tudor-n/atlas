@@ -157,6 +157,7 @@ class Reviewer:
             if i not in pending:
                 raise ValueError(f"unknown or already handled proposal: {i}")
         self.store.set_proposal_status(ids, "dismissed")
+        self.store.export_proposals(self.paths.brain)  # committed with the next hub commit
 
     def edit_proposal(self, id: str, patch: dict) -> Proposal:
         p = next((p for p in self.store.list_proposals(status="proposed") if p.id == id), None)
@@ -174,7 +175,9 @@ class Reviewer:
             raise ValueError(f"invalid status for an update: {patch['status']!r}")
         _validate_fields(patch if p.ptype == "item" else {k: v for k, v in patch.items() if k == "status"},
                          self._map())
-        return self.store.update_proposal_payload(id, patch)
+        out = self.store.update_proposal_payload(id, patch)
+        self.store.export_proposals(self.paths.brain)
+        return out
 
     # -- items ---------------------------------------------------------------
     def edit_item(self, id: str, patch: dict) -> Item:

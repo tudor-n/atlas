@@ -161,6 +161,23 @@ class Store:
                 " ORDER BY e.ts, e.id").fetchall()
         return [r["id"] for r in rows]
 
+    def unfiled_entry_ids(self) -> list[str]:
+        """Non-tablet entries with no filing row at all, oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT e.id FROM entries e LEFT JOIN filings f ON f.entry_id=e.id"
+                " WHERE f.entry_id IS NULL AND e.source!='tablet' ORDER BY e.ts, e.id").fetchall()
+        return [r["id"] for r in rows]
+
+    def filings_with_entries(self, status: str) -> list[dict]:
+        """[{entry_id, error, ts, text}] for every filing in `status`, newest entry first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT f.entry_id, f.error, e.ts, e.text FROM filings f"
+                " LEFT JOIN entries e ON e.id=f.entry_id WHERE f.status=?"
+                " ORDER BY e.ts DESC, f.entry_id DESC", (status,)).fetchall()
+        return [dict(r) for r in rows]
+
     # proposals
     def add_proposals(self, entry_id: str,
                       ptype_payloads: list[tuple[str, dict, list[str]]]) -> list[Proposal]:
@@ -361,6 +378,43 @@ class Store:
                 lines.append(f"- [ ] {i.text}{due} (from {i.source_entry})")
             with open(out / f"{group}.md", "w", encoding="utf-8", newline="\n") as f:
                 f.write("\n".join(lines) + "\n")
+        self.export_proposals(brain)
+
+    def export_proposals(self, brain: Path) -> None:
+        """Write every pending proposal to brain/_items/proposals.json (deterministic), so a
+        rebuilt index can restore them. Committed with the next hub commit."""
+        out = Path(brain) / "_items"
+        out.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM proposals WHERE status='proposed' ORDER BY seq, id").fetchall()
+        data = [{"id": r["id"], "seq": r["seq"], "entry_id": r["entry_id"], "ptype": r["ptype"],
+                 "payload": json.loads(r["payload"]), "warnings": json.loads(r["warnings"])}
+                for r in rows]
+        text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        path = out / "proposals.json"
+        if path.exists() and path.read_text(encoding="utf-8", errors="replace") == text:
+            return  # unchanged: don't touch the file
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+    def restore_proposals_if_empty(self, brain: Path) -> int:
+        """Rebuild pending proposals from brain/_items/proposals.json when the proposals table
+        has no rows at all (a rebuilt index). A corrupt file raises ValueError naming it."""
+        path = Path(brain) / "_items" / "proposals.json"
+        with self._lock:
+            if self._db.execute("SELECT COUNT(*) FROM proposals").fetchone()[0] or not path.exists():
+                return 0
+            rows = _load_json_list(path)
+            try:
+                values = [(d["id"], int(d["seq"]), d["entry_id"], d["ptype"],
+                           json.dumps(d["payload"]), "proposed", json.dumps(d.get("warnings", [])))
+                          for d in rows]
+                with self._db:
+                    self._db.executemany("INSERT INTO proposals VALUES(?,?,?,?,?,?,?)", values)
+            except (KeyError, TypeError, ValueError, sqlite3.Error) as e:
+                raise ValueError(f"{path} is damaged ({e!r}); proposals were not restored") from None
+        return len(rows)
 
     def restore_items_if_empty(self, brain: Path) -> int:
         """Rebuild the items table from brain/_items/items.json when it is empty. A corrupt

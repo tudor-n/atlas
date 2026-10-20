@@ -11,7 +11,7 @@ from aiohttp import web
 from .backup import BackupPusher
 from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
-from .filing import FilingWorker
+from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
@@ -39,8 +39,9 @@ def _clear_stale_git_lock(app: web.Application) -> None:
 
 def _commit_owner_edits(app: web.Application) -> None:
     repo = app["repo"]
-    if repo.is_dirty():
-        repo.commit_all("owner edits")
+    pending = repo.changed_paths()
+    if pending:  # the notes index is rebuilt in full later in startup
+        repo.commit_all(sweep_message(pending))
         app["backup"].notify_commit()
 
 
@@ -96,8 +97,10 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("owner edits", _commit_owner_edits, app)
     step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
+    step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
     step("raw log", _backfill_log, app)
     step("notes index", _rebuild_notes, app)
+    step("filing history", app["worker"].recover_from_history)
     return step("filing queue", app["worker"].requeue_unfinished, default=[])
 
 
