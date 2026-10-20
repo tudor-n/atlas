@@ -76,9 +76,12 @@ async def test_commit_during_push_stays_pending():
             self.pusher.notify_commit()
             return True, ""
 
-    repo = Racing(); b = BackupPusher(repo, settings(), noop, Clock(0)); repo.pusher = b
-    b.notify_commit(); await b.tick()
-    assert b.status()["pending"]
+    clk = Clock(0)
+    repo = Racing(); b = BackupPusher(repo, settings("r", 300), noop, clk); repo.pusher = b
+    b.notify_commit(); clk.t = 301; await b.tick()
+    assert b.status()["pending"] and len(repo.pushes) == 1
+    clk.t = 400; await b.tick(); assert len(repo.pushes) == 1  # debounce counts from the new commit
+    clk.t = 602; await b.tick(); assert len(repo.pushes) == 2
 
 
 async def test_run_forever_survives_errors_and_cancels(monkeypatch):
@@ -103,3 +106,48 @@ async def test_run_forever_survives_errors_and_cancels(monkeypatch):
     except asyncio.CancelledError:
         pass
     assert task.done()
+
+
+async def test_last_error_is_redacted_and_never_broadcast_raw():
+    events = []
+
+    async def bc(kind, payload):
+        events.append(payload)
+
+    class Leaky:
+        def push(self, remote_url):
+            return False, "fatal: unable to access https://tok@github.com/x"
+
+    b = BackupPusher(Leaky(), settings(), bc, Clock(0))
+    b.notify_commit(); await b.tick()
+    assert b.status()["last_error"] == "fatal: unable to access https://***@github.com/x"
+    assert "tok@" not in repr(events)
+
+
+async def test_redacts_exception_text_too():
+    class Boom:
+        def push(self, remote_url):
+            raise OSError("cannot reach https://tok@github.com/x")
+
+    b = BackupPusher(Boom(), settings(), noop, Clock(0))
+    b.notify_commit(); await b.tick()
+    assert "tok@" not in b.status()["last_error"]
+
+
+async def test_oserror_is_failure_with_backoff():
+    class Boom:
+        pushes = 0
+        def push(self, remote_url):
+            Boom.pushes += 1
+            raise OSError("disk")
+
+    clk = Clock(0); b = BackupPusher(Boom(), settings(), noop, clk)
+    b.notify_commit(); await b.tick()
+    assert b.status()["pending"] and b.status()["last_error"] == "disk"
+    clk.t = 30; await b.tick(); assert Boom.pushes == 1
+    clk.t = 61; await b.tick(); assert Boom.pushes == 2
+
+
+async def test_none_debounce_treated_as_zero():
+    repo = FakeRepo([True]); b = BackupPusher(repo, settings("r", None), noop, Clock(0))
+    b.notify_commit(); await b.tick(); assert repo.pushes == ["r"]

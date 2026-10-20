@@ -1,10 +1,15 @@
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 log = logging.getLogger(__name__)
+
+def _redact(text: str) -> str:
+    return re.sub(r"(?<=://)[^/@\s]+@", "***@", text)
+
 
 RETRY_BACKOFF_S = 60
 TICK_INTERVAL_S = 15
@@ -48,15 +53,15 @@ class BackupPusher:
         if not remote:
             return
         now = self._clock()
-        if now - self._first_pending < cfg.get("backup_debounce_s", 0):
+        if now - self._first_pending < (cfg.get("backup_debounce_s") or 0):
             return
         if self._retry_at is not None and now < self._retry_at:
             return
         seq = self._seq
         try:
             ok, err = await asyncio.to_thread(self._repo.push, remote)
-        except RuntimeError as e:
-            ok, err = False, str(e)
+        except Exception as e:
+            ok, err = False, str(e) or type(e).__name__
         if ok:
             self._last_ok = datetime.now(timezone.utc).isoformat()
             self._last_error = None
@@ -67,7 +72,7 @@ class BackupPusher:
             else:  # committed while pushing: push again, debounced from now
                 self._first_pending = self._clock()
         else:
-            self._last_error = err or "push failed"
+            self._last_error = _redact(err) or "push failed"
             self._retry_at = now + RETRY_BACKOFF_S
         await self._broadcast("backup.status", self.status())
 
