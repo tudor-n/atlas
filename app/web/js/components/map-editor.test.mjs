@@ -53,3 +53,14 @@ test('renaming the owning project moves its links; removing drops them', () => {
   m.projects = []; dropProjectRefs(m, 'robot-arm-2');
   assert.deepEqual(m.people[0].projects, []);
 });
+
+test('savedNodes marks the loaded nodes only (their slugs are read-only in Settings)', async () => {
+  const { savedNodes } = await import('./map-editor.js');
+  const m = defaultMap();
+  m.projects.push({ slug: 'robotarm', name: 'RobotArm', is_company: false, folders: [] });
+  const saved = savedNodes(m);
+  const fresh = { slug: '', name: '', is_company: false, folders: [] };
+  m.projects.push(fresh);
+  assert.ok(saved.has(m.projects[0]) && saved.has(m.areas[0]));
+  assert.ok(!saved.has(fresh));
+});

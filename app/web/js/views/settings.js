@@ -1,7 +1,7 @@
 // Settings: brain-map editor, hierarchy tree, preferences and backup status.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { createMapEditors, normalizeMap, hasErrors } from '../components/map-editor.js';
+import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
@@ -220,12 +220,15 @@ export async function render(container) {
   try {
     const map = normalizeMap(await api.get('/api/map'));
     if (dead) return cleanup;
-    const editors = createMapEditors(map, { onChange: () => say(mapMsg, '') });
+    const saved = savedNodes(map);  // these slugs are read-only; new rows still auto-slug
+    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n) });
     const saveBtn = el('button', { type: 'button', class: 'primary', onclick: async () => {
       if (hasErrors(editors.validateAndShow())) { say(mapMsg, 'Fix the problems above, then save.'); return; }
       saveBtn.disabled = true;
       try {
         await api.put('/api/map', map);
+        for (const n of savedNodes(map)) saved.add(n);  // now on the server: lock their slugs
+        for (const k of ['areas', 'projects', 'courses', 'people']) editors[k].refresh();
         say(mapMsg, 'Saved. Folders are created and the change is committed.', true);
         loadTree();
       } catch (e) {

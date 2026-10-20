@@ -78,6 +78,11 @@ export function dropProjectRefs(map, slug) {
 
 export const hasErrors = (errs) => Object.values(errs).some((l) => l.length);
 
+// The node objects of a map as loaded from the server, for createMapEditors' isExisting.
+export function savedNodes(map) {
+  return new Set([...map.areas, ...map.projects, ...map.courses, ...map.people]);
+}
+
 const field = (text, input, cls) => el('label', { class: `field ${cls || ''}` }, text, input);
 
 // Generic list editor over the array at map[key].
@@ -120,8 +125,11 @@ function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, onRem
 
 // Name + slug inputs with the auto-slug behaviour: while the slug still equals slugify(previous name)
 // it follows the name; once the owner edits it, it stays put. `slugChanged(old, new)` is optional.
+// A locked slug (a default area, or a node already saved on the server) is read-only: renaming its
+// folder would strand the notes and items filed under it, so only the display name changes.
 function nameSlug(item, { slugLocked, slugChanged, changed }) {
   const slugInput = el('input', { type: 'text', value: item.slug, readonly: slugLocked || null, spellcheck: 'false',
+    title: slugLocked ? "Saved folder names can't change; edit the name instead." : null,
     oninput: () => {
       const old = item.slug;
       item.slug = slugInput.value.trim();
@@ -143,9 +151,10 @@ function nameSlug(item, { slugLocked, slugChanged, changed }) {
   return [field('Name', nameInput, 'grow'), field('Folder name', slugInput, 'slug')];
 }
 
-// createMapEditors(map, {onChange}) -> {areas, projects, courses, people, validate, validateAndShow}
+// createMapEditors(map, {onChange, isExisting}) -> {areas, projects, courses, people, validate, validateAndShow}
 // Each editor has {node, refresh, setErrors}. onChange fires after every edit (callers persist or clear errors).
-export function createMapEditors(map, { onChange } = {}) {
+// isExisting(node) is true for nodes already saved on the server (Settings): their slug is read-only.
+export function createMapEditors(map, { onChange, isExisting = () => false } = {}) {
   let live = false;  // show errors while typing only after a first failed Next/Save
   const editors = {};
 
@@ -159,7 +168,7 @@ export function createMapEditors(map, { onChange } = {}) {
     map, key: 'areas', label: 'area', addText: 'Add an area', changed,
     blank: () => ({ slug: '', name: '' }),
     canRemove: (a) => !DEFAULT_AREAS.includes(a.slug),
-    makeRow: (a) => nameSlug(a, { slugLocked: DEFAULT_AREAS.includes(a.slug), changed }),
+    makeRow: (a) => nameSlug(a, { slugLocked: DEFAULT_AREAS.includes(a.slug) || isExisting(a), changed }),
   });
 
   const renameRefs = (from, to) => renameProjectRefs(map, from, to);
@@ -179,7 +188,7 @@ export function createMapEditors(map, { onChange } = {}) {
       const folders = el('textarea', { rows: 2, spellcheck: 'false', value: (p.folders || []).join('\n'),
         oninput: () => { p.folders = folders.value.split('\n').map((s) => s.trim()).filter(Boolean); changed(); } });
       return [
-        nameSlug(p, { slugChanged: renameRefs, changed: projectsChanged }),
+        nameSlug(p, { slugLocked: isExisting(p), slugChanged: renameRefs, changed: projectsChanged }),
         el('label', { class: 'check' }, company, 'This is my company'),
         field('Folder paths on this PC (optional, one per line)', folders, 'wide'),
       ];
@@ -189,7 +198,7 @@ export function createMapEditors(map, { onChange } = {}) {
   editors.courses = rowsEditor({
     map, key: 'courses', label: 'course', addText: 'Add a course', changed,
     blank: () => ({ slug: '', name: '' }),
-    makeRow: (c) => nameSlug(c, { changed }),
+    makeRow: (c) => nameSlug(c, { slugLocked: isExisting(c), changed }),
   });
 
   editors.people = rowsEditor({
@@ -207,7 +216,7 @@ export function createMapEditors(map, { onChange } = {}) {
           return el('label', { class: 'check' }, cb, proj.name || proj.slug || '(unnamed project)');
         })
         : el('span', { class: 'muted small' }, 'Add projects first to link a person to them.');
-      return [nameSlug(p, { changed }), el('div', { class: 'wide' }, el('div', { class: 'meta' }, 'Projects'), boxes)];
+      return [nameSlug(p, { slugLocked: isExisting(p), changed }), el('div', { class: 'wide' }, el('div', { class: 'meta' }, 'Projects'), boxes)];
     },
   });
 

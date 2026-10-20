@@ -466,3 +466,30 @@ async def test_ten_unfiled_entries_are_queued(aiohttp_client, app_paths):
         append_entry(app_paths.brain, f"backlog {i}", "pc")
     app, c, _ = await _started(aiohttp_client, app_paths)
     assert app["worker"].queue.qsize() == 10
+
+
+def _map_with(**extra):
+    m = json.loads(json.dumps(MAP))
+    for k, v in extra.items():
+        m[k] = v
+    return m
+
+
+async def test_map_edit_refuses_to_strand_items_or_notes(ready_client, app, app_paths):
+    two = _map_with(projects=MAP["projects"] + [{"slug": "spare", "name": "Spare", "is_company": False, "folders": []}],
+                    courses=[{"slug": "fizica", "name": "Fizica"}])
+    assert (await ready_client.put("/api/map", json=two)).status == 200
+    app["store"].create_item(kind="task", text="t", area="projects", project="robotarm", source_entry="e-1")
+    app["store"].update_item(app["store"].list_items()[0].id, {"status": "done"})  # any status counts
+    without_robotarm = _map_with(projects=[two["projects"][1]], courses=two["courses"])
+    r = await ready_client.put("/api/map", json=without_robotarm)
+    assert r.status == 400 and (await r.json())["error"] == \
+        "project 'robotarm' has notes or items; it can't be removed or renamed yet"
+    (app_paths.brain / "uni" / "fizica").mkdir(parents=True, exist_ok=True)
+    (app_paths.brain / "uni" / "fizica" / "curs.md").write_text("notes", encoding="utf-8")
+    renamed = _map_with(projects=two["projects"], courses=[{"slug": "fizica-1", "name": "Fizica"}])
+    r = await ready_client.put("/api/map", json=renamed)
+    assert r.status == 400 and "course 'fizica'" in (await r.json())["error"]
+    empty_removed = _map_with(projects=MAP["projects"], courses=two["courses"])  # 'spare' has nothing
+    assert (await ready_client.put("/api/map", json=empty_removed)).status == 200
+    assert [p["slug"] for p in (await (await ready_client.get("/api/map")).json())["projects"]] == ["robotarm"]

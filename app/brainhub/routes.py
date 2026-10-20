@@ -150,11 +150,41 @@ async def get_map(request: web.Request) -> web.Response:
     return web.json_response(asdict(m))
 
 
+def _has_md(folder: Path) -> bool:
+    return folder.is_dir() and any(f.is_file() for f in folder.rglob("*.md"))
+
+
+def _stranded_slugs(store: Store, brain: Path, old: BrainMap, new: BrainMap) -> list[str]:
+    """Slugs the new map drops (a rename drops the old slug) that still have items (any
+    status) or notes: removing them would strand those, so the map edit is refused."""
+    out = []
+    kinds = (("area", "areas", "area"), ("project", "projects", "project"),
+             ("course", "courses", "project"), ("person", "people", "person"))
+    for label, attr, item_field in kinds:
+        kept = {n.get("slug") for n in getattr(new, attr)}
+        for node in getattr(old, attr):
+            slug = node.get("slug")
+            if not slug or slug in kept:
+                continue
+            notes = {"area": lambda s: _has_md(brain / s),
+                     "project": lambda s: _has_md(brain / "projects" / s),
+                     "course": lambda s: _has_md(brain / "uni" / s),
+                     "person": lambda s: (brain / "people" / f"{s}.md").is_file()}[label](slug)
+            if notes or store.list_items(**{item_field: slug}):
+                out.append(f"{label} '{slug}' has notes or items; it can't be removed or renamed yet")
+    return out
+
+
 async def put_map(request: web.Request) -> web.Response:
     app, paths = request.app, request.app["paths"]
     if not setup_done(app):
         return err(409, "run setup first")
     m = _map_from(await body_dict(request))
+    old = await t(load_map, paths.brain)
+    if old is not None:
+        stranded = await t(_stranded_slugs, app["store"], paths.brain, old, m)
+        if stranded:
+            raise ValueError(stranded)
     await t(save_map, paths.brain, m)
     await t(_folders, paths.brain, m)
     await t(app["on_commit"], await t(app["repo"].commit_all, "map edit"))
