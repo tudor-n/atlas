@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import re
 import secrets
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from .models import Entry
 
+_APPEND_LOCK = threading.Lock()  # appends from threads must not interleave
 SOURCES = ("pc", "widget", "tablet")
 
 _HEADER = re.compile(
@@ -37,8 +39,10 @@ def append_entry(brain: Path, text: str, source: str,
     record.encode("utf-8")  # fail before touching the file if unencodable
     path = log_path(brain, ts)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8", newline="") as f:
-        f.write(record)
+    with _APPEND_LOCK:
+        with open(path, "a", encoding="utf-8", newline="") as f:
+            f.write(record)
+            f.flush()
     return entry
 
 

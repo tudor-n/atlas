@@ -13,7 +13,7 @@ from .filing import FilingWorker
 from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
-from .routes import add_routes, errors, setup_done
+from .routes import add_routes, errors, local_only, setup_done
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -23,11 +23,11 @@ t = asyncio.to_thread
 
 
 # -- startup -----------------------------------------------------------------
-def _startup_sync(app: web.Application) -> None:
+def _startup_sync(app: web.Application) -> list[str]:
     paths, store, repo = app["paths"], app["store"], app["repo"]
     store.init_schema()
     if not setup_done(app):
-        return
+        return []
     repo.init()
     if repo.is_dirty():
         repo.commit_all("owner edits")
@@ -44,14 +44,20 @@ def _startup_sync(app: web.Application) -> None:
     except (ValueError, OSError) as e:  # damaged log: keep serving, never touch the file
         log.error("raw log problem at startup: %s", e)
         app["log_error"] = str(e)
-    app["worker"].requeue_unfinished()
+    return app["worker"].requeue_unfinished()
 
 
 async def on_startup(app: web.Application) -> None:
-    await t(_startup_sync, app)
+    for entry_id in await t(_startup_sync, app):
+        app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
     if app["start_workers"]:
         app["tasks"] = [asyncio.create_task(app["worker"].run_forever()),
                         asyncio.create_task(app["backup"].run_forever())]
+
+
+async def on_shutdown(app: web.Application) -> None:
+    for ws in list(app["sockets"]):
+        await ws.close()
 
 
 async def on_cleanup(app: web.Application) -> None:
@@ -59,12 +65,10 @@ async def on_cleanup(app: web.Application) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    for ws in list(app["sockets"]):
-        await ws.close()
 
 
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.Application:
-    app = web.Application(middlewares=[errors])
+    app = web.Application(middlewares=[local_only, errors])
     paths.data.mkdir(parents=True, exist_ok=True)
     paths.web.mkdir(parents=True, exist_ok=True)
     settings = load_settings(paths)
@@ -91,5 +95,6 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     add_routes(app)
     app.router.add_static("/static/", paths.web)
     app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     app.on_cleanup.append(on_cleanup)
     return app

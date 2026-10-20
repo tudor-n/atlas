@@ -145,5 +145,80 @@ async def test_startup_backfills_missing_entries(aiohttp_client, app_paths):
     assert (await (await c.get("/api/state")).json())["log_error"] is None
 
 
+async def test_foreign_host_forbidden(ready_client):
+    r = await ready_client.get("/api/state", headers={"Host": "evil.example"})
+    assert r.status == 403 and (await r.json())["error"] == "forbidden host"
+
+
+async def test_foreign_origin_forbidden_and_log_unchanged(ready_client, app_paths):
+    r = await ready_client.post("/api/entries", json={"text": "evil", "source": "pc"},
+                                headers={"Origin": "http://evil.example"})
+    assert r.status == 403 and (await r.json())["error"] == "forbidden origin"
+    assert read_log(app_paths.brain) == []
+
+
+async def test_same_origin_allowed(ready_client):
+    origin = f"http://127.0.0.1:{ready_client.port}"
+    r = await ready_client.post("/api/entries", json={"text": "fine", "source": "pc"},
+                                headers={"Origin": origin})
+    assert r.status == 201
+
+
+async def test_text_plain_body_rejected(ready_client, app_paths):
+    r = await ready_client.post("/api/entries", data=json.dumps({"text": "sneaky", "source": "pc"}),
+                                headers={"Content-Type": "text/plain"})
+    assert r.status == 415
+    assert read_log(app_paths.brain) == []
+
+
+async def test_ws_foreign_origin_refused(ready_client):
+    from aiohttp import WSServerHandshakeError
+    with pytest.raises(WSServerHandshakeError):
+        await ready_client.ws_connect("/ws", origin="http://evil.example")
+
+
+async def test_ask_rejects_cross_site_fetch(ready_client):
+    r = await ready_client.get("/api/ask", params={"q": "x"}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status == 403
+
+
+async def test_concurrent_captures_all_intact(ready_client, app_paths):
+    import asyncio
+    texts = [f"entry {i} " + "x" * (60 + i * 1000) for i in range(20)]
+    rs = await asyncio.gather(*[ready_client.post("/api/entries", json={"text": t, "source": "pc"})
+                                for t in texts])
+    assert all(r.status == 201 for r in rs)
+    got = [e.text for e in read_log(app_paths.brain)]
+    assert sorted(got) == sorted(texts)
+
+
+async def test_hierarchy_root_counts_item_once(ready_client, app):
+    app["store"].create_item(kind="task", text="t", area="projects", project="robotarm",
+                             person="ana", source_entry="e-1")
+    h = await (await ready_client.get("/api/hierarchy")).json()
+    assert h["items"] == 1
+
+
+async def test_items_empty_filter_means_none(ready_client, app):
+    app["store"].create_item(kind="task", text="t", area="projects", source_entry="e-1")
+    assert len(await (await ready_client.get("/api/items", params={"status": "", "kind": ""})).json()) == 1
+
+
+async def test_startup_backfills_entry_missing_from_store_and_fts(aiohttp_client, app_paths):
+    from brainhub.rawlog import append_entry
+    save_map(app_paths.brain, default_map())
+    first = append_entry(app_paths.brain, "first entry about gears", "pc")
+    app1 = create_app(app_paths, runner=make_runner(), start_workers=False)
+    c1 = await aiohttp_client(app1)  # startup reindexes entry one
+    assert app1["store"].fts_count() > 0
+    await c1.close()
+    second = append_entry(app_paths.brain, "second entry about zeppelins", "pc")
+    app2 = create_app(app_paths, runner=make_runner(), start_workers=False)
+    c2 = await aiohttp_client(app2)
+    assert app2["store"].get_entry(second.id) is not None and first.id
+    body = await (await c2.get("/api/ask", params={"q": "zeppelins"})).text()
+    assert second.id in body
+
+
 def test_binds_localhost_only():
     assert DEFAULT_HOST == "127.0.0.1"

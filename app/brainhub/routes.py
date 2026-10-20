@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from dataclasses import asdict
@@ -36,6 +37,23 @@ def _msg(e: Exception) -> str:
     return str(e.args[0]) if e.args else type(e).__name__
 
 
+ALLOWED_HOSTS = ("127.0.0.1", "localhost")
+
+
+@web.middleware
+async def local_only(request: web.Request, handler):
+    """Outermost guard: blocks DNS rebinding (Host) and cross-site requests (Origin)."""
+    if request.url.host not in ALLOWED_HOSTS:
+        return err(403, "forbidden host")
+    origin = request.headers.get("Origin")
+    if origin is not None and origin != f"http://{request.host}":
+        return err(403, "forbidden origin")
+    if request.path.startswith("/api/ask") and request.headers.get("Sec-Fetch-Site") in (
+            "cross-site", "same-site"):
+        return err(403, "forbidden origin")
+    return await handler(request)
+
+
 @web.middleware
 async def errors(request: web.Request, handler):
     try:
@@ -44,16 +62,16 @@ async def errors(request: web.Request, handler):
         if e.status >= 400:
             return err(e.status, e.reason)
         raise
-    except (ValueError, TypeError) as e:
+    except ValueError as e:
         return err(400, _msg(e))
-    except KeyError as e:
-        return err(404, f"not found: {_msg(e)}")
     except Exception as e:
         log.exception("unhandled error in %s", request.path)
         return err(500, str(e) or type(e).__name__)
 
 
 async def body_dict(request: web.Request) -> dict:
+    if request.content_type != "application/json":
+        raise web.HTTPUnsupportedMediaType(reason="content type must be application/json")
     try:
         data = await request.json()
     except ValueError:
@@ -81,7 +99,10 @@ def _folders(brain, m: BrainMap) -> None:
 def _map_from(data) -> BrainMap:
     if not isinstance(data, dict):
         raise ValueError("map must be a JSON object")
-    return BrainMap(**data)
+    try:
+        return BrainMap(**data)
+    except TypeError as e:
+        raise ValueError(f"bad map: {e}") from None
 
 
 # -- handlers: pages and state -----------------------------------------------
@@ -142,12 +163,27 @@ def _hierarchy(app) -> dict | None:
     m = load_map(app["paths"].brain)
     if m is None:
         return None
-    counts: dict[str, int] = {}
-    for i in app["store"].list_items(status=LIVE_STATUSES):
-        for key in {i.project, i.person, i.area}:
+    items = app["store"].list_items(status=LIVE_STATUSES)
+    node_counts: dict[str, dict[str, int]] = {"project": {}, "person": {}, "area": {}}
+    for i in items:
+        for kind, key in (("project", i.project), ("person", i.person), ("area", i.area)):
             if key:
-                counts[key] = counts.get(key, 0) + 1
-    return hierarchy(app["paths"].brain, m, counts)
+                node_counts[kind][key] = node_counts[kind].get(key, 0) + 1
+    # hierarchy() looks counts up by slug only: merge, but projects/people take precedence
+    # over an area that happens to share the slug.
+    merged = {**node_counts["area"], **node_counts["person"], **node_counts["project"]}
+    tree = hierarchy(app["paths"].brain, m, merged)
+    tree["items"] = len(items)
+
+    def fix(node: dict) -> None:
+        kind = node["kind"]
+        if kind in node_counts:
+            node["items"] = node_counts[kind].get(node["slug"], 0)
+        for c in node["children"]:
+            fix(c)
+
+    fix(tree)
+    return tree
 
 
 async def get_hierarchy(request: web.Request) -> web.Response:
@@ -178,7 +214,8 @@ async def post_entry(request: web.Request) -> web.Response:
     try:
         await t(app["store"].add_entry, entry)
         await t(app["store"].index_entry, entry)
-        app["worker"].enqueue(entry.id)
+        await t(app["worker"].mark_queued, entry.id)
+        app["worker"].queue.put_nowait(entry.id)
     except Exception:  # the log has it; startup backfill recovers the index
         log.exception("entry %s saved to the log but not indexed or queued", entry.id)
     await app["broadcast"]("entry.saved", {"entry_id": entry.id})
@@ -207,7 +244,7 @@ async def get_entries(request: web.Request) -> web.Response:
 
 async def _require_entry(app, entry_id: str) -> None:
     if await t(app["store"].get_entry, entry_id) is None:
-        raise KeyError(entry_id)
+        raise web.HTTPNotFound(reason=f"unknown entry: {entry_id}")
 
 
 async def get_filing(request: web.Request) -> web.Response:
@@ -229,7 +266,8 @@ async def retry_filing(request: web.Request) -> web.Response:
     await _require_entry(app, eid)
     if await _in_progress(app, eid):
         return err(409, "filing in progress")
-    await t(app["worker"].enqueue, eid)
+    await t(app["worker"].mark_queued, eid)
+    app["worker"].queue.put_nowait(eid)
     return web.json_response({"ok": True}, status=202)
 
 
@@ -245,8 +283,9 @@ async def correct_filing(request: web.Request) -> web.Response:
     async def run() -> None:
         try:
             await app["worker"].correct(eid, text)
-        except Exception:
+        except Exception as e:
             log.exception("correction of %s failed", eid)
+            await app["broadcast"]("filing.failed", {"entry_id": eid, "error": str(e)[:500]})
 
     task = asyncio.create_task(run())
     app["background"].add(task)
@@ -290,7 +329,7 @@ async def dismiss(request: web.Request) -> web.Response:
 
 async def get_items(request: web.Request) -> web.Response:
     q = request.query
-    filters = {k: q.get(k) for k in ("status", "kind", "project", "person", "area")}
+    filters = {k: (q.get(k) or None) for k in ("status", "kind", "project", "person", "area")}
     items = await t(lambda: request.app["store"].list_items(**filters))
     return web.json_response([asdict(i) for i in items])
 
@@ -327,8 +366,9 @@ async def _stream(request: web.Request, hits, chunks) -> web.StreamResponse:
         if hits is not None:
             await _event(resp, "hits", [asdict(h) for h in hits])
         try:
-            async for chunk in chunks:
-                await _event(resp, "delta", chunk)
+            async with contextlib.aclosing(chunks) as stream:
+                async for chunk in stream:
+                    await _event(resp, "delta", chunk)
         except (ClaudeError, ValueError, OSError) as e:
             await _event(resp, "error", str(e) or type(e).__name__)
         await _event(resp, "done", {})

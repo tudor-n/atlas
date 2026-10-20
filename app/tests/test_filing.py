@@ -112,8 +112,9 @@ async def test_refile_replaces_stale_proposals(env):
 
 def test_requeue_unfinished(env):
     env.store.upsert_filing(Filing(env.entry.id, "running"))
-    w = env.worker(FakeRunner()); w.requeue_unfinished()
-    assert env.store.get_filing(env.entry.id).status == "queued" and w.queue.qsize() == 1
+    w = env.worker(FakeRunner()); ids = w.requeue_unfinished()
+    assert ids == [env.entry.id] and env.store.get_filing(env.entry.id).status == "queued"
+    assert w.queue.qsize() == 0  # the caller enqueues on the loop
 
 
 async def test_correct_reverts_head_and_refiles(env):

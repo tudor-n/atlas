@@ -170,13 +170,20 @@ class FilingWorker:
         if path.exists() and path.resolve().parent == (self.paths.data / "worktrees").resolve():
             shutil.rmtree(path)
 
-    def enqueue(self, entry_id: str) -> None:
+    def mark_queued(self, entry_id: str) -> None:
+        """Sync store write; safe to run in a thread."""
         f = self.store.get_filing(entry_id) or Filing(entry_id, "queued")
         f.status = "queued"
         self.store.upsert_filing(f)
+
+    def enqueue(self, entry_id: str) -> None:
+        """Loop-only convenience: mark queued and put on the queue."""
+        self.mark_queued(entry_id)
         self.queue.put_nowait(entry_id)
 
-    def requeue_unfinished(self) -> None:
+    def requeue_unfinished(self) -> list[str]:
+        """Mark unfinished filings queued and return their ids; the caller puts them on the
+        queue from the event loop (asyncio.Queue is not thread-safe)."""
         leftovers = self.paths.data / "worktrees"
         if leftovers.is_dir():
             for d in leftovers.iterdir():
@@ -185,8 +192,10 @@ class FilingWorker:
                         self._remove_worktree(d)
                     except Exception:  # never block startup; file_entry retries the removal
                         log.exception("could not remove leftover worktree %s", d)
-        for entry_id in self.store.unfinished_filings():
-            self.enqueue(entry_id)
+        ids = self.store.unfinished_filings()
+        for entry_id in ids:
+            self.mark_queued(entry_id)
+        return ids
 
     async def run_forever(self) -> None:
         while True:

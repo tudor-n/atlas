@@ -70,3 +70,19 @@ def test_bad_len_raises(tmp_path):
     p.write_bytes(p.read_bytes().replace(b"len=3", b"len=2"))
     with pytest.raises(ValueError, match="2026-10-20.md"):
         read_log(tmp_path)
+
+
+def test_concurrent_appends_from_threads_stay_intact(tmp_path):
+    import threading
+    n = 8
+    barrier = threading.Barrier(n)
+
+    def work(i):
+        barrier.wait()
+        append_entry(tmp_path, f"thread {i} " + "y" * (100 * i), "pc")
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(n)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    got = sorted(e.text for e in read_log(tmp_path))
+    assert got == sorted(f"thread {i} " + "y" * (100 * i) for i in range(n))
