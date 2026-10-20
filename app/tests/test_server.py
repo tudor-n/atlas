@@ -256,3 +256,16 @@ async def test_backup_push_now_ignores_debounce(ready_client, app):
     app["backup"].repo = FakeRepo([True]); app["backup"].notify_commit()
     await ready_client.put("/api/settings", json={"backup_remote": "https://example.com/r.git", "backup_debounce_s": 9999})
     assert (await ready_client.post("/api/backup/push")).status == 200 and app["backup"].repo.pushes == ["https://example.com/r.git"]
+
+
+async def test_code_paths_come_from_the_package_not_the_data_root(aiohttp_client, app_paths):
+    import brainhub
+    pkg = __import__("pathlib").Path(brainhub.__file__).resolve().parent
+    assert not (app_paths.root / "app").exists()
+    c = await aiohttp_client(create_app(app_paths, runner=make_runner(), start_workers=False))
+    page = await (await c.get("/")).text()
+    assert "/static/js/app.js" in page            # the real UI, not the placeholder
+    assert (await c.get("/static/js/app.js")).status == 200
+    assert app_paths.prompts == pkg / "prompts" and (app_paths.prompts / "filing.md").is_file()
+    assert (app_paths.schemas / "filing.schema.json").is_file()
+    assert not (app_paths.root / "app").exists()  # nothing created under the data root

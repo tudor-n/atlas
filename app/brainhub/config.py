@@ -12,6 +12,9 @@ DEFAULT_SETTINGS: dict = {
     "backup_remote": None, "backup_debounce_s": 300, "quiet_hours": ["23:00", "08:00"],
 }
 
+# Code locations come from the installed package, never from the data root (--root may be any folder).
+_PKG = Path(__file__).resolve().parent
+
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
 
@@ -25,7 +28,8 @@ class Paths:
 
     @property
     def app(self) -> Path:
-        return self.root / "app"
+        """The code checkout (the folder holding the package and web/)."""
+        return _PKG.parent
 
     @property
     def data(self) -> Path:
@@ -45,15 +49,15 @@ class Paths:
 
     @property
     def web(self) -> Path:
-        return self.app / "web"
+        return _PKG.parent / "web"
 
     @property
     def prompts(self) -> Path:
-        return self.app / "brainhub" / "prompts"
+        return _PKG / "prompts"
 
     @property
     def schemas(self) -> Path:
-        return self.app / "brainhub" / "schemas"
+        return _PKG / "schemas"
 
 
 def _check(key: str, value) -> None:

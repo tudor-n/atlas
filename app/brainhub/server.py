@@ -70,7 +70,6 @@ async def on_cleanup(app: web.Application) -> None:
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.Application:
     app = web.Application(middlewares=[local_only, errors])
     paths.data.mkdir(parents=True, exist_ok=True)
-    paths.web.mkdir(parents=True, exist_ok=True)
     settings = load_settings(paths)
     store = Store(paths.db)
     repo = BrainRepo(paths.brain)
@@ -93,7 +92,8 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     app["reviewer"] = Reviewer(paths, store, repo, backup.notify_commit)
 
     add_routes(app)
-    app.router.add_static("/static/", paths.web)
+    if paths.web.is_dir():  # code-relative; never created under the data root
+        app.router.add_static("/static/", paths.web)
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     app.on_cleanup.append(on_cleanup)

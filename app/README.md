@@ -61,7 +61,7 @@ Real end-to-end run on a scratch root with the real Claude CLI 2.1.304 (2026-10-
 | Recall: done | haiku | 5.7 s |
 | Recall `zebra` (no hits, no Claude call) | none | instant, `Nothing on that.` |
 
-The filing time is the successful run (a retry of the same entry: the first attempt failed only because the scratch root had no `app/` folder, and the hub expects `<root>/app`). Times depend on load and model latency.
+The filing time is the successful run (a retry of the same entry: the first attempt failed only because the scratch root had no `app/` folder; the hub now finds its prompts, schemas and UI next to the installed package, so `--root` can be any data folder). Times depend on load and model latency.
 
 ## Not in phase 1
 - **Phase 2:** widget, usage meter, Agents panel and hooks, autostart and tray, folder-to-project flags for next-time items.
