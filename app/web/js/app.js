@@ -34,15 +34,6 @@ function renderBanner(connectionError) {
 // -- View registry --------------------------------------------------------------------------
 // name -> async loader returning a module with `render(container, params)`. render may return a
 // cleanup function (called when the user leaves the view). A new view is one module + one line here.
-function comingSoon(title) {
-  return async () => ({
-    render(container) {
-      container.appendChild(el('h1', {}, title));
-      container.appendChild(el('p', { class: 'empty' }, 'Coming soon.'));
-    },
-  });
-}
-
 export const views = {
   today: () => import('./views/today.js'),
   ask: () => import('./views/ask.js'),
@@ -50,8 +41,8 @@ export const views = {
   project: () => import('./views/browse.js').then((m) => ({ render: m.renderProject })),
   people: () => import('./views/browse.js').then((m) => ({ render: m.renderPeople })),
   deadlines: () => import('./views/browse.js').then((m) => ({ render: m.renderDeadlines })),
-  settings: comingSoon('Settings'),
-  setup: comingSoon('Setup'),
+  settings: () => import('./views/settings.js'),
+  setup: () => import('./views/setup.js'),
 };
 
 const NAV = [['today', 'Today'], ['ask', 'Ask'], ['journal', 'Journal'], ['people', 'People'],

@@ -118,7 +118,8 @@ async def state(request: web.Request) -> web.Response:
     app = request.app
     return web.json_response({
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
-        "backup": app["backup"].status(), "log_error": app["log_error"]})
+        "backup": app["backup"].status(), "log_error": app["log_error"],
+        "brain_path": str(app["paths"].brain)})
 
 
 async def setup(request: web.Request) -> web.Response:
@@ -198,6 +199,11 @@ async def get_settings(request: web.Request) -> web.Response:
 
 async def put_settings(request: web.Request) -> web.Response:
     return web.json_response(await t(save_settings, request.app["paths"], await body_dict(request)))
+
+
+async def backup_push(request: web.Request) -> web.Response:
+    await request.app["backup"].tick(force=True)
+    return web.json_response(request.app["backup"].status())
 
 
 # -- handlers: capture and filing --------------------------------------------
@@ -467,6 +473,7 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/map", get_map), web.put("/api/map", put_map),
         web.get("/api/hierarchy", get_hierarchy),
         web.get("/api/settings", get_settings), web.put("/api/settings", put_settings),
+        web.post("/api/backup/push", backup_push),
         web.post("/api/entries", post_entry), web.get("/api/entries", get_entries),
         web.get("/api/filings/{entry_id}", get_filing),
         web.post("/api/filings/{entry_id}/retry", retry_filing),

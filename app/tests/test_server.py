@@ -6,7 +6,7 @@ import pytest
 from brainhub.brainmap import default_map, save_map
 from brainhub.rawlog import read_log
 from brainhub.server import DEFAULT_HOST, create_app
-from tests.fakes import FakeRunner
+from tests.fakes import FakeRepo, FakeRunner
 from tests.test_filing import GOOD_RESULT
 
 MAP = {
@@ -42,9 +42,10 @@ async def ready_client(client):
     return client
 
 
-async def test_setup_then_state(client):
+async def test_setup_then_state(client, app):
     state = await (await client.get("/api/state")).json()
     assert state["setup_done"] is False and state["log_error"] is None
+    assert state["brain_path"] == str(app["paths"].brain)
     r = await client.post("/api/setup", json={"map": MAP, "backup_remote": None})
     assert r.status == 200
     assert (await (await client.get("/api/state")).json())["setup_done"] is True
@@ -249,3 +250,9 @@ async def test_notes_lists_markdown_and_rejects_private_folders(ready_client, ap
                 "LOG/", "Log", "_Items/x"):
         assert (await ready_client.get("/api/notes", params={"prefix": bad})).status == 400, bad
     assert await (await ready_client.get("/api/notes", params={"prefix": "projects/none/"})).json() == []
+
+
+async def test_backup_push_now_ignores_debounce(ready_client, app):
+    app["backup"].repo = FakeRepo([True]); app["backup"].notify_commit()
+    await ready_client.put("/api/settings", json={"backup_remote": "r", "backup_debounce_s": 9999})
+    assert (await ready_client.post("/api/backup/push")).status == 200 and app["backup"].repo.pushes == ["r"]

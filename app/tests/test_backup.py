@@ -151,3 +151,14 @@ async def test_oserror_is_failure_with_backoff():
 async def test_none_debounce_treated_as_zero():
     repo = FakeRepo([True]); b = BackupPusher(repo, settings("r", None), noop, Clock(0))
     b.notify_commit(); await b.tick(); assert repo.pushes == ["r"]
+
+
+async def test_force_ignores_debounce_and_backoff_but_needs_remote():
+    clk = Clock(0); repo = FakeRepo([False, True, True]); b = BackupPusher(repo, settings("r", 9999), noop, clk)
+    b.notify_commit(); await b.tick(); assert repo.pushes == []  # debounced
+    await b.tick(force=True); assert repo.pushes == ["r"] and b.status()["last_error"]  # fails, backs off
+    await b.tick(); assert len(repo.pushes) == 1  # normal tick respects the backoff
+    await b.tick(force=True); assert len(repo.pushes) == 2 and not b.status()["pending"]
+    await b.tick(force=True); assert len(repo.pushes) == 3  # nothing pending: explicit push still goes
+    none = FakeRepo([True]); n = BackupPusher(none, settings(None, 0), noop, clk)
+    n.notify_commit(); await n.tick(force=True); assert none.pushes == []

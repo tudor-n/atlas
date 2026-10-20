@@ -20,7 +20,7 @@ class BackupPusher:
 
     def __init__(self, repo, settings_getter: Callable[[], dict], broadcast: Callable[..., Awaitable],
                  clock: Callable[[], float] = time.monotonic):
-        self._repo = repo
+        self.repo = repo
         self._settings = settings_getter
         self._broadcast = broadcast
         self._clock = clock
@@ -45,21 +45,24 @@ class BackupPusher:
             "last_error": self._last_error,
         }
 
-    async def tick(self) -> None:
-        if not self._pending:
+    async def tick(self, force: bool = False) -> None:
+        """force: an explicit "push now". Skips the debounce, the failure backoff and the
+        pending check, but still needs a remote."""
+        if not self._pending and not force:
             return
         cfg = self._settings()
         remote = cfg.get("backup_remote")
         if not remote:
             return
         now = self._clock()
-        if now - self._first_pending < (cfg.get("backup_debounce_s") or 0):
-            return
-        if self._retry_at is not None and now < self._retry_at:
-            return
+        if not force:
+            if now - self._first_pending < (cfg.get("backup_debounce_s") or 0):
+                return
+            if self._retry_at is not None and now < self._retry_at:
+                return
         seq = self._seq
         try:
-            ok, err = await asyncio.to_thread(self._repo.push, remote)
+            ok, err = await asyncio.to_thread(self.repo.push, remote)
         except Exception as e:
             ok, err = False, str(e) or type(e).__name__
         if ok:
