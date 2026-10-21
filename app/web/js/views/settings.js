@@ -4,15 +4,21 @@ import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
+const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const HINTS = {
-  port: 'Takes effect after BrainHub restarts.',
+  port: 'Takes effect after BrainHub restarts. After changing it, install the Claude Code integration again.',
   claude_path: 'Command or full path of the claude CLI. Takes effect after BrainHub restarts.',
   quiet_hours: 'Stored now; used when reminders arrive.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',
   default_lead_days: 'Default days of notice for deadlines.',
   recall_top_n: 'How many notes recall looks at.',
+  usage_warn_pct: 'Usage at or above this % shows as a warning.',
+  agents_end_linger_s: 'Seconds a closed session stays listed.',
+  agents_stale_h: 'Hours without any event before a session is dropped.',
+  arm_url: 'Robot arm server address (opened from the widget).',
+  widget_tiles: 'Tiles shown in the expanded widget.',
 };
 const label = (key) => key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
@@ -49,6 +55,18 @@ function buildField(key, value) {
       read() {
         if (!a.value || !b.value) throw new Error('Pick both quiet-hours times.');
         return [a.value, b.value];
+      },
+    };
+  }
+  if (key === 'widget_tiles' && Array.isArray(value)) {
+    const boxes = WIDGET_TILES.map((t) => ({ t, box: el('input', { type: 'checkbox', checked: value.includes(t) }) }));
+    return {
+      node: el('div', { class: 'pref' }, el('fieldset', {}, el('legend', {}, label(key)),
+        boxes.map(({ t, box }) => el('label', { class: 'field' }, box, ' ', label(t)))), hint),
+      read() {
+        const on = new Set(boxes.filter((b) => b.box.checked).map((b) => b.t));
+        if (!on.size) throw new Error('Pick at least one widget tile.');
+        return [...value.filter((t) => on.has(t)), ...WIDGET_TILES.filter((t) => on.has(t) && !value.includes(t))];
       },
     };
   }
