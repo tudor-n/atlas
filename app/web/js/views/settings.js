@@ -296,7 +296,7 @@ export async function render(container) {
   function drawIntegration(s) {
     clear(intBox);
     const ev = (s.events || []).length ? ` (${s.events.join(', ')})` : '';
-    const port = s.port_matches ? 'yes' : 'no. Install again so Claude Code reports to the right port.';
+    const port = s.port_matches ? 'yes' : (s.hooks_installed ? 'no. Install again so Claude Code reports to the right port.' : 'no');
     const run = (path, verb) => async (ev2) => {
       const btn = ev2.currentTarget;
       btn.disabled = true;

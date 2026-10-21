@@ -6,7 +6,7 @@ import { STATUS_LABEL, sinceText, nextTimeText } from './agents-model.js';
 const WHERE = ['terminal', 'IDE', 'desktop app', 'unknown'];
 
 export async function render(container) {
-  let dead = false, loading = false, again = false, dirty = false;
+  let dead = false, loading = false, again = false, dirty = false, againForce = false;
   const root = el('div', {});
   container.appendChild(root);
 
@@ -15,10 +15,11 @@ export async function render(container) {
     return a && root.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT');
   }
 
-  async function refresh() {
+  async function refresh(force) {
+    force = force === true;
     if (dead) return;
-    if (loading) { again = true; return; }
-    if (typing()) { dirty = true; return; }
+    if (loading) { again = true; againForce = againForce || force; return; }
+    if (!force && typing()) { dirty = true; return; }
     loading = true;
     try {
       const rows = await api.get('/api/agents');
@@ -27,7 +28,7 @@ export async function render(container) {
       if (!dead) clear(root).appendChild(el('p', { class: 'error', role: 'alert' }, `Couldn't load agents: ${e.message}`));
     } finally {
       loading = false;
-      if (again) { again = false; refresh(); }
+      if (again) { const f = againForce; again = againForce = false; refresh(f); }
     }
   }
 
@@ -43,7 +44,7 @@ export async function render(container) {
     clear(msg);
     try { await api.patch(`/api/agents/${encodeURIComponent(row.session_id)}`, body); } catch (e) { fail(e); }
     dirty = false;
-    refresh();
+    refresh(true);
   }
 
   function partCell(row) {
@@ -55,7 +56,7 @@ export async function render(container) {
         if (done) return;
         done = true;
         if (save) patch(row, { part: input.value.trim() || null });
-        else { dirty = false; refresh(); }
+        else { dirty = false; refresh(true); }
       };
       input.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }

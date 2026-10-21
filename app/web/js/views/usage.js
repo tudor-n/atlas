@@ -25,7 +25,11 @@ export async function render(container) {
   const root = el('div', {});
   container.appendChild(root);
 
+  let loading = false, again = false;
   async function refresh() {
+    if (dead) return;
+    if (loading) { again = true; return; }
+    loading = true;
     try {
       const u = await api.get('/api/usage');
       if (dead) return;
@@ -45,6 +49,9 @@ export async function render(container) {
         } }, 'Fable usage ↗')), msg);
     } catch (e) {
       if (!dead) clear(root).appendChild(el('p', { class: 'error', role: 'alert' }, `Couldn't load usage: ${e.message}`));
+    } finally {
+      loading = false;
+      if (again) { again = false; refresh(); }
     }
   }
 

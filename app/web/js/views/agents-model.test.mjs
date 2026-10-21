@@ -27,4 +27,5 @@ test('nextTimeText: plural, singular, none', () => {
 test('resetText: future and passed', () => {
   assert.equal(resetText({ resets_at: '2026-10-21T14:05', reset_passed: false }, now), 'resets 14:05 (in 2 h 5 min)');
   assert.equal(resetText({ resets_at: '2026-10-21T14:20', reset_passed: true }, now), 'reset at 14:20 · no data since');
+  assert.equal(resetText({ resets_at: '2026-10-22T10:30', reset_passed: false }, now), 'resets 10-22 10:30 (in 22 h 30 min)');
 });
