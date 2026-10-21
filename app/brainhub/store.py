@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS items(
     id TEXT PRIMARY KEY, kind TEXT NOT NULL, text TEXT NOT NULL, area TEXT NOT NULL,
     project TEXT, person TEXT, due TEXT, remind_at TEXT, status TEXT NOT NULL,
     snooze_until TEXT, source_entry TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agents(
+    session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL, project_name TEXT NOT NULL,
+    mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
+    where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
+    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     kind UNINDEXED, ref UNINDEXED, date UNINDEXED, body,
     tokenize='unicode61 remove_diacritics 2');
@@ -279,6 +284,38 @@ class Store:
         with self._lock:
             rows = self._db.execute(sql + " ORDER BY created, id", args).fetchall()
         return [_item(r) for r in rows]
+
+    # agents (live Claude Code sessions, fed by hook events)
+    _AGENT_COLS = ("session_id", "cwd", "project", "project_name", "mapped", "branch", "title",
+                   "part_override", "entrypoint", "where_override", "status", "note",
+                   "started_at", "status_since", "last_event_at", "ended_at")
+
+    @staticmethod
+    def _agent(r) -> dict:
+        d = dict(r)
+        d["mapped"] = bool(d["mapped"])
+        return d
+
+    def upsert_agent(self, row: dict) -> None:
+        vals = [int(bool(row[c])) if c == "mapped" else row[c] for c in self._AGENT_COLS]
+        with self._lock, self._db:
+            self._db.execute(
+                f"INSERT OR REPLACE INTO agents({','.join(self._AGENT_COLS)}) "
+                f"VALUES({','.join('?' * len(self._AGENT_COLS))})", vals)
+
+    def get_agent(self, session_id: str) -> dict | None:
+        with self._lock:
+            r = self._db.execute("SELECT * FROM agents WHERE session_id=?", (session_id,)).fetchone()
+        return self._agent(r) if r else None
+
+    def list_agents(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM agents ORDER BY started_at, session_id").fetchall()
+        return [self._agent(r) for r in rows]
+
+    def delete_agents(self, ids: list[str]) -> None:
+        with self._lock, self._db:
+            self._db.executemany("DELETE FROM agents WHERE session_id=?", [(i,) for i in ids])
 
     # fts
     def index_entry(self, e: Entry) -> None:
