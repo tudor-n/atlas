@@ -4,7 +4,8 @@ use crate::config::DesktopConfig;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,6 +17,14 @@ pub const HEALTHY_UPTIME: Duration = Duration::from_secs(300);
 /// Delay before restart attempt `attempt`: 1, 2, 4, 8, 16, 32 s, then 60 s.
 pub fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(if attempt >= 6 { 60 } else { 1u64 << attempt })
+}
+
+/// The hub's arguments: `-m brainhub --root <root> --port <port>`. The port is passed explicitly so
+/// the hub listens where the shell looks, even if the hub's own `port` setting has changed since
+/// `desktop-config` ran.
+pub fn hub_args(root: &Path, port: u16) -> Vec<OsString> {
+    vec!["-m".into(), "brainhub".into(), "--root".into(), root.as_os_str().to_owned(), "--port".into(),
+         port.to_string().into()]
 }
 
 /// Does anything accept a TCP connection on `127.0.0.1:port` within 500 ms?
@@ -154,23 +163,24 @@ impl Supervisor {
                 return;
             }
         };
+        let port = self.cfg.port;
         let mut cmd = Command::new(&python);
-        cmd.arg("-m")
-            .arg("brainhub")
-            .arg("--root")
-            .arg(&root)
+        cmd.args(hub_args(&root, port))
             .current_dir(&app_dir)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err);
+        // python.exe (not pythonw) with CREATE_NO_WINDOW: the hub gets a hidden console, which the
+        // git, claude and taskkill processes it starts inherit, so none of them flashes a window
+        // (Ruling 13).
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        self.log(&format!("starting {} -m brainhub --root {}", python.display(), root.display()));
+        self.log(&format!("starting {} -m brainhub --root {} --port {port}", python.display(), root.display()));
         match cmd.spawn() {
             Ok(child) => {
                 self.child = Some(child);
@@ -240,6 +250,7 @@ mod tests {
         assert!(root.join("data").join("hub.log").exists());
         let log = std::fs::read_to_string(root.join("data").join("hub.log")).unwrap();
         assert!(log.contains("-m brainhub --root"), "{log}");
+        assert!(log.contains(&format!("--port {}", s.cfg.port)), "{log}");
         s.stop();
         assert!(!s.owns_child());
         s.tick(); // stopped: never starts again
@@ -260,6 +271,14 @@ mod tests {
         let log = std::fs::read_to_string(root.join("data").join("hub.log")).unwrap();
         assert!(log.contains("could not start the hub"), "{log}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn hub_args_pass_the_configured_port() {
+        // The hub must listen where the shell looks, whatever its own `port` setting says.
+        let args = hub_args(std::path::Path::new(r"C:\bh root"), 8099);
+        let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args, ["-m", "brainhub", "--root", r"C:\bh root", "--port", "8099"]);
     }
 
     fn free_port() -> u16 {
