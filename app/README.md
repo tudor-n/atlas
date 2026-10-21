@@ -24,7 +24,7 @@ py -3 -m venv .venv
 ```
 .venv/Scripts/python -m brainhub --root D:\BrainHub
 ```
-Then open <http://127.0.0.1:8090>. `--port N` overrides the port (default 8090, setting `port`). Once phase 2 is set up, the desktop shell starts the hub for you (see [Desktop shell](#desktop-shell)).
+Then open <http://127.0.0.1:8090>. `--port N` overrides the port (default 8090, setting `port`); the hub then uses that port everywhere (Open in BrainHub, the integration install). If the port is already taken (say, a second hub on the same root), it stops at once with `port N on 127.0.0.1 is already in use`, before any startup work. Once phase 2 is set up, the desktop shell starts the hub for you (see [Desktop shell](#desktop-shell)).
 
 ## First run
 The setup wizard asks for your map: areas, projects (and which are companies, with their folders), courses and people, plus quiet hours and an optional backup remote. Finishing it creates the `brain/` git repo (commit `setup`). You can edit the map later in Settings.
@@ -88,6 +88,7 @@ The **Agents** view lists your Claude Code sessions on this PC: project, part, w
 | running | you sent a prompt, or a tool ran |
 | waiting for you | a permission prompt or a question, a missed Stop, or a turn that failed (`StopFailure`: the note says why, e.g. `rate_limit`) |
 | finished | the turn ended; it's your turn |
+| ended | the session closed (shown muted until it disappears; it no longer counts in the widget, even if it was closed mid-turn) |
 
 - **Project:** the map project whose folders contain the session's folder (set project folders in Settings → map), otherwise the git repository's folder name. **Part:** your rename, else the session title (`/rename`), else the branch without its prefix (`feat/wrist-servo` → `wrist-servo`). **Where:** terminal, IDE (VS Code), desktop app, or unknown (hover to see the raw value Claude Code reported). **Next-time flag:** "2 next-time notes for Robot arm" (mapped projects only); it is shown to you only and never sent to the agent.
 - Click a part to rename it, change Where from its menu, or remove a stale row (✕). Edits stick for the session.
@@ -98,12 +99,13 @@ The **Agents** view lists your Claude Code sessions on this PC: project, part, w
 `http://127.0.0.1:<port>/widget` is a small always-dark panel; it works in any browser, and the desktop shell shows it in a frameless always-on-top window.
 - **Collapsed:** one line, e.g. `3 due today · 1 waiting on Teammate A · 5h 62% (resets 14:20) · 2 agents running`, or `All clear`. An amber dot means something waits for you: proposals or failed filings to review, an agent waiting, or usage at or above the warning level.
 - **Expanded** (the ▾ button): a capture box (Enter saves, with source `widget`; Esc collapses) and tiles: Today, Usage, Agents, People, Deadlines, To review, Projects, Robot arm (`widget_tiles` picks and orders them). A tile opens a popup with up to 6 rows and "Open in BrainHub ↗". The Robot arm tile says reachable or offline from `arm_url`.
-- It refreshes on hub events and every 60 s; with the hub down it says `BrainHub offline · retrying`.
+- It refreshes on hub events and every 60 s; with the hub down it says `BrainHub offline · retrying`, and it reconnects by itself when the hub is back (the desktop shell doesn't reload it).
+- What you type in the capture box is kept as a draft in the page's local storage until it's saved. If the page reloads, the widget opens expanded with your text back in the box.
 
 ### Desktop shell
-`app/desktop/` is a Tauri v2 shell, "BrainHub Desktop": the widget window, the tray icon, start at login, and a supervisor that starts the hub (no console) if it isn't running and restarts it after a crash. It holds no logic of its own. Full instructions: [`desktop/README.md`](desktop/README.md). In short:
+`app/desktop/` is a Tauri v2 shell, "BrainHub Desktop": the widget window, the tray icon, start at login, and a supervisor that starts the hub (hidden, no console windows) if it isn't running and restarts it after a crash. It holds no logic of its own. Full instructions: [`desktop/README.md`](desktop/README.md). In short:
 1. Build once: in `app\desktop\src-tauri`, `cargo build --release` (about 5 minutes the first time) gives `target\release\brainhub-desktop.exe`.
-2. Configure: `.venv\Scripts\python -m brainhub desktop-config --root D:\BrainHub` writes `%LOCALAPPDATA%\BrainHub\desktop.json` (`port`, `root`, `python` = `pythonw.exe`, `app_dir`). Re-run it after changing the port.
+2. Configure: `.venv\Scripts\python -m brainhub desktop-config --root D:\BrainHub` writes `%LOCALAPPDATA%\BrainHub\desktop.json` (`port`, `root`, `python` = the venv's `python.exe`, `app_dir`). The shell starts the hub with `--port <port>` from this file and without a visible console (the hidden console it gets is shared by the git and claude processes the hub runs, so none of them flashes a window). After changing the port, re-run it **and restart BrainHub Desktop**: the shell reads the file only at start.
 3. Run `brainhub-desktop.exe`. Tray: Open BrainHub, Show/Hide widget, Start at login, Restart hub (only for a hub the shell started), Quit (stops that hub too).
 4. **Start at login** (tray, off by default) adds the exe to `HKCU\...\CurrentVersion\Run`; untick to remove.
 5. Logs: `<root>\data\hub.log` (hub output and the shell's `[brainhub-desktop t=…]` lines).
@@ -170,16 +172,16 @@ Deferred on purpose; none of them loses data.
 Phase 2 (the full list, with the test gaps, is in [`phase2-decisions.md`](../docs/superpowers/phase2-decisions.md)):
 - Whether hooks fire, and what Where says, in VS Code and desktop-app sessions is not verified yet (checklist items 3–5); whether the status line runs there is not documented (item 6).
 - Usage only updates while a Claude Code session with the status line runs.
-- After changing `port`, re-install the integration **and** re-run `desktop-config`: a hub started by the shell doesn't get `--port`, so a stale `desktop.json` leaves the shell waiting on the old port.
+- After changing `port`: restart the hub, install the integration again, re-run `desktop-config` and restart BrainHub Desktop. Until then a shell-started hub stays on the old port (the shell passes `--port`), so everything keeps working on the old one.
 - An event after a session's `SessionEnd` (other than a new start) doesn't revive the row, so it still disappears after the linger. Ignorable events still bump a row's "last event" time, which can change the order.
 - Backups of `settings.json` made by Install/Remove are never pruned; delete old ones by hand.
 - If `data/claude_integration.json` is unreadable when you install again, the saved previous status line is lost (it is still in the backups).
 - The status line can take up to about 2.75 s (4.5 s worst case) when a saved previous status line command hangs.
 - A desktop shell killed hard leaves the hub it started running; the next launch uses it, but "Restart hub" is then greyed out.
 - `data/hub.log` grows without bound.
-- In the e2e, the shell's first window appeared at the bottom screen edge instead of centred, so expanding grew it off-screen until it was dragged up; the position is remembered after that. A hub restart reloads the widget collapsed.
-- Tile captions with descenders can be clipped by a pixel at 125 % display scaling.
-- The desktop exe keeps WebView2 data in `%LOCALAPPDATA%\dev.brainhub.desktop` even when `LOCALAPPDATA` is overridden.
+- The widget is kept inside the screen's work area when it is built and whenever it resizes, not while you drag it: a widget dragged partly off-screen stays there until it next expands or collapses.
+- The desktop exe keeps WebView2 data in `%LOCALAPPDATA%\dev.brainhub.desktop` and the window position in `%APPDATA%\dev.brainhub.desktop\.window-state.json` even when `LOCALAPPDATA` is overridden.
+- The capture draft lives in the widget page's local storage, which belongs to `127.0.0.1:<port>`: after a port change an unsaved draft from before stays behind with the old port.
 
 ## Measured
 ### Phase 1
@@ -219,8 +221,21 @@ With stdin left open, `claude -p` first waits 3 s for it ("no stdin data receive
 | Hook event with the hub down | 0.32 s, exit 0, no output |
 | Uninstall on the scratch file | our entries removed (the file became `{}`, as it had nothing else), with a backup written first |
 | Desktop shell (temp `LOCALAPPDATA`, `desktop-config --target`) | connected to the running hub; collapsed 650×55 px (520×44 at 125 %), expanded 650×310 px |
-| Hub killed under the shell | the shell started its own `pythonw` hub; port answering again after 3.4 s; the widget came back with the usage and agent data |
+| Hub killed under the shell | the shell started its own `pythonw` hub (before the fix wave; now `python.exe`, Ruling 13); port answering again after 3.4 s; the widget came back with the usage and agent data |
 | Start at login | not ticked; no `HKCU\...\Run` entry was added |
+
+**Fix-wave re-check** (2026-10-21, after the final review; scratch root `%TEMP%\bh-fix-root`, temp `LOCALAPPDATA`, port 8099, all deleted afterwards):
+
+| Check | Result |
+|---|---|
+| Hub started by the shell | `python.exe -m brainhub --root <scratch> --port 8099` (console python, not pythonw), with a hidden `conhost` |
+| Setup over HTTP (startup git commits), then two captures filed by the real `claude` | 3 brain commits and 2 filings; a 40 ms poll of visible top-level windows saw no console, Terminal, git or claude window at any point |
+| Draft in the capture box, then the hub killed and restarted by the shell | the page was not reloaded (same `performance.timeOrigin`), still expanded, text intact |
+| Forced page reload with a draft | came back expanded with the text; Enter saved it and cleared the draft |
+| Widget moved below the work area, then expanded | moved up so its bottom sits on the work area's bottom edge |
+| Settings port changed to 8098 without `desktop-config` | the restarted hub still listened on 8099 (the shell's `--port`) |
+| `desktop-config` re-run, shell restarted | hub started with `--port 8098`, widget on `127.0.0.1:8098/widget` |
+| A second hub by hand on the taken port | exited in 0.26 s with `port 8098 on 127.0.0.1 is already in use`, no startup work |
 
 ## Not in phase 2
 - **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests.

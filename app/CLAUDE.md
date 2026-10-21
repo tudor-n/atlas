@@ -34,16 +34,16 @@ A local "second brain" for one person (the owner), on Windows. The owner writes 
 9. **Never run the hub against `D:\BrainHub` while testing.** That's the owner's real brain. Use a temp root, e.g. `--root %TEMP%\bh-test`, and delete it afterwards. Don't touch `D:\BrainHub\brain` or `D:\BrainHub\data`.
 10. **Don't put a `CLAUDE.md` at `D:\BrainHub\`.** The filing agent's worktrees live under `D:\BrainHub\data\…`, so it could load that file into the agent. This file lives in `app/` on purpose. Start dev sessions in `D:\BrainHub\app`.
 11. **The hook client (`brainhub/hook_client.py`) is silent, always exits 0, and is stdlib-only.** It runs as a file (`python -I -S hook_client.py …`), never imports from `brainhub`, swallows every exception, and in `event` mode never writes to stdout or stderr (stdout on SessionStart/UserPromptSubmit would be injected into the owner's agent). It sends only the allow-listed fields: never prompts, tool data or transcripts. The status line mode prints exactly one line.
-12. **Never write the owner's real Claude settings (`%USERPROFILE%\.claude\settings.json`) or the real `%LOCALAPPDATA%\BrainHub\desktop.json` from tests or manual checks.** Use `integration … --settings <temp file>` and `desktop-config --target <temp file>`; `tests/conftest.py` points `CLAUDE_CONFIG_DIR` and `LOCALAPPDATA` at temp folders for every test. The desktop exe writes WebView2 data to the real `%LOCALAPPDATA%\dev.brainhub.desktop` regardless of env vars: delete it after a manual run if it wasn't there before. Never tick "Start at login" in a test run (HKCU Run key).
+12. **Never write the owner's real Claude settings (`%USERPROFILE%\.claude\settings.json`) or the real `%LOCALAPPDATA%\BrainHub\desktop.json` from tests or manual checks.** Use `integration … --settings <temp file>` and `desktop-config --target <temp file>`; `tests/conftest.py` points `CLAUDE_CONFIG_DIR` and `LOCALAPPDATA` at temp folders for every test. The desktop exe writes WebView2 data to the real `%LOCALAPPDATA%\dev.brainhub.desktop` and its window position to the real `%APPDATA%\dev.brainhub.desktop\.window-state.json` regardless of env vars: delete both after a manual run if they weren't there before. Never tick "Start at login" in a test run (HKCU Run key).
 13. **The hub ignores events whose entrypoint starts with `sdk-`** (`claude -p` and SDK runs), and events whose cwd is inside its own `data/` or `brain/`. Claude Code sets `CLAUDE_CODE_ENTRYPOINT` itself for hook processes (`sdk-cli` under `-p`), so an e2e that needs rows must force it inside the hook command (see `app/README.md` → Measured → Phase 2).
 
 ## Run and test (from `D:\BrainHub\app`)
 - **Run:** `.venv\Scripts\python -m brainhub --root <data root> [--port 8090]`, then open http://127.0.0.1:8090 (widget page: `/widget`).
 - **Integration:** `.venv\Scripts\python -m brainhub integration install|uninstall|status --root <root> [--settings <path>]`.
-- **Desktop config:** `.venv\Scripts\python -m brainhub desktop-config --root <root> [--target <path>]`.
-- **Python tests:** `.venv\Scripts\python -m pytest -q` (425 passing at the end of phase 2).
-- **JS tests:** `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs` (22 passing). Check a file's syntax with `node --check <file>`.
-- **Rust (desktop shell):** in `app\desktop\src-tauri`, with `%USERPROFILE%\.cargo\bin` on `PATH` (it isn't by default): `cargo test` (11 passing) and `cargo build --release` → `target\release\brainhub-desktop.exe`.
+- **Desktop config:** `.venv\Scripts\python -m brainhub desktop-config --root <root> [--target <path>]`. It writes the console `python.exe`, never `pythonw.exe` (Ruling 13); the shell starts the hub with `--port` from it and must be restarted after it is re-run.
+- **Python tests:** `.venv\Scripts\python -m pytest -q` (436 passing at the end of phase 2).
+- **JS tests:** `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs` (25 passing). Check a file's syntax with `node --check <file>`.
+- **Rust (desktop shell):** in `app\desktop\src-tauri`, with `%USERPROFILE%\.cargo\bin` on `PATH` (it isn't by default): `cargo test` (14 passing) and `cargo build --release` → `target\release\brainhub-desktop.exe`.
 - **Test doubles:** `tests/fakes.py` has `FakeRunner` (the Claude boundary, with an `on_run(cwd)` hook to simulate agent edits), `FakeRepo` and `Clock`. Tests use real SQLite, real git and real files. Only the Claude boundary is faked. `hook_client.py` is tested as a real subprocess.
 
 ## Code map
@@ -62,15 +62,15 @@ A local "second brain" for one person (the owner), on Windows. The owner writes 
 | `brainhub/__main__.py` | CLI: run the hub, `integration …`, `desktop-config`. |
 | `brainhub/usage.py` | `UsageStore`: per-window merge of status line `rate_limits`, `data/usage.json`, the `/api/usage` view. |
 | `brainhub/agents.py` | `AgentTracker`: hook event → status, project/branch/part/where resolution, linger and stale pruning. |
-| `brainhub/widget.py` | `/api/widget` summary (synopsis, attention, tiles) and the cached arm reachability probe. |
+| `brainhub/widget.py` | `/api/widget` summary (synopsis, attention, tiles; ended sessions don't count) and the cached arm reachability probe (15 s reachable, 60 s offline). |
 | `brainhub/hook_client.py` | Silent stdlib hook and status line client (rule 11). |
 | `brainhub/claude_integration.py` | Install/uninstall/status of our hooks and status line in a Claude Code settings file (backup, atomic write, per-hook ownership). |
-| `brainhub/desktop_config.py` | Writes `%LOCALAPPDATA%\BrainHub\desktop.json` for the shell. |
+| `brainhub/desktop_config.py` | Writes `%LOCALAPPDATA%\BrainHub\desktop.json` for the shell (console `python.exe`, Ruling 13). |
 | `brainhub/prompts/*.md` + `schemas/filing.schema.json` | Agent prompts. **`prompts/filing.md` is the main calibration knob.** |
 | `web/` | UI: `js/api.js`, `app.js` (hash router plus view registry), `dom.js`, `components/`, `views/`. |
 | `web/js/views/usage.js`, `agents.js`, `agents-model.js` | Usage meters; Agents table with inline part/Where edits; their pure helpers (tested). |
 | `web/widget.html`, `widget.css`, `js/widget.js`, `js/widget-model.js` | The widget page; `widget-model.js` holds the pure synopsis/tile/popup logic (tested). |
-| `desktop/` | Tauri v2 shell: `src-tauri/src/lib.rs` (window, tray, autostart, watch loop), `supervisor.rs` (hub start/restart with backoff), `config.rs` (`desktop.json`), `capabilities/widget.json`, `dist/` (the "Starting BrainHub…" page). |
+| `desktop/` | Tauri v2 shell: `src-tauri/src/lib.rs` (window, tray, autostart, watch loop that navigates to the widget once, work-area clamp), `supervisor.rs` (hub start/restart with backoff and `--port`), `config.rs` (`desktop.json`), `capabilities/widget.json`, `dist/` (the "Starting BrainHub…" page). |
 
 ## Where things stand
 - **Phase 1 is built** and merged by the owner from branch `phase-1`.
@@ -78,8 +78,7 @@ A local "second brain" for one person (the owner), on Windows. The owner writes 
 - **Next:**
   1. The owner runs the phase 2 verification checklist (`app/README.md`): install the integration for real, and check terminal, VS Code and desktop-app sessions (what Where says there, whether the status line runs there), and Start at login across a reboot. Fix `WHERE_BY_ENTRYPOINT` in `agents.py` from the raw entrypoints the owner reports.
   2. Calibration (still open from phase 1): the owner collects "wrote X, it extracted Y, expected Z" cases; tune `prompts/filing.md` and the Settings defaults.
-  3. Worth fixing early: the desktop supervisor spawns the hub without `--port` (port drift, see `phase2-decisions.md`).
-  4. Phase 3 (spec §12): the tablet (SM-T110, ES5-only) with its AGENTS tab, LAN binding and pairing, measurement requests.
+  3. Phase 3 (spec §12): the tablet (SM-T110, ES5-only) with its AGENTS tab, LAN binding and pairing, measurement requests.
 - **Later phases:** voice (Kokoro) and notifications, Google Calendar, phone.
 
 ## How the owner likes to work
