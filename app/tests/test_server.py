@@ -553,3 +553,14 @@ async def test_correct_marks_the_filing_queued_at_once(ready_client, app):
     assert (await ready_client.post(f"/api/filings/{eid}/correct", json={"text": "again"})).status == 409
     assert (await ready_client.post(f"/api/filings/{eid}/retry")).status == 409
     gate.set()
+
+
+async def test_usage_endpoints(client):
+    payload = {"rate_limits": {"five_hour": {"used_percentage": 62.4, "resets_at": 4_102_444_800}}}
+    r = await client.post("/api/usage", json=payload)
+    assert r.status == 204
+    got = await (await client.get("/api/usage")).json()
+    assert got["five_hour"]["used"] == 62.4 and got["warn_pct"] == 80
+    assert (await client.post("/api/usage", json={"rate_limits": 3})).status == 400
+    r = await client.post("/api/usage", data="{}", headers={"Content-Type": "text/plain"})
+    assert r.status == 415

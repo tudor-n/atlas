@@ -17,6 +17,7 @@ from .rawlog import read_log
 from .review import Reviewer
 from .routes import add_routes, errors, local_only, setup_done
 from .store import Store, commit_hook
+from .usage import UsageStore
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +175,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
+    app["usage"] = UsageStore(paths.data / "usage.json")
 
     add_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root

@@ -521,6 +521,22 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _usage_view(app: web.Application) -> dict:
+    s = load_settings(app["paths"])
+    return app["usage"].view(s["usage_warn_pct"], s["fable_usage_url"])
+
+
+async def post_usage(request: web.Request) -> web.Response:
+    app = request.app
+    if await t(app["usage"].update, await body_dict(request)):
+        await app["broadcast"]("usage.changed", await t(_usage_view, app))
+    return web.Response(status=204)
+
+
+async def get_usage(request: web.Request) -> web.Response:
+    return web.json_response(await t(_usage_view, request.app))
+
+
 def add_routes(app: web.Application) -> None:
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
@@ -539,5 +555,6 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/today", get_today),
         web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
+        web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
         web.get("/ws", ws_handler),
     ])
