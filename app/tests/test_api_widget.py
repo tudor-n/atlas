@@ -1,6 +1,8 @@
+import json
+
 import pytest
 
-from brainhub.config import load_settings, save_settings
+from brainhub.config import load_settings
 from brainhub.server import create_app
 from tests.test_server import MAP, make_runner
 
@@ -44,3 +46,25 @@ async def test_widget_endpoint_and_page(client, app, paths):
         assert page.status == 200 and "text/html" in page.headers["Content-Type"]
     else:
         assert page.status == 404
+
+
+def _raw_settings(paths, **kw):
+    paths.settings_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.settings_file.write_text(json.dumps(kw), encoding="utf-8")
+
+
+async def test_open_revalidates_trailing_newline_urls(client, app, paths):
+    nl = chr(10)
+    _raw_settings(paths, arm_url="http://127.0.0.1:8080" + nl, fable_usage_url="https://claude.ai/x" + nl)
+    assert load_settings(paths)["arm_url"].endswith(nl)  # the config regex lets it through
+    assert (await client.post("/api/open", json={"target": "arm"})).status == 400
+    assert (await client.post("/api/open", json={"target": "fable_usage"})).status == 400
+    assert app["opened"] == []
+
+
+async def test_open_http_fable_url_falls_back_to_default(client, app, paths):
+    _raw_settings(paths, fable_usage_url="http://claude.ai/x")
+    r = await client.post("/api/open", json={"target": "fable_usage"})
+    assert r.status == 200
+    default = "https://claude.ai/settings/usage"
+    assert (await r.json())["url"] == default and app["opened"] == [default]

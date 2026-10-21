@@ -79,3 +79,30 @@ async def test_arm_probe_reachable_and_cached():
     t0 = asyncio.get_running_loop().time()
     assert await ArmProbe().reachable("http://127.0.0.1:1") is False
     assert asyncio.get_running_loop().time() - t0 < 1.5
+
+
+async def test_arm_probe_caches_failure_and_does_not_reconnect():
+    clock = [0.0]
+    probe = ArmProbe(now=lambda: clock[0], ttl=15.0)
+    accepted = []
+    server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    server.close()
+    await server.wait_closed()
+    assert await probe.reachable(url) is False
+    server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", port)
+    try:
+        clock[0] = 5.0
+        assert await probe.reachable(url) is False and accepted == []  # failure cached
+        clock[0] = 16.0
+        assert await probe.reachable(url) is True
+        await asyncio.sleep(0.05)
+        assert len(accepted) == 1
+        clock[0] = 20.0
+        assert await probe.reachable(url) is True
+        await asyncio.sleep(0.05)
+        assert len(accepted) == 1  # second probe within ttl did not reconnect
+    finally:
+        server.close()
+        await server.wait_closed()
