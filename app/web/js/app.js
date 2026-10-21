@@ -46,12 +46,14 @@ export const views = {
   project: () => import('./views/browse.js').then((m) => ({ render: m.renderProject })),
   people: () => import('./views/browse.js').then((m) => ({ render: m.renderPeople })),
   deadlines: () => import('./views/browse.js').then((m) => ({ render: m.renderDeadlines })),
+  agents: () => import('./views/agents.js'),
+  usage: () => import('./views/usage.js'),
   settings: () => import('./views/settings.js'),
   setup: () => import('./views/setup.js'),
 };
 
 const NAV = [['today', 'Today'], ['ask', 'Ask'], ['journal', 'Journal'], ['people', 'People'],
-  ['deadlines', 'Deadlines'], ['settings', 'Settings']];
+  ['deadlines', 'Deadlines'], ['agents', 'Agents'], ['usage', 'Usage'], ['settings', 'Settings']];
 
 // -- Router ---------------------------------------------------------------------------------
 let cleanup = null;
