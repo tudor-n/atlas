@@ -36,7 +36,9 @@ The setup wizard asks for your map: areas, projects (and which are companies, wi
 Both are git-ignored by the code repo.
 
 ## Backup
-Create an **empty, private** GitHub repository, then paste its URL in Settings (backup remote). The hub pushes `brain/` shortly after commits (debounced). Push status shows in the Settings view; "Push now" forces it.
+Create an **empty, private** GitHub repository, then paste its URL in Settings (backup remote). The hub pushes `brain/` shortly after commits (debounced, 5 minutes by default). Push status shows in the Settings view; "Push now" forces it. A push never asks for a password: git runs without a terminal prompt or credential-manager window and gives up after 120 s, so sign in to GitHub once with git (or use an SSH key without a passphrase prompt) before relying on it.
+
+`brain/.gitattributes` (`* -text`) keeps line endings exactly as written, so a restore with `git clone` gives a readable raw log even where git converts line endings by default.
 
 ## Claude and `ANTHROPIC_API_KEY`
 All Claude calls run `claude -p` on your subscription. `ANTHROPIC_API_KEY` is removed from the environment of every child process **on purpose**, and `--bare` is never used, so you are never billed per token by accident. Models are settings: filing `sonnet`, quick recall `haiku`, deeper recall `sonnet`.
@@ -50,9 +52,26 @@ The server binds `127.0.0.1` only. Writes require `Content-Type: application/jso
 From `D:\BrainHub\app`:
 ```
 .venv/Scripts/python -m pytest -v
-node --test web/js/components/map-editor.test.mjs
+node --test web/js/components/map-editor.test.mjs web/js/components/text.test.mjs web/js/views/journal.test.mjs
 ```
 The Python tests use a fake Claude runner; none of them call the real CLI.
+
+## Known limitations
+Deferred on purpose; none of them loses data.
+- Owner edits to notes are committed (and re-indexed for search) at the next hub commit or restart, not the moment the file is saved: there is no file watcher yet.
+- `_items/proposals.json` and dismissals reach the backup with the next hub commit, not on their own.
+- `map.json` is written in place, not via a temporary file; a crash mid-write needs a `git checkout map.json` in `brain/`.
+- `slugify` drops letters that have no ASCII decomposition (`ł`, `ø`): "Łódź" becomes `odz`.
+- A `#` line inside a fenced code block in a note counts as a heading for search sections.
+- `_items/<group>.md` files for groups that no longer have items are left in place (stale, read-only views).
+- `build_fts_query` neither caps nor de-duplicates question words.
+- WebSocket broadcasts are awaited inline, so a very slow browser tab can delay an API answer.
+- A setup that fails after validation (e.g. git missing) leaves `map.json` behind and the wizard then sees "setup already done".
+- The Journal area filter and the project page's journal list only see the entries loaded so far (newest 50/500); load older entries to filter further back.
+- A tolerant raw-log read resynchronises at the next record header; text inside a damaged record that itself looks like a complete record would be read as one (it is still reported).
+- Folders named `log` or `_items` nested inside other folders are hidden from the notes viewer.
+- If `claude_path` resolves to an npm `.cmd` shim, arguments pass through `cmd.exe` quoting.
+- Whether the agents still read a user-level `CLAUDE.md` memory file under `--setting-sources ""` is not verified; keep yours free of instructions that would clash with filing.
 
 ## Measured
 Real end-to-end run on a scratch root with the real Claude CLI 2.1.304 (2026-10-21), using the sample entry about the robot arm wrist servo, a present deadline and a teammate owing endpoints:
