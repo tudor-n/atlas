@@ -126,6 +126,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-s); o
 .meter-block.warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
 .big-pct { font-size: 2rem; font-weight: 700; }
 meter { width: 100%; height: 14px; }
+meter::-webkit-meter-bar { background: var(--line); border: 0; }
 .agents-table { width: 100%; border-collapse: collapse; }
 .agents-table th { text-align: left; font-size: var(--fs-s); color: var(--muted); font-weight: 600; }
 .agents-table th, .agents-table td { padding: var(--space-2); border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }

@@ -33,6 +33,11 @@ test('usage', () => {
   assert.deepEqual(tileSummary('usage', W({ usage: { five_hour: { used: null }, seven_day: null } })), { value: '—', caption: 'no data yet', warn: false });
 });
 
+test('usage falls back to seven_day', () => {
+  const seven = { used: 31, resets_at: '2026-10-25T09:00', warn: false };
+  assert.deepEqual(tileSummary('usage', W({ usage: { five_hour: null, seven_day: seven } })), { value: '31%', caption: '7d · resets 09:00', warn: false });
+});
+
 test('agents', () => {
   assert.deepEqual(tileSummary('agents', W({ agents: { running: 2, waiting: 1, rows: [] } })), { value: '2', caption: 'running · 1 waiting', warn: true });
   assert.deepEqual(tileSummary('agents', W()), { value: '0', caption: 'running', warn: false });

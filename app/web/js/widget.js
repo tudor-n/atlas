@@ -13,6 +13,10 @@ let expanded = false;
 let openTile = null;
 let debounce = null;
 let savedTimer = null;
+let saving = false;
+let popupError = '';
+let loading = false;
+let again = false;
 
 const root = document.getElementById('w');
 
@@ -28,9 +32,9 @@ function fitWindow() {
 }
 
 // -- static shell, built once so the capture field keeps its text and focus ------------------
-const grip = el('span', { class: 'grip', 'aria-hidden': 'true' }, '⋮⋮');
-const dot = el('span', { class: 'dot', title: 'Needs your attention', hidden: true });
-const synopsis = el('span', { class: 'synopsis' }, 'Loading…');
+const grip = el('span', { class: 'grip', 'aria-hidden': 'true', 'data-tauri-drag-region': true }, '⋮⋮');
+const dot = el('span', { class: 'dot', title: 'Needs your attention', hidden: true, 'data-tauri-drag-region': true });
+const synopsis = el('span', { class: 'synopsis', 'data-tauri-drag-region': true }, 'Loading…');
 const expandBtn = el('button', { class: 'expand', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
 const bar = el('div', { class: 'bar', 'data-tauri-drag-region': true }, grip, dot, synopsis, expandBtn);
 
@@ -73,13 +77,16 @@ function showStatus(text, isErr) {
 async function onCaptureKey(ev) {
   if (ev.key !== 'Enter' || ev.isComposing) return;
   const text = capture.value;
-  if (!text.trim()) return;
+  if (!text.trim() || saving) return;
+  saving = true;
   try {
     await post('/api/entries', { text, source: 'widget' });
-    capture.value = '';
+    if (capture.value === text) capture.value = '';
     showStatus('Saved', false);
   } catch (e) {
     showStatus(e.message || 'Could not save', true);
+  } finally {
+    saving = false;
   }
 }
 
@@ -96,13 +103,13 @@ function renderBar() {
 }
 
 async function openInApp(name, view) {
+  popupError = '';
   try {
     if (name === 'arm') await post('/api/open', { target: 'arm' });
     else await post('/api/open', { target: 'app', view: view || TILE_VIEW[name] });
   } catch (e) {
-    const old = popup.querySelector('.popup-err');
-    if (old) old.remove();
-    popup.appendChild(el('div', { class: 'popup-err', role: 'alert' }, e.message || 'Could not open'));
+    popupError = e.message || 'Could not open';
+    renderPopup();
     fitWindow();
   }
 }
@@ -119,32 +126,45 @@ function renderPopup() {
   } else if (!rows.length) {
     popup.appendChild(el('div', { class: 'empty' }, 'Nothing here'));
   } else {
-    popup.appendChild(el('ul', { class: 'rows' }, rows.map((r) => {
+    popup.appendChild(el('ul', { class: 'rows' }, rows.map((r, i) => {
       const inner = [el('span', { class: 'text' }, r.text), el('span', { class: 'meta' }, r.meta)];
       return el('li', null, r.view
-        ? el('button', { class: 'row', type: 'button', onclick: () => openInApp(name, r.view) }, inner)
+        ? el('button', { class: 'row', type: 'button', 'data-focus': `row:${i}`, onclick: () => openInApp(name, r.view) }, inner)
         : el('div', { class: 'row' }, inner));
     })));
   }
-  popup.appendChild(el('button', { class: 'open-link', type: 'button', onclick: () => openInApp(name) },
+  if (popupError) popup.appendChild(el('div', { class: 'popup-err', role: 'alert' }, popupError));
+  popup.appendChild(el('button', { class: 'open-link', type: 'button', 'data-focus': 'footer', onclick: () => openInApp(name) },
     name === 'arm' ? 'Open robot arm ↗' : 'Open in BrainHub ↗'));
+}
+
+function focusKey() {
+  const a = document.activeElement;
+  if (a && a.dataset && a.dataset.focus && (grid.contains(a) || popup.contains(a))) return a.dataset.focus;
+  return null;
 }
 
 function renderBody() {
   if (!expanded || !data) return;
+  const key = focusKey();
   clear(grid);
   for (const name of data.tiles) {
     if (!TILE_LABEL[name]) continue;
     const s = tileSummary(name, data);
     grid.appendChild(el('button', {
-      class: 'tile' + (s.warn ? ' warn' : ''), type: 'button', 'aria-expanded': String(openTile === name),
-      onclick: () => { openTile = openTile === name ? null : name; renderBody(); fitWindow(); },
+      class: 'tile' + (s.warn ? ' warn' : ''), type: 'button', 'data-focus': `tile:${name}`, 'aria-expanded': String(openTile === name),
+      onclick: () => { openTile = openTile === name ? null : name; popupError = ''; renderBody(); fitWindow(); },
     },
     el('span', { class: 'label' }, TILE_LABEL[name]),
     el('span', { class: 'value' }, s.value),
     el('span', { class: 'caption' }, s.caption)));
   }
   renderPopup();
+  if (key) {
+    for (const n of root.querySelectorAll('[data-focus]')) {
+      if (n.dataset.focus === key) { n.focus(); break; }
+    }
+  }
 }
 
 function render() {
@@ -155,13 +175,17 @@ function render() {
 
 // -- data refresh ----------------------------------------------------------------------------
 async function refresh() {
+  if (loading) { again = true; return; }
+  loading = true;
   try {
     data = await get('/api/widget');
     offline = false;
   } catch (_) {
     offline = true;
   }
+  loading = false;
   render();
+  if (again) { again = false; refresh(); }
 }
 
 function scheduleRefresh() {
