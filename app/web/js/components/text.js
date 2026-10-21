@@ -18,7 +18,8 @@ export function snippetNodes(snippet) {
 }
 
 const ENTRY_ID = /^e-\d{8}-\d{6}-[0-9a-z]+$/;
-const NOTE_REF = /^[^[\]#\s][^[\]#]*\.md#[^[\]]+$/;
+// "path/to/note.md" or "path/to/note.md#Heading" (a note's preamble has no heading).
+const NOTE_REF = /^[^[\]#\s][^[\]#]*\.md(#[^[\]]+)?$/;
 const REF = /\[([^[\]]+)\]/g;
 
 export const isEntryRef = (r) => ENTRY_ID.test(r);

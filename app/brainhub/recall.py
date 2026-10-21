@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -16,9 +17,13 @@ _STOPWORDS = {
 }
 
 
+def _tokens(question: str) -> list[str]:
+    return [t for t in re.findall(r"\w+", question.lower()) if len(t) >= 2 and t not in _STOPWORDS]
+
+
 def build_fts_query(question: str) -> str | None:
     """Quote every token so FTS operators are plain words; None if nothing is left."""
-    tokens = [t for t in re.findall(r"\w+", question.lower()) if len(t) >= 2 and t not in _STOPWORDS]
+    tokens = _tokens(question)
     if not tokens:
         return None
     return " OR ".join(f'"{t}"' for t in tokens)
@@ -31,11 +36,46 @@ def search_hits(store, question: str, limit: int) -> list[Hit]:
     return store.search(fq, limit)
 
 
+def _fold(text: str) -> tuple[str, list[int]]:
+    """Lowercased with diacritics dropped (as the FTS tokenizer matches), plus a map from each
+    folded character back to its index in `text`."""
+    chars: list[str] = []
+    index: list[int] = []
+    for i, c in enumerate(text):
+        for f in unicodedata.normalize("NFKD", c):
+            if not unicodedata.combining(f):
+                for g in f.lower():
+                    chars.append(g)
+                    index.append(i)
+    return "".join(chars), index
+
+
+def _window(text: str, terms: list[str], size: int = MAX_HIT_CHARS) -> str:
+    """At most `size` characters of `text`, centred on the first place a query term occurs
+    (the start when none does); a cut end is marked with an ellipsis."""
+    if len(text) <= size:
+        return text
+    folded, index = _fold(text)
+    first = None
+    for term in terms:
+        m = re.search(rf"\b{re.escape(_fold(term)[0])}\b", folded)
+        if m and (first is None or index[m.start()] < first):
+            first = index[m.start()]
+    start = 0 if first is None else max(0, min(first - size // 2, len(text) - size))
+    end = start + size
+    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+
+
 def build_quick_prompt(question: str, hits: list[Hit]) -> str:
+    """One labelled block per hit: raw entries are the owner's own words, notes were written by
+    the filing agent. Dates appear only when known."""
+    terms = _tokens(question)
     lines = []
     for h in hits:
-        text = h.text if len(h.text) <= MAX_HIT_CHARS else h.text[:MAX_HIT_CHARS] + "…"
-        lines.append(f"[{h.ref}] ({h.date}) {text}")
+        label = "owner's words" if h.kind == "entry" else "agent-written note"
+        if h.date:
+            label += f", {h.date}"
+        lines.append(f"[{h.ref}] ({label}) {_window(h.text, terms)}")
     return "Sources:\n" + "\n\n".join(lines) + f"\n\nQuestion: {question}"
 
 

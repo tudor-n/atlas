@@ -47,7 +47,7 @@ async def test_quick_answer_uses_no_tools_one_turn(tmp_path):
     assert "[e-20261020-140322-ab12]" in out
     call = r.calls[0]
     assert call["allowed_tools"] == [] and call["max_turns"] == 1 and call["model"] == "haiku"
-    assert "[e-20261020-140322-ab12] (2026-10-20) the wrist servo buzzes" in call["prompt"]
+    assert "[e-20261020-140322-ab12] (owner's words, 2026-10-20) the wrist servo buzzes" in call["prompt"]
 
 
 async def test_deeper_answer_uses_read_tools_in_brain(tmp_path):
@@ -65,3 +65,28 @@ def test_prompt_files_carry_the_rules():
         t = (PROMPTS / name).read_text(encoding="utf-8")
         assert "Nothing on that." in t and "data" in t and "[e-20261020-140322-ab12]" in t
     assert "_items/" in (PROMPTS / "deeper.md").read_text(encoding="utf-8")
+
+
+def test_prompt_labels_sources_and_omits_missing_dates():
+    entry = Hit("entry", "e-20261020-140322-ab12", "2026-10-20", "...", "the wrist servo buzzes")
+    note = Hit("note", "projects/robotarm/notes.md#Wrist", None, "...", "servo backlash 2mm")
+    p = build_quick_prompt("servo?", [entry, note])
+    assert "[e-20261020-140322-ab12] (owner's words, 2026-10-20) the wrist servo buzzes" in p
+    assert "[projects/robotarm/notes.md#Wrist] (agent-written note) servo backlash 2mm" in p
+    assert "None" not in p
+
+
+def test_prompt_window_centres_on_the_first_match():
+    text = "a" * 3000 + " the wrist servo buzzes " + "b" * 3000
+    p = build_quick_prompt("what about the wrist?", [Hit("entry", "e-1", "2026-10-20", "...", text)])
+    assert "the wrist servo buzzes" in p and p.count("…") == 2 and len(p) < 1700
+
+
+def test_prompt_window_matches_without_diacritics():
+    text = "x" * 2000 + " temă la fizică " + "y" * 2000
+    p = build_quick_prompt("fizica homework", [Hit("entry", "e-1", "2026-10-20", "...", text)])
+    assert "temă la fizică" in p
+
+
+def test_recall_prompt_limits_citations_to_sources():
+    assert "Cite only refs listed under Sources." in (PROMPTS / "recall.md").read_text(encoding="utf-8")
