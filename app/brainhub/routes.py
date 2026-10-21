@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import sys
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
+from . import claude_integration as ci
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -565,6 +567,43 @@ async def delete_agent(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+def _integration_view(app: web.Application) -> dict:
+    port = load_settings(app["paths"])["port"]
+    view = ci.status(app["claude_settings_path"], port=port)
+    return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
+
+
+async def get_integration(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_view, request.app))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+def _integration_change(app: web.Application, install: bool) -> dict:
+    paths, target = app["paths"], app["claude_settings_path"]
+    if install:
+        ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
+                   port=load_settings(paths)["port"], data_dir=paths.data)
+    else:
+        ci.uninstall(target, data_dir=paths.data)
+    return _integration_view(app)
+
+
+async def post_integration_install(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_change, request.app, True))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+async def post_integration_uninstall(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_change, request.app, False))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
 def add_routes(app: web.Application) -> None:
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
@@ -587,5 +626,8 @@ def add_routes(app: web.Application) -> None:
         web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
         web.patch("/api/agents/{session_id}", patch_agent),
         web.delete("/api/agents/{session_id}", delete_agent),
+        web.get("/api/integration", get_integration),
+        web.post("/api/integration/install", post_integration_install),
+        web.post("/api/integration/uninstall", post_integration_uninstall),
         web.get("/ws", ws_handler),
     ])

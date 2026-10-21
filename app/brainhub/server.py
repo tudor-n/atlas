@@ -5,11 +5,13 @@ import asyncio
 import logging
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 from aiohttp import web
 
 from .agents import AgentTracker
 from .backup import BackupPusher
+from .claude_integration import default_settings_path
 from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
@@ -159,7 +161,8 @@ def _open_store(paths: Paths, problems: list[str]) -> Store:
         return Store(paths.db)
 
 
-def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.Application:
+def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
+               claude_settings_path: Path | None = None) -> web.Application:
     app = web.Application(middlewares=[local_only, errors])
     paths.data.mkdir(parents=True, exist_ok=True)
     startup_errors: list[str] = []
@@ -187,6 +190,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
+    app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
     app["usage"] = UsageStore(paths.data / "usage.json")
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
 
