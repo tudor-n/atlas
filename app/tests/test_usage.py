@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import pytest
@@ -86,3 +87,29 @@ def test_age(tmp_path):
     clock.t = T + 42
     assert store.view(80, URL)["age_s"] == 42
     assert store.updated_at() is not None
+
+
+@pytest.mark.parametrize("bad", [10**15, -5, 0, 4_102_444_800])
+def test_out_of_range_resets_at_ignored(tmp_path, bad):
+    store, _ = make(tmp_path)
+    store.update({"rate_limits": {"five_hour": {"used_percentage": 5, "resets_at": bad},
+                                  "seven_day": {"used_percentage": 10, "resets_at": T + 5}}})
+    v = store.view(80, URL)
+    assert v["five_hour"] is None and v["seven_day"]["used"] == 10
+
+
+def test_file_with_bad_resets_at_loads(tmp_path):
+    (tmp_path / "usage.json").write_text(json.dumps({
+        "five_hour": {"used_percentage": 5.0, "resets_at": 10**15},
+        "seven_day": {"used_percentage": 7.0, "resets_at": T + 5}}), encoding="utf-8")
+    store, _ = make(tmp_path)
+    v = store.view(80, URL)
+    assert v["five_hour"] is None and v["seven_day"]["used"] == 7.0
+
+
+def test_failed_save_leaves_memory_unchanged(tmp_path, monkeypatch):
+    store, _ = make(tmp_path)
+    monkeypatch.setattr(store, "_save", lambda *a: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        store.update(PAYLOAD)
+    assert store.view(80, URL)["five_hour"] is None and store.updated_at() is None

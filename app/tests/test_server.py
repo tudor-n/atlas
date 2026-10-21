@@ -556,7 +556,7 @@ async def test_correct_marks_the_filing_queued_at_once(ready_client, app):
 
 
 async def test_usage_endpoints(client):
-    payload = {"rate_limits": {"five_hour": {"used_percentage": 62.4, "resets_at": 4_102_444_800}}}
+    payload = {"rate_limits": {"five_hour": {"used_percentage": 62.4, "resets_at": 4_000_000_000}}}
     r = await client.post("/api/usage", json=payload)
     assert r.status == 204
     got = await (await client.get("/api/usage")).json()

@@ -12,6 +12,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 WINDOWS = ("five_hour", "seven_day")
+MAX_RESETS = 4_102_444_800  # year 2100: keeps datetime.fromtimestamp safe
 
 
 def _num(v) -> bool:
@@ -22,7 +23,7 @@ def _clean(raw) -> dict | None:
     if not isinstance(raw, dict):
         return None
     used, resets = raw.get("used_percentage"), raw.get("resets_at")
-    if not _num(used) or not 0 <= used <= 100 or type(resets) is not int:
+    if not _num(used) or not 0 <= used <= 100 or type(resets) is not int or not 0 < resets < MAX_RESETS:
         return None
     return {"used_percentage": float(used), "resets_at": resets}
 
@@ -50,10 +51,10 @@ class UsageStore:
             return
         self._data, self._updated = data, stamp
 
-    def _save(self) -> None:
-        out = dict(self._data)
-        if self._updated is not None:
-            out["updated_at"] = datetime.fromtimestamp(self._updated).isoformat(timespec="seconds")
+    def _save(self, data: dict, updated: float | None) -> None:
+        out = dict(data)
+        if updated is not None:
+            out["updated_at"] = datetime.fromtimestamp(updated).isoformat(timespec="seconds")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
@@ -67,18 +68,18 @@ class UsageStore:
         if not isinstance(limits, dict):
             raise ValueError("rate_limits must be an object")
         with self._lock:
-            seen, changed = False, False
+            data, seen, changed = dict(self._data), False, False
             for w in WINDOWS:
                 clean = _clean(limits.get(w))
                 if clean is None:
                     continue
                 seen = True
-                if self._data.get(w) != clean:
-                    self._data[w], changed = clean, True
-            if seen:
-                self._updated = self.now()
+                if data.get(w) != clean:
+                    data[w], changed = clean, True
+            updated = self.now() if seen else self._updated
             if changed:
-                self._save()
+                self._save(data, updated)  # raises before memory is touched
+            self._data, self._updated = data, updated
             return changed
 
     def updated_at(self) -> str | None:
