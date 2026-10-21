@@ -20,7 +20,9 @@ const root = document.getElementById('w');
 function fitWindow() {
   if (!window.__TAURI__) return;
   try {
-    const h = Math.ceil(document.documentElement.scrollHeight);
+    const panel = root.firstElementChild;
+    if (!panel) return;
+    const h = Math.ceil(panel.getBoundingClientRect().height);
     window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(WIDTH, h));
   } catch (_) { /* not running in the desktop shell */ }
 }
@@ -101,6 +103,7 @@ async function openInApp(name, view) {
     const old = popup.querySelector('.popup-err');
     if (old) old.remove();
     popup.appendChild(el('div', { class: 'popup-err', role: 'alert' }, e.message || 'Could not open'));
+    fitWindow();
   }
 }
 
