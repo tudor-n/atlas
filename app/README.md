@@ -71,6 +71,13 @@ Deferred on purpose; none of them loses data.
 - A tolerant raw-log read resynchronises at the next record header; text inside a damaged record that itself looks like a complete record would be read as one (it is still reported).
 - Folders named `log` or `_items` nested inside other folders are hidden from the notes viewer.
 - If `claude_path` resolves to an npm `.cmd` shim, arguments pass through `cmd.exe` quoting.
+- "Filed to" and the project page's journal list use the agent's own list of changed files, not the files its commit actually changed.
+- Brain commit messages are coarse: a capture's log append is committed as "owner edits", and confirms can sweep real owner edits into "confirm: N items".
+- Done (✓) in Today and dismiss (✕) on a card have no undo, and there is no view of done or dismissed items yet.
+- Item rows don't link back to the entry they came from (the data is stored).
+- The People page doesn't show "done" delegations or how long you've been waiting.
+- After a correction's re-filing fails, pressing Retry may treat the reverted filing as still present and drop the correction text; re-submit the correction instead.
+- If the filing agent both edits a protected file and creates a new hidden folder, the filing fails safely and needs a Retry.
 - Whether the agents still read a user-level `CLAUDE.md` memory file under `--setting-sources ""` is not verified; keep yours free of instructions that would clash with filing.
 
 ## Measured
