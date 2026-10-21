@@ -310,3 +310,39 @@ def test_parse_accepts_a_course_slug_as_project(m):
                       "due": None, "remind_at": None}]}
     _, _, props = parse_filing_result(raw, m, set())
     assert [(p[1]["project"], p[2]) for p in props[:2]] == [("fizica", []), ("chimie", [])]
+
+
+async def test_rerun_after_the_commit_landed_fixes_in_place(env):
+    from brainhub.filing import FIX_IN_PLACE
+    def edit(cwd): (cwd/"general"/"n.md").write_text("note (from e-1)", encoding="utf-8")
+    runner = FakeRunner(json_result=GOOD_RESULT, on_run=edit); w = env.worker(runner)
+    await w.file_entry(env.entry.id)
+    assert FIX_IN_PLACE not in runner.calls[0]["prompt"]
+    f = env.store.get_filing(env.entry.id); f.status = "running"; env.store.upsert_filing(f)  # crash after landing
+    await w.file_entry(env.entry.id)
+    assert FIX_IN_PLACE in runner.calls[1]["prompt"]
+
+
+async def test_correction_on_top_of_later_commits_fixes_in_place(env):
+    from brainhub.filing import FIX_IN_PLACE
+    def edit(cwd): (cwd/"personal"/"gift.md").write_text("present (from e-1)", encoding="utf-8")
+    runner = FakeRunner(json_result=GOOD_RESULT, on_run=edit); w = env.worker(runner)
+    await w.file_entry(env.entry.id)
+    (env.paths.brain/"general"/"later.md").write_text("later", encoding="utf-8"); env.repo.commit_all("later")
+    await w.correct(env.entry.id, "it is for the 12th")
+    assert FIX_IN_PLACE in runner.calls[-1]["prompt"] and "the 12th" in runner.calls[-1]["prompt"]
+
+
+async def test_failed_correction_setup_does_not_leave_the_filing_queued(env, monkeypatch):
+    w = env.worker(FakeRunner(json_result=GOOD_RESULT))
+    await w.file_entry(env.entry.id)
+    w.mark_queued(env.entry.id)  # as the /correct route does
+
+    def boom(*a, **k):
+        raise RuntimeError("git exploded")
+
+    monkeypatch.setattr(env.repo, "head", boom)
+    with pytest.raises(RuntimeError):
+        await w.correct(env.entry.id, "x", queued=True)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "failed" and "git exploded" in f.error

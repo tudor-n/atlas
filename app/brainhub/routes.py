@@ -336,10 +336,12 @@ async def correct_filing(request: web.Request) -> web.Response:
     await _require_entry(app, eid)
     if await _in_progress(app, eid):
         return err(409, "filing in progress")
+    # Queued from this moment, as a retry is: the card stops offering ✓ on the stale proposals.
+    await t(app["worker"].mark_queued, eid)
 
     async def run() -> None:
         try:
-            await app["worker"].correct(eid, text)
+            await app["worker"].correct(eid, text, queued=True)
         except Exception as e:
             log.exception("correction of %s failed", eid)
             await app["broadcast"]("filing.failed", {"entry_id": eid, "error": str(e)[:500]})

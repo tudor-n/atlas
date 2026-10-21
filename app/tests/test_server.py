@@ -534,3 +534,22 @@ async def test_failed_filings_endpoint_lists_every_failure(ready_client, app):
     app["store"].add_proposals(ids[1], [("item", {"kind": "task", "text": "t", "area": "general"}, [])])
     groups = await (await ready_client.get("/api/proposals")).json()
     assert [(g["entry_id"], g["text"]) for g in groups] == [(ids[1], "entry 1")]
+
+
+async def test_correct_marks_the_filing_queued_at_once(ready_client, app):
+    import asyncio
+    eid = (await (await ready_client.post("/api/entries", json={"text": "x", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid)
+    gate = asyncio.Event()
+
+    async def held(entry_id, text, *, queued=False):
+        await gate.wait()
+
+    app["worker"].correct = held
+    r = await ready_client.post(f"/api/filings/{eid}/correct", json={"text": "it is the 12th"})
+    assert r.status == 202
+    card = await (await ready_client.get(f"/api/filings/{eid}")).json()
+    assert card["filing"]["status"] == "queued"
+    assert (await ready_client.post(f"/api/filings/{eid}/correct", json={"text": "again"})).status == 409
+    assert (await ready_client.post(f"/api/filings/{eid}/retry")).status == 409
+    gate.set()

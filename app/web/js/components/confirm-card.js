@@ -135,6 +135,8 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   }
 
   function actions(p, canConfirm) {
+    const f = s.data && s.data.filing;
+    if (f && (f.status === 'queued' || f.status === 'running')) canConfirm = false;  // re-filing
     return el('div', { class: 'row-actions' },
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: 'Confirm', disabled: !canConfirm || s.busy || null,
         onclick: () => confirmIds([p.id]) }, '✓'),
@@ -288,7 +290,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
         s.draft.correction = '';
         ta.value = '';
         s.notice = 'Re-filing with your correction…';
-        render();
+        await reload();  // now queued: the old rows (and their ✓) are gone until the new card
       } catch (e) {
         err.textContent = e.status === 409 ? 'Still filing, try again in a moment' : `Couldn't send the correction: ${e.message}`;
       } finally {

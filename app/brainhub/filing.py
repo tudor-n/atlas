@@ -49,7 +49,8 @@ def _item_line(i: Item) -> str:
 
 
 def build_filing_prompt(entry: Entry, m: BrainMap, open_items: list[Item],
-                        correction: str | None = None, previous: dict | None = None) -> str:
+                        correction: str | None = None, previous: dict | None = None,
+                        fix_in_place: bool = False) -> str:
     ts = entry.ts
     lines = [
         f"Entry id: {entry.id}",
@@ -64,6 +65,9 @@ def build_filing_prompt(entry: Entry, m: BrainMap, open_items: list[Item],
     ]
     if correction:
         lines += ["", "Correction from the owner. File this entry again with it applied:", correction]
+    if fix_in_place:
+        lines += ["", "This entry was already filed once and that filing is still in the notes.",
+                  FIX_IN_PLACE]
     if previous:
         lines += ["", "Your previous filing of this entry:",
                   json.dumps(previous, ensure_ascii=False, indent=2)]
@@ -269,16 +273,23 @@ class FilingWorker:
     async def file_entry(self, entry_id: str, correction: str | None = None,
                          previous: dict | None = None) -> None:
         _check_entry_id(entry_id)
+        t = asyncio.to_thread
         async with self._lock:
-            await self._file_entry(entry_id, correction, previous)
+            # A re-run after this entry's commit already landed (a crash after the
+            # cherry-pick, a retry) must fix the notes in place, not append the content again.
+            old = await t(self.store.get_filing, entry_id)
+            landed = bool(old and old.commit and await t(self.repo.in_history, old.commit))
+            await self._file_entry(entry_id, correction, previous, fix_in_place=landed)
 
     async def _file_entry(self, entry_id: str, correction: str | None,
-                          previous: dict | None) -> None:
+                          previous: dict | None, fix_in_place: bool = False) -> None:
         """The filing itself. The caller holds self._lock."""
         t = asyncio.to_thread
         wt_path = self.paths.data / "worktrees" / entry_id
         old = await t(self.store.get_filing, entry_id)
-        filing = Filing(entry_id, "running", attempts=old.attempts if old else 0)
+        # The last landed commit is kept until a new one lands, so a failed re-run still knows it.
+        filing = Filing(entry_id, "running", commit=old.commit if old else None,
+                        attempts=old.attempts if old else 0)
         done = False
         try:
             entry = await t(self.store.get_entry, entry_id)
@@ -303,7 +314,7 @@ class FilingWorker:
             open_items = await t(self.store.list_items, status=["open", "to_read"])
             settings = await t(load_settings, self.paths)
             raw = await self.runner.run_json(
-                build_filing_prompt(entry, m, open_items, correction, previous),
+                build_filing_prompt(entry, m, open_items, correction, previous, fix_in_place),
                 cwd=wt_path, model=settings["filing_model"],
                 system_prompt_file=self.paths.prompts / "filing.md",
                 allowed_tools=ALLOWED_TOOLS, json_schema=FILING_SCHEMA,
@@ -349,23 +360,31 @@ class FilingWorker:
         if done:  # outside the try: a broadcast error can't turn a done filing into failed
             await self.broadcast("filing.done", {"entry_id": entry_id})
 
-    async def correct(self, entry_id: str, text: str) -> None:
+    async def correct(self, entry_id: str, text: str, *, queued: bool = False) -> None:
+        """Re-file with the owner's correction. queued=True: the caller (the /correct route)
+        already marked this filing queued, so the card stops offering ✓ at once."""
         _check_entry_id(entry_id)
         t = asyncio.to_thread
         async with self._lock:
             f = await t(self.store.get_filing, entry_id)
-            if f and f.status in ("queued", "running"):
+            if f and (f.status == "running" or (f.status == "queued" and not queued)):
                 raise ValueError("filing in progress")
-            proposals = await t(self.store.list_proposals, entry_id=entry_id)
-            previous = {
-                "synopsis": f.synopsis if f else "",
-                "proposals": [{"ptype": p.ptype, "payload": p.payload, "warnings": p.warnings}
-                              for p in proposals],
-            }
-            reverted = None
-            if f and f.commit and f.commit == await t(self.repo.head):
-                reverted = await t(self.repo.revert, f.commit)
-                if reverted:
-                    await t(self.on_commit, reverted)
-            correction = text if reverted else f"{text}\n\n{FIX_IN_PLACE}"
-            await self._file_entry(entry_id, correction, previous)
+            try:
+                proposals = await t(self.store.list_proposals, entry_id=entry_id)
+                previous = {
+                    "synopsis": f.synopsis if f else "",
+                    "proposals": [{"ptype": p.ptype, "payload": p.payload, "warnings": p.warnings}
+                                  for p in proposals],
+                }
+                reverted = None
+                if f and f.commit and f.commit == await t(self.repo.head):
+                    reverted = await t(self.repo.revert, f.commit)
+                    if reverted:
+                        await t(self.on_commit, reverted)
+            except Exception as exc:  # never leave the filing stuck at "queued"
+                if f:
+                    f.status, f.error = "failed", str(exc)[:500]
+                    await t(self.store.upsert_filing, f)
+                raise
+            # Reverted: file afresh. Not reverted (later commits on top): fix in place.
+            await self._file_entry(entry_id, text, previous, fix_in_place=not reverted)
