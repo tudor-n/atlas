@@ -42,10 +42,7 @@ async def test_widget_endpoint_and_page(client, app, paths):
     assert isinstance(body["synopsis"], str) and isinstance(body["arm"]["reachable"], bool)
     assert set(body["tiles"]) <= {"today", "usage", "agents", "people", "deadlines", "review", "projects", "arm"}
     page = await client.get("/widget")
-    if (paths.web / "widget.html").exists():
-        assert page.status == 200 and "text/html" in page.headers["Content-Type"]
-    else:
-        assert page.status == 404
+    assert page.status == 200 and "text/html" in page.headers["Content-Type"]
 
 
 def _raw_settings(paths, **kw):
