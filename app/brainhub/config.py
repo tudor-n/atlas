@@ -21,6 +21,13 @@ _PKG = Path(__file__).resolve().parent
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
+# Inclusive bounds for the numeric settings.
+RANGES: dict[str, tuple[int, int]] = {
+    "port": (1024, 65535),
+    "filing_timeout_s": (10, 3600), "recall_timeout_s": (10, 3600), "deeper_timeout_s": (10, 3600),
+    "recall_top_n": (1, 50), "default_lead_days": (0, 60), "nudge_days": (1, 60),
+    "backup_debounce_s": (0, 86400),
+}
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,10 @@ def validate_setting(key: str, value) -> None:
     # bool is an int subclass; reject it for non-bool defaults
     if type(value) is not type(default):
         raise ValueError(f"{key} must be {type(default).__name__}")
+    if key in RANGES:
+        lo, hi = RANGES[key]
+        if not lo <= value <= hi:
+            raise ValueError(f"{key} must be between {lo} and {hi}")
     if isinstance(value, str) and not value.strip() and (key == "claude_path" or key.endswith("_model")):
         raise ValueError(f"{key} must not be empty")
 

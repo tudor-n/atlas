@@ -73,3 +73,25 @@ def test_save_is_atomic(paths, monkeypatch):
     with pytest.raises(OSError):
         save_settings(paths, {"nudge_days": 7})
     assert paths.settings_file.read_text(encoding="utf-8") == before
+
+
+RANGE_CASES = [("port", 1024, 65535), ("filing_timeout_s", 10, 3600), ("recall_timeout_s", 10, 3600),
+               ("deeper_timeout_s", 10, 3600), ("recall_top_n", 1, 50), ("default_lead_days", 0, 60),
+               ("nudge_days", 1, 60), ("backup_debounce_s", 0, 86400)]
+
+
+@pytest.mark.parametrize("key,lo,hi", RANGE_CASES)
+def test_numeric_settings_are_range_checked(paths, key, lo, hi):
+    assert save_settings(paths, {key: lo})[key] == lo
+    assert save_settings(paths, {key: hi})[key] == hi
+    for bad in (lo - 1, hi + 1):
+        with pytest.raises(ValueError, match="between"):
+            save_settings(paths, {key: bad})
+    assert load_settings(paths)[key] == hi
+
+
+def test_out_of_range_stored_value_falls_back_to_default(paths):
+    import json
+    paths.settings_file.write_text(json.dumps({"port": 80}), encoding="utf-8")
+    problems = []
+    assert load_settings(paths, problems)["port"] == 8090 and "port" in problems[0]

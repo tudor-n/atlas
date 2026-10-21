@@ -7,7 +7,7 @@ const MODELS = ['haiku', 'sonnet', 'opus'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const HINTS = {
   port: 'Takes effect after BrainHub restarts.',
-  claude_path: 'Command or full path of the claude CLI.',
+  claude_path: 'Command or full path of the claude CLI. Takes effect after BrainHub restarts.',
   quiet_hours: 'Stored now; used when reminders arrive.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',
