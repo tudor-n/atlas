@@ -4,6 +4,8 @@ A local "second brain" for one person (the owner), on Windows. The owner writes 
 
 **Phases 1 and 2 are built. Phase 2 lives on branch `phase-2`; the owner merges it on GitHub. Next: the owner's phase 2 verification checklist, calibration, then phase 3.**
 
+> **Read `../NEXT-SESSION.md` first.** It is the handoff from the end of the phase 2 build: what the owner still has to run, Linux dual-boot notes, standing rules and machine facts.
+
 ## Read these first (repo root = `D:\BrainHub`)
 | File | What it's for |
 |---|---|
