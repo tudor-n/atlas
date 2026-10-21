@@ -1,0 +1,8 @@
+{
+  "identifier": "widget",
+  "windows": ["widget"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*"]
+  },
+  "permissions": ["core:window:allow-set-size", "core:window:allow-start-dragging"]
+}

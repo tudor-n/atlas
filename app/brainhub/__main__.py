@@ -42,7 +42,21 @@ def run_integration(argv: list[str]) -> None:
         sys.exit(1)
 
 
-COMMANDS = {"integration": run_integration}  # later: "desktop-config"
+def run_desktop_config(argv: list[str]) -> None:
+    from . import desktop_config as dc
+    ap = argparse.ArgumentParser(prog="brainhub desktop-config")
+    ap.add_argument("--root", required=True, type=Path)
+    ap.add_argument("--target", type=Path, default=None)
+    args = ap.parse_args(argv)
+    paths = Paths(args.root.resolve())
+    target = args.target or dc.default_target()
+    written = dc.write_desktop_config(root=paths.root, port=load_settings(paths)["port"],
+                                      python=dc.pythonw_for(Path(sys.executable)), app_dir=paths.app,
+                                      target=target)
+    print(written)
+
+
+COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config}
 
 
 def main() -> None:
