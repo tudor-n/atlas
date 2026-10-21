@@ -1,0 +1,13 @@
+{"type":"object","additionalProperties":false,"required":["synopsis","files","items","updates","new_nodes"],
+ "properties":{
+  "synopsis":{"type":"string"},
+  "files":{"type":"array","items":{"type":"string"}},
+  "items":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["kind","text","area"],
+    "properties":{"kind":{"enum":["task","deadline","reminder","waiting","next_time"]},"text":{"type":"string"},
+      "area":{"type":"string"},"project":{"type":["string","null"]},"person":{"type":["string","null"]},
+      "due":{"type":["string","null"]},"remind_at":{"type":["string","null"]}}}},
+  "updates":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["item_id","status"],
+    "properties":{"item_id":{"type":"string"},"status":{"enum":["to_read","done"]},"note":{"type":"string"}}}},
+  "new_nodes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["type","name"],
+    "properties":{"type":{"enum":["project","course","person","area"]},"name":{"type":"string"},
+      "parent":{"type":["string","null"]}}}}}}
