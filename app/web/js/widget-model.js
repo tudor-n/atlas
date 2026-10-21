@@ -121,3 +121,24 @@ export function popupRows(name, w) {
   }
   return rows.slice(0, MAX_ROWS);
 }
+
+// -- capture draft: what the owner typed survives a widget reload (never silently drop it) -----
+export const DRAFT_KEY = 'brainhub.widget.draft';
+
+// `storage` is window.localStorage or null; every access may throw (blocked or full storage).
+export function loadDraft(storage) {
+  try {
+    const v = storage ? storage.getItem(DRAFT_KEY) : null;
+    return typeof v === 'string' ? v : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+export function saveDraft(storage, text) {
+  try {
+    if (!storage) return;
+    if (text) storage.setItem(DRAFT_KEY, text);
+    else storage.removeItem(DRAFT_KEY);
+  } catch (_) { /* best effort: the field itself still holds the text */ }
+}

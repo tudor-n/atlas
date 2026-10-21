@@ -1,6 +1,11 @@
 // Pure helpers for the Agents and Usage pages (no DOM).
 export const STATUS_LABEL = { idle: 'ready', running: 'running', waiting: 'waiting for you', finished: 'finished' };
 
+// The Status cell: a closed session still lingering in the list shows "ended", whatever its last status.
+export function statusText(row) {
+  return row.ended ? 'ended' : (STATUS_LABEL[row.status] || row.status);
+}
+
 const pad = (n) => String(n).padStart(2, '0');
 
 // Whole minutes -> '5 min', '2 h 5 min', '3 d'.

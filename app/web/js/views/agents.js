@@ -1,7 +1,7 @@
 // Agents: Claude Code sessions seen through the hooks.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { STATUS_LABEL, sinceText, nextTimeText } from './agents-model.js';
+import { statusText, sinceText, nextTimeText } from './agents-model.js';
 
 const WHERE = ['terminal', 'IDE', 'desktop app', 'unknown'];
 
@@ -90,11 +90,11 @@ export async function render(container) {
     const head = el('tr', {}, ['Project', 'Part', 'Where', 'Status', 'Since', 'Note', 'Next time', ''].map((h) => el('th', {}, h)));
     const body = rows.map((row) => {
       const nt = nextTimeText(row);
-      return el('tr', {},
+      return el('tr', row.ended ? { class: 'ended' } : {},
         el('td', {}, row.project_name, row.mapped ? el('span', { class: 'badge' }, 'mapped') : null),
         el('td', {}, partCell(row)),
         el('td', {}, whereCell(row)),
-        el('td', {}, el('span', { class: row.status === 'waiting' ? 'badge warn' : 'badge' }, STATUS_LABEL[row.status] || row.status)),
+        el('td', {}, el('span', { class: row.status === 'waiting' && !row.ended ? 'badge warn' : 'badge' }, statusText(row))),
         el('td', {}, sinceText(row.status_since, now)),
         el('td', { class: 'meta' }, row.note || ''),
         el('td', { class: 'meta' }, nt || ''),

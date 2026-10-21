@@ -1,7 +1,7 @@
 // Desktop widget page: collapsed synopsis bar, expanded capture + tiles + popups (design §7.1).
 import { get, post, onEvent } from './api.js';
 import { el, clear } from './dom.js';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, loadDraft, saveDraft } from './widget-model.js';
 
 const WIDTH = 520;
 const OFFLINE = 'BrainHub offline · retrying';
@@ -19,6 +19,11 @@ let loading = false;
 let again = false;
 
 const root = document.getElementById('w');
+
+// localStorage may be missing or throw on access (blocked storage): treat that as "no draft".
+function draftStore() {
+  try { return window.localStorage; } catch (_) { return null; }
+}
 
 // -- Tauri bridge: no-op in a plain browser ---------------------------------------------------
 function fitWindow() {
@@ -38,7 +43,7 @@ const synopsis = el('span', { class: 'synopsis', 'data-tauri-drag-region': true 
 const expandBtn = el('button', { class: 'expand', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
 const bar = el('div', { class: 'bar', 'data-tauri-drag-region': true }, grip, dot, synopsis, expandBtn);
 
-const capture = el('input', { class: 'capture', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey });
+const capture = el('input', { class: 'capture', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
 const captureStatus = el('div', { class: 'capture-status', role: 'status' });
 const grid = el('div', { class: 'grid' });
 const popup = el('div', { class: 'popup', hidden: true });
@@ -82,6 +87,7 @@ async function onCaptureKey(ev) {
   try {
     await post('/api/entries', { text, source: 'widget' });
     if (capture.value === text) capture.value = '';
+    saveDraft(draftStore(), capture.value); // cleared, or whatever was typed during the save
     showStatus('Saved', false);
   } catch (e) {
     showStatus(e.message || 'Could not save', true);
@@ -197,4 +203,11 @@ for (const type of REFRESH_EVENTS) onEvent(type, scheduleRefresh);
 onEvent('ws.open', scheduleRefresh);
 setInterval(() => { if (!offline) refresh(); }, 60000);
 setInterval(() => { if (offline) refresh(); }, 5000);
+
+// A draft left by a reload (hub restart, shell re-navigation) comes back, expanded so it is seen.
+const draft = loadDraft(draftStore());
+if (draft) {
+  capture.value = draft;
+  setExpanded(true);
+}
 refresh();

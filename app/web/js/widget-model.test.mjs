@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, DRAFT_KEY, loadDraft, saveDraft } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -77,4 +77,30 @@ test('popupRows for other tiles', () => {
   assert.equal(popupRows('deadlines', W({ deadlines: [{ text: 'd', due: '2026-10-25', project: 'p' }] }))[0].meta, '2026-10-25');
   assert.equal(popupRows('review', W({ review: { proposals: 2, failed: 1 } })).length, 2);
   assert.equal(popupRows('arm', W()).length, 0);
+});
+
+function memStorage() {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m };
+}
+
+test('capture draft: save, load, clear', () => {
+  const s = memStorage();
+  assert.equal(loadDraft(s), '');
+  saveDraft(s, 'half a thought');
+  assert.equal(loadDraft(s), 'half a thought');
+  assert.equal(s.m.get(DRAFT_KEY), 'half a thought');
+  saveDraft(s, '');
+  assert.equal(loadDraft(s), '');
+  assert.equal(s.m.has(DRAFT_KEY), false);
+});
+
+test('capture draft: storage missing or throwing never breaks capture', () => {
+  const boom = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('quota'); }, removeItem() { throw new Error('x'); } };
+  assert.equal(loadDraft(boom), '');
+  assert.doesNotThrow(() => saveDraft(boom, 'x'));
+  assert.doesNotThrow(() => saveDraft(boom, ''));
+  assert.equal(loadDraft(null), '');
+  assert.doesNotThrow(() => saveDraft(undefined, 'x'));
+  assert.equal(loadDraft({ getItem: () => 42 }), '');
 });
