@@ -55,14 +55,68 @@ def test_install_is_idempotent_and_updates_port(tmp_path):
 def test_install_preserves_foreign_hooks_and_keys(tmp_path):
     f = tmp_path / "settings.json"
     orig = {"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]},
-            "permissions": {"allow": ["x"]}}
+            "permissions": {"allow": ["x"]},
+            "PreToolUse": [], "note": "café"}
+    orig["hooks"]["PreToolUse"] = []
     f.write_text(json.dumps(orig), "utf-8")
     do_install(f, tmp_path)
     s = json.loads(f.read_text("utf-8"))
     assert s["model"] == "opus" and s["permissions"] == {"allow": ["x"]}
     assert len(s["hooks"]["Stop"]) == 2 and s["hooks"]["Stop"][0] == orig["hooks"]["Stop"][0]
+    assert "café" in f.read_text("utf-8")
     ci.uninstall(f, data_dir=tmp_path)
     assert json.loads(f.read_text("utf-8")) == orig
+
+
+def test_mixed_group_keeps_foreign_hook(tmp_path):
+    f = tmp_path / "settings.json"
+    foreign = {"type": "command", "command": "say done"}
+    orig = {"hooks": {"Stop": [{"matcher": "m", "hooks": [foreign, ci.hook_entry(PY, SCRIPT, 8090, is_async=False)]}]}}
+    f.write_text(json.dumps(orig), "utf-8")
+    do_install(f, tmp_path)
+    s = json.loads(f.read_text("utf-8"))
+    assert s["hooks"]["Stop"][0] == {"matcher": "m", "hooks": [foreign]} and len(s["hooks"]["Stop"]) == 2
+    ci.uninstall(f, data_dir=tmp_path)
+    assert json.loads(f.read_text("utf-8"))["hooks"]["Stop"] == [{"matcher": "m", "hooks": [foreign]}]
+
+
+def test_foreign_hook_client_is_not_ours(tmp_path):
+    f = tmp_path / "settings.json"
+    hook = {"type": "command", "command": "python", "args": ["C:/tools/other/hook_client.py"]}
+    prev = {"type": "command", "command": "python C:/x/hook_client.py"}
+    orig = {"hooks": {"Stop": [{"hooks": [hook]}]}, "statusLine": prev}
+    f.write_text(json.dumps(orig), "utf-8")
+    assert ci.status(f, port=8090)["hooks_installed"] is False
+    do_install(f, tmp_path / "d")
+    assert len(json.loads(f.read_text("utf-8"))["hooks"]["Stop"]) == 2
+    assert ci.status(f, port=8090)["previous_statusline"] is True
+    ci.uninstall(f, data_dir=tmp_path / "d")
+    assert json.loads(f.read_text("utf-8")) == orig
+
+
+@pytest.mark.parametrize("bad", [
+    {"hooks": {"Stop": "x"}}, {"hooks": {"Stop": ["x"]}}, {"hooks": {"Stop": [{"hooks": "x"}]}},
+    {"hooks": {"Stop": [{"hooks": ["x"]}]}}, {"hooks": {"Stop": [{"hooks": [{"args": "x"}]}]}}])
+def test_odd_shapes(tmp_path, bad):
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps(bad), "utf-8")
+    ci.status(f, port=8090)  # must not crash
+    for fn in (lambda: do_install(f, tmp_path), lambda: ci.uninstall(f, data_dir=tmp_path)):
+        with pytest.raises(IntegrationError):
+            fn()
+    assert json.loads(f.read_text("utf-8")) == bad
+    assert not list(tmp_path.glob("*backup*"))
+
+
+def test_backups_never_overwrite(tmp_path):
+    from datetime import datetime
+    f = tmp_path / "settings.json"
+    f.write_text('{"a": 1}')
+    fixed = lambda: datetime(2026, 1, 1, 1, 1, 1, 555)  # noqa: E731
+    for _ in range(3):
+        ci.install(f, python=PY, script=SCRIPT, port=1, data_dir=tmp_path, now=fixed)
+    assert len(list(tmp_path.glob("settings.json.brainhub-backup-*"))) == 3
+    assert "." not in json.loads((tmp_path / "claude_integration.json").read_text())["installed_at"]
 
 
 def test_install_backs_up_original(tmp_path):

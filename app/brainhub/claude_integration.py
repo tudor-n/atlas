@@ -13,6 +13,7 @@ EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "St
 # they are not cancelled at teardown.
 ASYNC_EVENTS = ("UserPromptSubmit", "Notification", "PostToolUse")
 MARK = "hook_client.py"
+OUR_SUFFIX = "brainhub/hook_client.py"  # our own package path, not any file named hook_client.py
 STATE_FILE = "claude_integration.json"
 PASSTHROUGH_FILE = "statusline_passthrough.txt"
 
@@ -63,14 +64,45 @@ def statusline_command(python: str, script: str, port: int, passthrough: Path | 
     return cmd
 
 
+def _norm(text) -> str:
+    return str(text).replace("\\", "/").lower()
+
+
+def _hook_is_ours(h) -> bool:
+    if not isinstance(h, dict):
+        return False
+    args = h.get("args")
+    joined = " ".join(map(str, args)) if isinstance(args, list) else ""
+    return OUR_SUFFIX in _norm(joined) or OUR_SUFFIX in _norm(h.get("command", ""))
+
+
+def _group_hooks(group) -> list:
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    return hooks if isinstance(hooks, list) else []
+
+
 def _group_is_ours(group) -> bool:
-    return isinstance(group, dict) and any(
-        isinstance(h, dict) and (MARK in " ".join(map(str, h.get("args", []))) or MARK in str(h.get("command", "")))
-        for h in group.get("hooks", []))
+    return any(_hook_is_ours(h) for h in _group_hooks(group))
 
 
 def _line_is_ours(line) -> bool:
-    return isinstance(line, dict) and MARK in str(line.get("command", ""))
+    return isinstance(line, dict) and OUR_SUFFIX in _norm(line.get("command", ""))
+
+
+def _validate(obj: dict, path: Path) -> None:
+    def bad(what):
+        raise IntegrationError(f"{path}: unexpected settings shape ({what}); refusing to edit it")
+    for ev, groups in obj.get("hooks", {}).items():
+        if not isinstance(groups, list):
+            bad(f"hooks.{ev} is not a list")
+        for g in groups:
+            if not isinstance(g, dict) or not isinstance(g.get("hooks"), list):
+                bad(f"a group in hooks.{ev} is not an object with a hooks list")
+            for h in g["hooks"]:
+                if not isinstance(h, dict):
+                    bad(f"a hook in hooks.{ev} is not an object")
+                if "args" in h and not isinstance(h["args"], list):
+                    bad(f"a hook's args in hooks.{ev} is not a list")
 
 
 def _read(path: Path) -> dict:
@@ -100,18 +132,33 @@ def _atomic_write(path: Path, text: str) -> None:
 def _write_settings(path: Path, obj: dict, now: Callable[[], datetime]) -> None:
     if path.exists():
         stamp = now().strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(path, path.with_name(f"{path.name}.brainhub-backup-{stamp}"))
-    _atomic_write(path, json.dumps(obj, indent=2) + "\n")
+        target, n = path.with_name(f"{path.name}.brainhub-backup-{stamp}"), 1
+        while target.exists():
+            n += 1
+            target = path.with_name(f"{path.name}.brainhub-backup-{stamp}-{n}")
+        shutil.copy2(path, target)
+    _atomic_write(path, json.dumps(obj, indent=2, ensure_ascii=False) + "\n")
 
 
 def _strip_ours(obj: dict) -> None:
     hooks = obj.get("hooks", {})
+    removed = False
     for ev in list(hooks):
-        if isinstance(hooks[ev], list):
-            hooks[ev] = [g for g in hooks[ev] if not _group_is_ours(g)]
-            if not hooks[ev]:
-                del hooks[ev]
-    if "hooks" in obj and not hooks:
+        if not any(_group_is_ours(g) for g in hooks[ev]):
+            continue  # untouched, even if it is a pre-existing empty list
+        removed = True
+        kept = []
+        for g in hooks[ev]:
+            rest = [h for h in g["hooks"] if not _hook_is_ours(h)]
+            if not _group_is_ours(g):
+                kept.append(g)
+            elif rest:
+                kept.append({**g, "hooks": rest})
+        if kept:
+            hooks[ev] = kept
+        else:
+            del hooks[ev]
+    if removed and "hooks" in obj and not hooks:
         del obj["hooks"]
 
 
@@ -126,6 +173,7 @@ def install(settings_path: Path, *, python: str, script: str, port: int, data_di
             now: Callable[[], datetime] = datetime.now) -> dict:
     settings_path = Path(settings_path)
     obj = _read(settings_path)
+    _validate(obj, settings_path)
     _strip_ours(obj)
     hooks = obj.setdefault("hooks", {})
     for ev in EVENTS:
@@ -146,7 +194,7 @@ def install(settings_path: Path, *, python: str, script: str, port: int, data_di
     obj["statusLine"] = {"type": "command", "command": statusline_command(python, script, port, passthrough)}
     installed_at = (state or {}).get("installed_at") if existing is not None and _line_is_ours(existing) else None
     _atomic_write(data_dir / STATE_FILE, json.dumps(
-        {"previous_statusline": previous, "installed_at": installed_at or now().isoformat()}, indent=2))
+        {"previous_statusline": previous, "installed_at": installed_at or now().replace(microsecond=0).isoformat()}, indent=2))
     _write_settings(settings_path, obj, now)
     return status(settings_path, port=port)
 
@@ -155,6 +203,7 @@ def uninstall(settings_path: Path, *, data_dir: Path,
               now: Callable[[], datetime] = datetime.now) -> dict:
     settings_path = Path(settings_path)
     obj = _read(settings_path)
+    _validate(obj, settings_path)
     before = json.dumps(obj, sort_keys=True)
     _strip_ours(obj)
     if _line_is_ours(obj.get("statusLine")):
@@ -181,8 +230,8 @@ def status(settings_path: Path, *, port: int) -> dict:
         if groups:
             events.append(ev)
             for g in groups:
-                for h in g["hooks"]:
-                    if MARK in " ".join(map(str, h.get("args", []))) and h["args"][-1:] != [str(port)]:
+                for h in _group_hooks(g):
+                    if _hook_is_ours(h) and isinstance(h.get("args"), list) and h["args"][-1:] != [str(port)]:
                         port_ok = False
     line = obj.get("statusLine")
     line_ours = _line_is_ours(line)
