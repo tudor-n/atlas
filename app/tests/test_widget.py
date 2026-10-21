@@ -83,7 +83,7 @@ async def test_arm_probe_reachable_and_cached():
 
 async def test_arm_probe_caches_failure_and_does_not_reconnect():
     clock = [0.0]
-    probe = ArmProbe(now=lambda: clock[0], ttl=15.0)
+    probe = ArmProbe(now=lambda: clock[0], ttl=15.0, neg_ttl=15.0)
     accepted = []
     server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -103,6 +103,53 @@ async def test_arm_probe_caches_failure_and_does_not_reconnect():
         assert await probe.reachable(url) is True
         await asyncio.sleep(0.05)
         assert len(accepted) == 1  # second probe within ttl did not reconnect
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def test_ended_sessions_excluded_from_counts_and_attention():
+    """A session closed mid-turn stays listed (as "ended") but no longer counts (final review #6)."""
+    rows = [{"project_name": "P", "part": "x", "where": "terminal", "status": "waiting", "next_time": 0,
+             "ended_at": "2026-10-21T11:59:00", "ended": True},
+            {"project_name": "P", "part": "y", "where": "terminal", "status": "running", "next_time": 0,
+             "ended_at": "2026-10-21T11:59:00", "ended": True},
+            {"project_name": "Q", "part": "z", "where": "vscode", "status": "running", "next_time": 0,
+             "ended_at": None, "ended": False}]
+    settings = {"nudge_days": 3, "widget_tiles": [], "arm_url": "http://x"}
+    w = build_widget({"items": [], "proposals": 0, "failed": 0, "map": None, "usage": NO_USAGE, "agents": rows,
+                      "settings": settings, "arm_reachable": False, "now": NOW})
+    assert (w["agents"]["running"], w["agents"]["waiting"]) == (1, 0)
+    assert w["attention"] is False and w["synopsis"] == "1 agent running"
+    assert [r["status"] for r in w["agents"]["rows"]] == ["ended", "ended", "running"]
+
+
+async def test_arm_probe_caches_failure_for_60s_by_default():
+    """The arm is normally offline and a refused connect costs ~1 s on Windows: cache a
+    negative result for 60 s, a positive one for 15 s (final review #10)."""
+    clock = [0.0]
+    probe = ArmProbe(now=lambda: clock[0])
+    accepted = []
+    server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    server.close()
+    await server.wait_closed()
+    assert await probe.reachable(url) is False
+    server = await asyncio.start_server(lambda r, w: (accepted.append(1), w.close()), "127.0.0.1", port)
+    try:
+        clock[0] = 59.0
+        assert await probe.reachable(url) is False and accepted == []  # still the cached failure
+        clock[0] = 61.0
+        assert await probe.reachable(url) is True
+        clock[0] = 75.0
+        assert await probe.reachable(url) is True  # cached success (15 s)
+        await asyncio.sleep(0.05)
+        assert len(accepted) == 1
+        clock[0] = 77.0
+        assert await probe.reachable(url) is True
+        await asyncio.sleep(0.05)
+        assert len(accepted) == 2  # success expired after 15 s: probed again
     finally:
         server.close()
         await server.wait_closed()

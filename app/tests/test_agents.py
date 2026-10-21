@@ -210,3 +210,18 @@ def test_session_start_sources(tracker):
     assert r["status"] == "running" and r["ended_at"] is None
     tracker.handle(ev("SessionStart", source="startup"))
     assert tracker.rows()[0]["status"] == "idle"
+
+
+def test_ended_session_is_marked_ended_and_sorted_last(tracker, now):
+    """A session closed mid-turn keeps its DB status, but shows as ended (final review #6)."""
+    tracker.handle(ev("UserPromptSubmit", sid="a"))
+    now.advance(seconds=1)
+    tracker.handle(ev("Stop", sid="b"))
+    assert [r["ended"] for r in tracker.rows()] == [False, False]
+    now.advance(seconds=1)
+    tracker.handle(ev("SessionEnd", sid="a"))
+    rows = tracker.rows()
+    assert [(r["session_id"], r["status"], r["ended"]) for r in rows] == [("b", "finished", False),
+                                                                        ("a", "running", True)]
+    tracker.handle(ev("SessionStart", sid="a", source="resume"))
+    assert {r["session_id"]: r["ended"] for r in tracker.rows()} == {"a": False, "b": False}

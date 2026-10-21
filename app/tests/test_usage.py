@@ -113,3 +113,15 @@ def test_failed_save_leaves_memory_unchanged(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         store.update(PAYLOAD)
     assert store.view(80, URL)["five_hour"] is None and store.updated_at() is None
+
+
+def test_integral_float_resets_at_accepted(tmp_path):
+    """A JSON encoder may send 1800003600.0: an integral float is a valid epoch (final review #8)."""
+    store, _ = make(tmp_path)
+    assert store.update({"rate_limits": {"five_hour": {"used_percentage": 5, "resets_at": float(T + 3600)},
+                                         "seven_day": {"used_percentage": 7, "resets_at": float("inf")}}})
+    v = store.view(80, URL)
+    assert v["five_hour"]["resets_at"] == datetime.fromtimestamp(T + 3600).strftime("%Y-%m-%dT%H:%M")
+    assert v["seven_day"] is None
+    saved = json.loads((tmp_path / "usage.json").read_text(encoding="utf-8"))
+    assert saved["five_hour"]["resets_at"] == T + 3600 and type(saved["five_hour"]["resets_at"]) is int

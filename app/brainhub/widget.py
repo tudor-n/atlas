@@ -11,15 +11,17 @@ from .today import compute_today
 
 
 class ArmProbe:
-    """TCP connect to the arm server's host:port, 1 s timeout, result cached per url for `ttl` seconds."""
+    """TCP connect to the arm server's host:port, 1 s timeout, result cached per url: `ttl` seconds
+    when reachable, `neg_ttl` when not. The arm is normally offline, and a refused connect costs
+    about 1 s on Windows, so the negative result is kept longer."""
 
-    def __init__(self, now: Callable[[], float] = time.monotonic, ttl: float = 15.0):
-        self._now, self._ttl = now, ttl
+    def __init__(self, now: Callable[[], float] = time.monotonic, ttl: float = 15.0, neg_ttl: float = 60.0):
+        self._now, self._ttl, self._neg_ttl = now, ttl, neg_ttl
         self._cache: dict[str, tuple[float, bool]] = {}
 
     async def reachable(self, url: str) -> bool:
         hit = self._cache.get(url)
-        if hit is not None and self._now() - hit[0] < self._ttl:
+        if hit is not None and self._now() - hit[0] < (self._ttl if hit[1] else self._neg_ttl):
             return hit[1]
         ok = await self._connect(url)
         self._cache[url] = (self._now(), ok)
@@ -85,9 +87,14 @@ def build_widget(app_state: dict) -> dict:
         waiting.append({"person": slug, "name": names.get(slug, slug) if slug else None,
                         "text": it["text"], "since": it["created"], "nudge": w["nudge"]})
 
-    counts = {s: sum(1 for r in rows if r["status"] == s) for s in ("running", "waiting", "finished", "idle")}
-    agents = {**counts, "rows": [{k: r.get(k) for k in ("project_name", "part", "status", "where", "next_time")}
-                                 for r in rows[:6]]}
+    # A closed session lingers in the list (shown as "ended") but never counts as running or
+    # waiting, so it can't raise attention.
+    def shown(r: dict) -> str:
+        return "ended" if (r.get("ended") or r.get("ended_at")) else r["status"]
+
+    counts = {s: sum(1 for r in rows if shown(r) == s) for s in ("running", "waiting", "finished", "idle")}
+    agents = {**counts, "rows": [{**{k: r.get(k) for k in ("project_name", "part", "where", "next_time")},
+                                  "status": shown(r)} for r in rows[:6]]}
 
     open_items = [i for i in items if i.status == "open"]
     deadlines = sorted((i for i in open_items if i.due), key=lambda i: i.due)[:6]

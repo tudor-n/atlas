@@ -455,7 +455,7 @@ async def post_open(request: web.Request) -> web.Response:
     if target == "app":
         if view is not None and not (isinstance(view, str) and _VIEW_RX.fullmatch(view)):
             raise web.HTTPBadRequest(reason="bad view")
-        url = f"http://127.0.0.1:{settings['port']}/" + (f"#/{view}" if view else "")
+        url = f"http://127.0.0.1:{app['port']}/" + (f"#/{view}" if view else "")
     elif target == "arm":
         url = settings["arm_url"]
         if not _HTTP_RX.fullmatch(url):
@@ -622,8 +622,7 @@ async def delete_agent(request: web.Request) -> web.Response:
 
 
 def _integration_view(app: web.Application) -> dict:
-    port = load_settings(app["paths"])["port"]
-    view = ci.status(app["claude_settings_path"], port=port)
+    view = ci.status(app["claude_settings_path"], port=app["port"])
     return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
 
 
@@ -638,7 +637,7 @@ def _integration_change(app: web.Application, install: bool) -> dict:
     paths, target = app["paths"], app["claude_settings_path"]
     if install:
         ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                   port=load_settings(paths)["port"], data_dir=paths.data)
+                   port=app["port"], data_dir=paths.data)
     else:
         ci.uninstall(target, data_dir=paths.data)
     return _integration_view(app)

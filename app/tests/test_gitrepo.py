@@ -181,3 +181,22 @@ def test_push_redacts_credentials_before_truncating(tmp_path, monkeypatch):
                         lambda args, **kw: subprocess.CompletedProcess(args, 128, "", stderr))
     ok, err = r.push("https://example.com/r.git")
     assert not ok and "SECRET" not in err and "TOKEN" not in err and len(err) <= 500
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows console flags")
+def test_git_runs_without_console_window(tmp_path, monkeypatch):
+    """Every git child starts with CREATE_NO_WINDOW (final review #1)."""
+    import brainhub.gitrepo as g
+    calls = []
+    real = subprocess.run
+
+    def spy(*args, **kw):
+        calls.append(kw.get("creationflags", 0))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(g.subprocess, "run", spy)
+    r = BrainRepo(tmp_path); r.init()
+    (tmp_path / "a.md").write_text("x", encoding="utf-8"); r.commit_all("first")
+    ok, _ = r.push(str(tmp_path / "no-such-remote"), timeout=20)
+    assert not ok and calls
+    assert all(f & subprocess.CREATE_NO_WINDOW for f in calls), calls

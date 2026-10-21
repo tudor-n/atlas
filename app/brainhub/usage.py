@@ -23,6 +23,8 @@ def _clean(raw) -> dict | None:
     if not isinstance(raw, dict):
         return None
     used, resets = raw.get("used_percentage"), raw.get("resets_at")
+    if type(resets) is float and resets.is_integer():
+        resets = int(resets)  # an integral float (1800003600.0) is still a whole epoch second
     if not _num(used) or not 0 <= used <= 100 or type(resets) is not int or not 0 < resets < MAX_RESETS:
         return None
     return {"used_percentage": float(used), "resets_at": resets}

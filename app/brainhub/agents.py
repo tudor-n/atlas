@@ -208,6 +208,9 @@ class AgentTracker:
         out = dict(row)
         out["part"] = (row["part_override"] or row["title"] or simplify_branch(row["branch"]) or "—")
         out["where"] = row["where_override"] or WHERE_BY_ENTRYPOINT.get(row["entrypoint"] or "", "unknown")
+        # Closed (SessionEnd) but still lingering: its stored status is whatever it was at the end,
+        # e.g. "running" for a session closed mid-turn. The UI shows it as ended and counts skip it.
+        out["ended"] = bool(row["ended_at"])
         if row["mapped"]:
             if row["project"] not in next_time:
                 next_time[row["project"]] = len(self._store.list_items(
@@ -225,6 +228,7 @@ class AgentTracker:
         out.sort(key=lambda r: r["last_event_at"], reverse=True)
         out.sort(key=lambda r: STATUS_ORDER.index(r["status"]) if r["status"] in STATUS_ORDER
                  else len(STATUS_ORDER))
+        out.sort(key=lambda r: r["ended"])  # ended sessions last (stable: the order above holds)
         return out
 
     def prune(self) -> bool:

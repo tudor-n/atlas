@@ -163,3 +163,25 @@ def test_build_args_isolates_each_mode(mode, tools, expected):
     else:
         assert "--allowedTools" not in a
 
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console flags")
+async def test_children_get_no_console_window(tmp_path, monkeypatch):
+    """claude and taskkill start with CREATE_NO_WINDOW, so a hub without a visible console
+    (the desktop shell's) never pops one up (final review #1)."""
+    import asyncio
+    import subprocess
+    calls = []
+    real = asyncio.create_subprocess_exec
+
+    async def spy(*args, **kw):
+        calls.append((args[0], kw.get("creationflags", 0)))
+        return await real(*args, **kw)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+    r = ClaudeRunner(_fake_cli(tmp_path, "import time\ntime.sleep(60)\n"))
+    with pytest.raises(ClaudeError, match="timed out"):
+        await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                         json_schema={}, timeout_s=1, **_KW)
+    assert [Path(c[0]).name.lower() for c in calls] == ["fake_claude.bat", "taskkill"]
+    assert all(flags & subprocess.CREATE_NO_WINDOW for _, flags in calls), calls

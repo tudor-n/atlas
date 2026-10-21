@@ -207,6 +207,8 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
 
     app["arm"] = ArmProbe()
+    # The port the hub listens on: run_server sets the bound one; default to the settings port.
+    app["port"] = settings["port"]
     app["opener"] = _default_opener
 
     add_routes(app)
