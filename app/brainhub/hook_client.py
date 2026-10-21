@@ -8,7 +8,6 @@ Hook rule: ``event`` mode always exits 0 and writes nothing to stdout/stderr.
 import http.client
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime
 
@@ -19,6 +18,7 @@ CAP = 300
 CONNECT_TIMEOUT_S = 0.25
 EVENT_TIMEOUT_S = 1.0
 USAGE_TIMEOUT_S = 0.5
+PASSTHROUGH_TIMEOUT_S = 2.0
 
 
 def filter_event(d, env):
@@ -30,6 +30,41 @@ def filter_event(d, env):
     return out
 
 
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _run_passthrough(cmd, raw):
+    import subprocess
+
+    flags = 0x08000000 if sys.platform == "win32" else 0
+    proc = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=flags)
+    try:
+        out, _ = proc.communicate(raw, timeout=PASSTHROUGH_TIMEOUT_S)
+    except BaseException:
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=flags, timeout=2)
+            proc.kill()
+        except Exception:
+            pass
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=0.5)
+        except Exception:
+            pass
+        return None
+    return out if proc.returncode == 0 else None
+
+
 def statusline_text(d):
     parts = []
     model = d.get("model")
@@ -38,14 +73,17 @@ def statusline_text(d):
     rl = d.get("rate_limits")
     if isinstance(rl, dict):
         five = rl.get("five_hour")
-        if isinstance(five, dict) and isinstance(five.get("used_percentage"), (int, float)):
+        if isinstance(five, dict) and _num(five.get("used_percentage")):
             s = f"5h {five['used_percentage']:.0f}%"
             ra = five.get("resets_at")
-            if isinstance(ra, (int, float)):
-                s += f" ↻{datetime.fromtimestamp(ra):%H:%M}"
+            if _num(ra):
+                try:
+                    s += f" ↻{datetime.fromtimestamp(ra):%H:%M}"
+                except Exception:
+                    pass
             parts.append(s)
         seven = rl.get("seven_day")
-        if isinstance(seven, dict) and isinstance(seven.get("used_percentage"), (int, float)):
+        if isinstance(seven, dict) and _num(seven.get("used_percentage")):
             parts.append(f"7d {seven['used_percentage']:.0f}%")
     return " · ".join(parts) if parts else "BrainHub"
 
@@ -100,9 +138,9 @@ def _statusline(port, passthrough):
         try:
             with open(passthrough, encoding="utf-8") as f:
                 cmd = f.read().strip()
-            r = subprocess.run(cmd, shell=True, input=raw, capture_output=True, timeout=2)
-            if r.returncode == 0:
-                text = r.stdout.decode("utf-8", errors="replace").strip()
+            out = _run_passthrough(cmd, raw)
+            if out is not None:
+                text = out.decode("utf-8", errors="replace").strip()
                 line = text.splitlines()[0] if text else None
         except Exception:
             line = None

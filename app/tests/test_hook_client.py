@@ -176,3 +176,30 @@ def test_statusline_passthrough(hub, tmp_path):
     f.write_text("exit 3", encoding="utf-8")
     p, _ = run("statusline", hub.port, d, "--passthrough-file", str(f))
     assert p.returncode == 0 and p.stdout == b"X\n"
+
+
+def test_statusline_passthrough_hang_is_bounded(hub, tmp_path):
+    f = tmp_path / "pt.txt"
+    f.write_text("ping -n 10 127.0.0.1 >nul & echo late", encoding="utf-8")
+    base = baseline()
+    p, dt = run("statusline", hub.port, b'{"model": {"display_name": "X"}}',
+                "--passthrough-file", str(f))
+    print(f"passthrough-hang wall={dt:.3f}s baseline={base:.3f}s")
+    assert p.returncode == 0 and p.stdout == b"X\n"
+    assert dt < base + 3.5
+
+
+@pytest.mark.parametrize("ra", [10**15, -5, 10**30])
+def test_statusline_bad_resets_at_keeps_line(ra):
+    hc = _load()
+    d = {"model": {"display_name": "S"},
+         "rate_limits": {"five_hour": {"used_percentage": 50, "resets_at": ra},
+                         "seven_day": {"used_percentage": 20}}}
+    out = hc.statusline_text(d)
+    assert out.startswith("S · 5h 50%") and out.endswith("7d 20%")
+
+
+def test_statusline_text_ignores_bool_numbers():
+    hc = _load()
+    d = {"rate_limits": {"five_hour": {"used_percentage": True}}}
+    assert hc.statusline_text(d) == "BrainHub"
