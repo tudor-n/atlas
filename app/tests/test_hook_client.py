@@ -127,7 +127,7 @@ def test_event_hub_down_is_silent_and_fast():
     p, dt = run("event", free_port(), b'{"hook_event_name": "Stop"}')
     print(f"hub-down wall={dt:.3f}s baseline={base:.3f}s")
     assert p.returncode == 0 and p.stdout == b"" and p.stderr == b""
-    assert dt < base + 1.5
+    assert dt < base + 0.8
 
 
 def test_event_hub_slow_times_out_silently():

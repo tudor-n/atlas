@@ -5,17 +5,20 @@ package: stdlib imports only, never import anything from ``brainhub``.
 
 Hook rule: ``event`` mode always exits 0 and writes nothing to stdout/stderr.
 """
+import http.client
 import json
 import os
 import subprocess
 import sys
-import urllib.request
 from datetime import datetime
 
 ALLOWED = ("hook_event_name", "session_id", "cwd", "source", "reason",
            "notification_type", "session_title")
 CAPPED = ("message", "title", "error", "error_type")
 CAP = 300
+CONNECT_TIMEOUT_S = 0.25
+EVENT_TIMEOUT_S = 1.0
+USAGE_TIMEOUT_S = 0.5
 
 
 def filter_event(d, env):
@@ -48,13 +51,17 @@ def statusline_text(d):
 
 
 def _post(port, path, payload, timeout):
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    urllib.request.urlopen(req, timeout=timeout).close()
+    # Short connect timeout (Windows retries refused localhost connects for ~1 s),
+    # then the full budget for send + response.
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=CONNECT_TIMEOUT_S)
+    try:
+        conn.connect()
+        conn.sock.settimeout(timeout)
+        conn.request("POST", path, body=json.dumps(payload).encode("utf-8"),
+                     headers={"Content-Type": "application/json"})
+        conn.getresponse().read()
+    finally:
+        conn.close()
 
 
 def _arg(argv, name):
@@ -76,7 +83,7 @@ def _read_stdin():
 
 def _event(port):
     _, d = _read_stdin()
-    _post(port, "/api/hooks/event", filter_event(d, os.environ), 1.0)
+    _post(port, "/api/hooks/event", filter_event(d, os.environ), EVENT_TIMEOUT_S)
 
 
 def _statusline(port, passthrough):
@@ -85,7 +92,7 @@ def _statusline(port, passthrough):
     if isinstance(rl, dict):
         try:
             _post(port, "/api/usage",
-                  {"rate_limits": rl, "session_id": d.get("session_id")}, 0.5)
+                  {"rate_limits": rl, "session_id": d.get("session_id")}, USAGE_TIMEOUT_S)
         except Exception:
             pass
     line = None
