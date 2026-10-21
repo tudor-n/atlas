@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import sys
 from dataclasses import asdict
 from datetime import datetime
@@ -21,6 +22,7 @@ from .rawlog import append_entry
 from .recall import deeper_answer, quick_answer, search_hits
 from .store import Store
 from .today import compute_today
+from .widget import build_widget
 
 log = logging.getLogger(__name__)
 
@@ -416,6 +418,58 @@ async def get_today(request: web.Request) -> web.Response:
     return web.json_response(await t(_today, request.app))
 
 
+# -- handlers: widget ---------------------------------------------------------
+_VIEW_RX = re.compile(r"[a-z]+(/[a-z0-9-]+)?")
+_HTTP_RX = re.compile(r"https?://\S+")
+_HTTPS_RX = re.compile(r"https://\S+")
+
+
+def _widget_state(app) -> dict:
+    store, paths = app["store"], app["paths"]
+    settings = load_settings(paths)
+    return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(store.list_proposals()),
+            "failed": len(store.list_filings("failed")), "map": load_map(paths.brain),
+            "usage": app["usage"].view(settings["usage_warn_pct"], settings["fable_usage_url"]),
+            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now()}
+
+
+async def get_widget(request: web.Request) -> web.Response:
+    app = request.app
+    state = await t(_widget_state, app)
+    state["arm_reachable"] = await app["arm"].reachable(state["settings"]["arm_url"])
+    return web.json_response(await t(build_widget, state))
+
+
+async def widget_page(request: web.Request) -> web.StreamResponse:
+    f = request.app["paths"].web / "widget.html"
+    if not f.is_file():
+        raise web.HTTPNotFound()
+    return web.FileResponse(f)
+
+
+async def post_open(request: web.Request) -> web.Response:
+    app = request.app
+    body = await body_dict(request)
+    target, view = body.get("target"), body.get("view")
+    settings = load_settings(app["paths"])
+    if target == "app":
+        if view is not None and not (isinstance(view, str) and _VIEW_RX.fullmatch(view)):
+            raise web.HTTPBadRequest(reason="bad view")
+        url = f"http://127.0.0.1:{settings['port']}/" + (f"#/{view}" if view else "")
+    elif target == "arm":
+        url = settings["arm_url"]
+        if not _HTTP_RX.fullmatch(url):
+            raise web.HTTPBadRequest(reason="arm_url is not an http(s) URL")
+    elif target == "fable_usage":
+        url = settings["fable_usage_url"]
+        if not _HTTPS_RX.fullmatch(url):
+            raise web.HTTPBadRequest(reason="fable_usage_url is not an https URL")
+    else:
+        raise web.HTTPBadRequest(reason="unknown target")
+    await t(app["opener"], url)
+    return web.json_response({"ok": True, "url": url})
+
+
 # -- handlers: SSE and WebSocket ---------------------------------------------
 async def _event(resp: web.StreamResponse, name: str, data) -> None:
     await resp.write(f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
@@ -629,5 +683,7 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/integration", get_integration),
         web.post("/api/integration/install", post_integration_install),
         web.post("/api/integration/uninstall", post_integration_uninstall),
+        web.get("/api/widget", get_widget), web.get("/widget", widget_page),
+        web.post("/api/open", post_open),
         web.get("/ws", ws_handler),
     ])

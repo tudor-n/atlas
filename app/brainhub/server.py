@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
+import sys
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +24,7 @@ from .review import Reviewer
 from .routes import add_routes, errors, local_only, setup_done
 from .store import Store, commit_hook
 from .usage import UsageStore
+from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +165,14 @@ def _open_store(paths: Paths, problems: list[str]) -> Store:
         return Store(paths.db)
 
 
+def _default_opener(url: str) -> None:
+    """Open a validated http(s) URL in the default browser."""
+    if sys.platform == "win32":
+        os.startfile(url)
+    else:
+        webbrowser.open(url)
+
+
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
                claude_settings_path: Path | None = None) -> web.Application:
     app = web.Application(middlewares=[local_only, errors])
@@ -193,6 +205,9 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
     app["usage"] = UsageStore(paths.data / "usage.json")
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
+
+    app["arm"] = ArmProbe()
+    app["opener"] = _default_opener
 
     add_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root
