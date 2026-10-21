@@ -183,3 +183,16 @@ def test_export_counts_expired_snoozes_as_open(store, tmp_path):
     store.export_items(tmp_path)
     md = (tmp_path/"_items"/"general.md").read_text(encoding="utf-8")
     assert "snooze ran out" in md and "still snoozed" not in md
+
+
+def test_commit_hook_indexes_and_notifies_only_for_real_commits(store, tmp_path):
+    from brainhub.gitrepo import BrainRepo
+    from brainhub.store import commit_hook
+    repo = BrainRepo(tmp_path); repo.init()
+    calls = []
+    hook = commit_hook(store, tmp_path, repo, lambda: calls.append(1))
+    hook(None)
+    assert calls == []
+    (tmp_path/"n.md").write_text("kestrel", encoding="utf-8")
+    hook(repo.commit_all("note"))
+    assert calls == [1] and [h.ref for h in store.search('"kestrel"', 5)] == ["n.md"]

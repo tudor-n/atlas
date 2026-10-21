@@ -497,10 +497,11 @@ def commit_hook(store: Store, brain: Path, repo,
     that commit touched, then calls `notify` (the backup scheduler). An indexing failure is
     logged and never undoes or fails the commit."""
     def on_commit(sha: str | None) -> None:
-        if sha:
-            try:
-                reindex_changed(store, brain, repo, sha)
-            except Exception:
-                log.exception("could not re-index notes after commit %s", sha)
+        if not sha:  # nothing was committed: nothing to index or push
+            return
+        try:
+            reindex_changed(store, brain, repo, sha)
+        except Exception:
+            log.exception("could not re-index notes after commit %s", sha)
         notify()
     return on_commit
