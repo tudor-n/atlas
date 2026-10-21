@@ -1,5 +1,10 @@
 # Next session: start here
 
+> **Update, 2026-10-21 (evening):** the dual-boot design is written and **waiting for the owner's approval**: `docs/superpowers/specs/2026-10-21-brainhub-dual-boot-design.md`.
+> - It lives only on the **local** branch `dual-boot` in `D:\BrainHub` (= `/mnt/data/BrainHub` on Kubuntu). It isn't pushed, and `~/dev/BrainHub` doesn't have it yet.
+> - Once it's approved, the next step is the implementation plan (superpowers:writing-plans).
+> - It changes the "If the next session runs on Linux" notes below. Read it first.
+
 Written 2026-10-21, at the end of the phase 2 build. The owner was setting up a Linux dual boot on this laptop, so this file carries everything the Windows-only Claude memory held. Read it first, then `app/CLAUDE.md`, which holds the project rules.
 
 ## Where things stand
