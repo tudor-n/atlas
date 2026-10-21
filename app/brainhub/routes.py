@@ -537,6 +537,34 @@ async def get_usage(request: web.Request) -> web.Response:
     return web.json_response(await t(_usage_view, request.app))
 
 
+async def post_hook_event(request: web.Request) -> web.Response:
+    app = request.app
+    if await t(app["agents"].handle, await body_dict(request)):
+        await app["broadcast"]("agents.changed", {})
+    return web.Response(status=204)
+
+
+async def get_agents(request: web.Request) -> web.Response:
+    return web.json_response(await t(request.app["agents"].rows))
+
+
+async def patch_agent(request: web.Request) -> web.Response:
+    app = request.app
+    try:
+        row = await t(app["agents"].edit, request.match_info["session_id"], await body_dict(request))
+    except KeyError:
+        raise web.HTTPNotFound(reason="unknown session") from None
+    await app["broadcast"]("agents.changed", {})
+    return web.json_response(row)
+
+
+async def delete_agent(request: web.Request) -> web.Response:
+    app = request.app
+    await t(app["agents"].remove, request.match_info["session_id"])
+    await app["broadcast"]("agents.changed", {})
+    return web.Response(status=204)
+
+
 def add_routes(app: web.Application) -> None:
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
@@ -556,5 +584,8 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
         web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
+        web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
+        web.patch("/api/agents/{session_id}", patch_agent),
+        web.delete("/api/agents/{session_id}", delete_agent),
         web.get("/ws", ws_handler),
     ])

@@ -8,6 +8,7 @@ from datetime import datetime
 
 from aiohttp import web
 
+from .agents import AgentTracker
 from .backup import BackupPusher
 from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
@@ -105,12 +106,23 @@ def _startup_sync(app: web.Application) -> list[str]:
     return step("filing queue", app["worker"].requeue_unfinished, default=[])
 
 
+async def _prune_agents(app: web.Application) -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if await t(app["agents"].prune):
+                await app["broadcast"]("agents.changed", {})
+        except Exception:
+            logging.getLogger(__name__).exception("agent prune failed")
+
+
 async def on_startup(app: web.Application) -> None:
     for entry_id in await t(_startup_sync, app):
         app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
     if app["start_workers"]:
         app["tasks"] = [asyncio.create_task(app["worker"].run_forever()),
-                        asyncio.create_task(app["backup"].run_forever())]
+                        asyncio.create_task(app["backup"].run_forever()),
+                        asyncio.create_task(_prune_agents(app))]
 
 
 async def on_shutdown(app: web.Application) -> None:
@@ -176,6 +188,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
     app["usage"] = UsageStore(paths.data / "usage.json")
+    app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
 
     add_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root
