@@ -196,3 +196,52 @@ def test_commit_hook_indexes_and_notifies_only_for_real_commits(store, tmp_path)
     (tmp_path/"n.md").write_text("kestrel", encoding="utf-8")
     hook(repo.commit_all("note"))
     assert calls == [1] and [h.ref for h in store.search('"kestrel"', 5)] == ["n.md"]
+
+
+def test_schema_migrates_older_version_in_order(paths, monkeypatch):
+    from brainhub import store as store_mod
+    s = Store(paths.db)
+    s.init_schema()
+    s.close()
+    v = store_mod.SCHEMA_VERSION
+    ran = []
+
+    def add_x(con):
+        ran.append(v + 1)
+        con.execute("ALTER TABLE agents ADD COLUMN x TEXT")
+
+    def add_y(con):
+        ran.append(v + 2)
+        con.execute("ALTER TABLE agents ADD COLUMN y TEXT")
+
+    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", v + 2)
+    monkeypatch.setattr(store_mod, "MIGRATIONS", {v + 1: add_x, v + 2: add_y})
+    s = Store(paths.db)
+    s.init_schema()
+    assert ran == [v + 1, v + 2] and s.schema_version() == v + 2
+    s.init_schema()  # up to date: nothing runs again
+    assert ran == [v + 1, v + 2]
+    s.close()
+
+
+def test_failed_migration_leaves_the_old_version(paths, monkeypatch):
+    from brainhub import store as store_mod
+    s = Store(paths.db)
+    s.init_schema()
+    s.close()
+    v = store_mod.SCHEMA_VERSION
+
+    def add_x(con):
+        con.execute("ALTER TABLE agents ADD COLUMN x TEXT")
+
+    def broken(con):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", v + 2)
+    monkeypatch.setattr(store_mod, "MIGRATIONS", {v + 1: add_x, v + 2: broken})
+    s = Store(paths.db)
+    with pytest.raises(RuntimeError):
+        s.init_schema()
+    assert s.schema_version() == v  # all or nothing
+    assert "x" not in [r[1] for r in s._db.execute("PRAGMA table_info(agents)")]
+    s.close()

@@ -27,6 +27,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -37,6 +38,10 @@ _STDERR_TAIL = 2000
 _STREAM_LIMIT = 16 * 1024 * 1024
 # claude and taskkill never open a console window, whatever console the hub has (Ruling 13).
 _NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
+# POSIX: each run leads its own process group, so stopping it stops its tool children too
+# (dual-boot design §6.5 item 6). Windows kills the tree with taskkill /T instead.
+_NEW_GROUP = {} if sys.platform == "win32" else {"start_new_session": True}
+KILL_GRACE_S = 2.0
 
 
 class ClaudeError(Exception):
@@ -46,6 +51,10 @@ class ClaudeError(Exception):
 def child_env() -> dict:
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
+    # No auto memory for the hub's agents: --setting-sources "" doesn't turn it off (measured with
+    # 2.1.308), so every run would be told about, and create, ~/.claude/projects/<key>/memory for
+    # its cwd: a folder outside the filing worktree, and a stray one per filing.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     return env
 
 
@@ -76,9 +85,19 @@ def build_args(*, model: str, system_prompt_file: Path, allowed_tools: list[str]
     return args
 
 
+def _local_bin(name: str) -> str | None:
+    """The native installer puts claude in ~/.local/bin, which a hub started at login may not
+    have on PATH (P6)."""
+    try:
+        exe = Path.home() / ".local" / "bin" / (name + (".exe" if sys.platform == "win32" else ""))
+    except RuntimeError:  # no home folder at all: construction must still never raise
+        return None
+    return str(exe) if exe.is_file() else None
+
+
 class ClaudeRunner:
     def __init__(self, claude_path: str):
-        self.claude_path = shutil.which(claude_path)
+        self.claude_path = shutil.which(claude_path) or _local_bin(claude_path)
 
     async def _spawn(self, args: list[str], prompt: str, cwd: Path) -> asyncio.subprocess.Process:
         if not self.claude_path:
@@ -86,7 +105,7 @@ class ClaudeRunner:
         proc = await asyncio.create_subprocess_exec(
             self.claude_path, *args, cwd=str(cwd), env=child_env(),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT, **_NO_WINDOW)
+            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT, **_NO_WINDOW, **_NEW_GROUP)
         try:
             proc.stdin.write(prompt.encode("utf-8"))
             await proc.stdin.drain()
@@ -107,13 +126,32 @@ class ClaudeRunner:
                     await killer.wait()
                 except OSError:
                     pass
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            else:
+                await ClaudeRunner._kill_group(proc)
         try:
             await proc.wait()
         except Exception:
+            pass
+
+    @staticmethod
+    async def _kill_group(proc: asyncio.subprocess.Process) -> None:
+        """POSIX: SIGTERM the run's process group (claude and its tool children), give it
+        KILL_GRACE_S to exit, then SIGKILL whatever is left of the group."""
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return  # the group is already gone
+        try:
+            await asyncio.wait_for(proc.wait(), KILL_GRACE_S)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
             pass
 
     @staticmethod

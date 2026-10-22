@@ -20,6 +20,7 @@ async function request(method, path, body) {
   if (!res.ok) {
     const e = new Error((data && data.error) || `Request failed (${res.status})`);
     e.status = res.status;
+    e.drive = (data && data.drive) || null;  // 503 while the root isn't usable: the banner to show
     throw e;
   }
   return data;

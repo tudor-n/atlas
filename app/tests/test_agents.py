@@ -1,10 +1,14 @@
+import sqlite3
+import sys
 from datetime import datetime, timedelta
 
 import pytest
 
+from brainhub import osdirs
 from brainhub.agents import (AgentTracker, find_git_dir, read_branch, resolve_project,
-                             simplify_branch)
+                             simplify_branch, suggest_link)
 from brainhub.brainmap import BrainMap, save_map
+from brainhub.store import SCHEMA_VERSION, Store
 
 T0 = datetime(2026, 10, 21, 12, 0, 0)
 
@@ -40,6 +44,13 @@ def make_repo(root, head="ref: refs/heads/main\n"):
     return root
 
 
+def other_os_folder() -> tuple[str, str]:
+    """(the other OS, a RobotArmControl folder there) for the OS the tests run on."""
+    if osdirs.os_name() == "linux":
+        return "windows", "D:\\RobotArmControl"
+    return "linux", "/home/tudor/dev/RobotArmControl"
+
+
 def test_read_branch_variants(tmp_path):
     r = make_repo(tmp_path / "r1", "ref: refs/heads/feat/ui-reskin\n")
     assert read_branch(str(r)) == "feat/ui-reskin"
@@ -63,7 +74,8 @@ def test_read_branch_variants(tmp_path):
     assert read_branch(str(plain)) is None
 
 
-def test_project_from_map_is_case_and_separator_insensitive():
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path rules")
+def test_project_from_map_is_case_and_separator_insensitive_windows():
     m = BrainMap(projects=[
         {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["D:/RobotArmControl/"]},
         {"slug": "work", "name": "Work", "is_company": False, "folders": ["D:/Work"]},
@@ -72,6 +84,100 @@ def test_project_from_map_is_case_and_separator_insensitive():
     assert resolve_project(r"D:\RobotArmControlOld", m)[2] is False
     assert resolve_project(r"D:\work\robot\x", m) == ("robot", "Robot", True)
     assert resolve_project(r"D:\work\other", m) == ("work", "Work", True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX path rules")
+def test_project_from_map_is_exact_on_posix():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["/home/u/dev/RobotArmControl/"]},
+        {"slug": "work", "name": "Work", "is_company": False, "folders": ["/home/u/Work"]},
+        {"slug": "robot", "name": "Robot", "is_company": False, "folders": ["/home/u/Work/robot"]}])
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m) == ("robotarm", "RobotArm", True)
+    assert resolve_project("/home/u/dev/robotarmcontrol/src", m)[2] is False
+    assert resolve_project("/home/u/dev/RobotArmControlOld", m)[2] is False
+    assert resolve_project("/home/u/Work/robot/x", m) == ("robot", "Robot", True)
+    assert resolve_project("/home/u/Work/other", m) == ("work", "Work", True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX half")
+def test_resolve_ignores_other_os_folders_posix():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False,
+         "os_folders": {"windows": ["D:/RobotArmControl"], "linux": ["/home/u/dev/RobotArmControl"]}},
+        {"slug": "old", "name": "Old", "is_company": False, "folders": ["D:/Old"]}])
+    assert resolve_project("D:/RobotArmControl/src", m)[2] is False
+    assert resolve_project("D:/Old/src", m)[2] is False
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m) == ("robotarm", "RobotArm", True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows half")
+def test_resolve_ignores_other_os_folders_windows():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False,
+         "os_folders": {"windows": ["D:\\RobotArmControl"], "linux": ["/home/u/dev/RobotArmControl"]}},
+        {"slug": "old", "name": "Old", "is_company": False, "folders": ["/home/u/old"]}])
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m)[2] is False
+    assert resolve_project("\\home\\u\\old\\src", m)[2] is False
+    assert resolve_project("d:/robotarmcontrol/src", m) == ("robotarm", "RobotArm", True)
+
+
+@pytest.mark.parametrize("os_", ["windows", "linux"])
+def test_resolve_uses_the_folders_of_os_name(monkeypatch, os_):
+    # The column comes from os_name(), not from the path rules of the OS running the test.
+    monkeypatch.setattr(osdirs, "os_name", lambda: os_)
+    m = BrainMap(projects=[{"slug": "robotarm", "name": "RobotArm", "is_company": False,
+                            "os_folders": {"windows": ["D:/RobotArmControl"],
+                                           "linux": ["/home/u/dev/RobotArmControl"]}}])
+    hits = (resolve_project("D:/RobotArmControl/src", m)[2],
+            resolve_project("/home/u/dev/RobotArmControl/src", m)[2])
+    assert hits == ((True, False) if os_ == "windows" else (False, True))
+
+
+def test_suggest_link_by_folder_name(tmp_path):
+    other, there = other_os_folder()
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "os_folders": {other: [there]}},
+        {"slug": "web", "name": "Web", "is_company": False,
+         "os_folders": {other: [there.replace("RobotArmControl", "Web")]}}])
+    top = make_repo(tmp_path / "dev" / "RobotArmControl")
+    (top / "src").mkdir()
+    want = {"slug": "robotarm", "name": "RobotArm", "folder": str(top)}
+    assert suggest_link(str(top / "src"), m) == want
+    # Outside a git repo the session's own folder is offered; names compare case-insensitively.
+    loose = tmp_path / "loose" / "robotarmcontrol"
+    loose.mkdir(parents=True)
+    assert suggest_link(str(loose), m) == {**want, "folder": str(loose)}
+    assert suggest_link(str(tmp_path / "dev"), m) is None
+    assert suggest_link(str(top / "src"), None) is None
+    assert suggest_link("", m) is None
+    assert suggest_link(there, m) is None  # a row seen on the other OS: not this OS's column
+    # Ambiguous: two projects have a RobotArmControl on the other OS.
+    twin = "E:\\old\\robotarmcontrol" if other == "windows" else "/srv/old/robotarmcontrol/"
+    m2 = BrainMap(projects=m.projects + [
+        {"slug": "arm-old", "name": "Arm (old)", "is_company": False, "os_folders": {other: [twin]}}])
+    assert suggest_link(str(top / "src"), m2) is None
+    # Already mapped on this OS: nothing to suggest.
+    m.projects[0]["os_folders"][osdirs.os_name()] = [str(top)]
+    assert suggest_link(str(top / "src"), m) is None
+
+
+def test_rows_carry_the_suggestion(tracker, paths, tmp_path):
+    other, there = other_os_folder()
+    mapped = tmp_path / "dev" / "Mapped"
+    mapped.mkdir(parents=True)
+    save_map(paths.brain, BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "os_folders": {other: [there]}},
+        {"slug": "mapped", "name": "Mapped", "is_company": False,
+         "os_folders": {osdirs.os_name(): [str(mapped)], other: [there.replace("RobotArmControl", "Mapped")]}}]))
+    top = make_repo(tmp_path / "dev" / "RobotArmControl")
+    tracker.handle(ev("SessionStart", sid="a", cwd=str(top)))
+    tracker.handle(ev("SessionStart", sid="b", cwd=str(mapped)))
+    tracker.handle(ev("SessionStart", sid="c", cwd=str(tmp_path / "dev")))
+    rows = {r["session_id"]: r for r in tracker.rows()}
+    assert rows["a"]["suggest"] == {"slug": "robotarm", "name": "RobotArm", "folder": str(top)}
+    assert rows["b"]["mapped"] is True and rows["b"]["suggest"] is None
+    assert rows["c"]["suggest"] is None
+    assert tracker.edit("a", {"part": "x"})["suggest"]["slug"] == "robotarm"
 
 
 def test_project_fallback_git_top_then_basename(tmp_path):
@@ -173,13 +279,15 @@ def test_stale_rows_pruned(tracker, now):
     assert tracker.rows() == []
 
 
-def test_next_time_flag(tracker, store, paths):
+def test_next_time_flag(tracker, store, paths, tmp_path):
+    # A folder of the OS running the test: a Windows-shaped folder only counts on Windows (P7).
+    arm = tmp_path / "RobotArmControl"
     save_map(paths.brain, BrainMap(projects=[
-        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["D:/RobotArmControl"]}]))
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": [str(arm)]}]))
     store.create_item(kind="next_time", text="check J5", area="projects", project="robotarm",
                       source_entry="e-1")
-    tracker.handle(ev("SessionStart", cwd="D:/RobotArmControl/src"))
-    tracker.handle(ev("SessionStart", sid="s2", cwd="D:/Other"))
+    tracker.handle(ev("SessionStart", cwd=str(arm / "src")))
+    tracker.handle(ev("SessionStart", sid="s2", cwd=str(tmp_path / "Other")))
     rows = {r["session_id"]: r for r in tracker.rows()}
     assert rows["s1"]["next_time"] == 1 and rows["s1"]["mapped"] is True
     assert rows["s2"]["next_time"] == 0
@@ -225,3 +333,73 @@ def test_ended_session_is_marked_ended_and_sorted_last(tracker, now):
                                                                         ("a", "running", True)]
     tracker.handle(ev("SessionStart", sid="a", source="resume"))
     assert {r["session_id"]: r["ended"] for r in tracker.rows()} == {"a": False, "b": False}
+
+
+# -- OS and boot (dual-boot design §6.6) ---------------------------------------
+def test_rows_record_os_and_boot(tracker, store):
+    tracker.handle(ev("SessionStart"))
+    row = store.get_agent("s1")
+    assert (row["os"], row["boot"]) == (osdirs.os_name(), osdirs.boot_id())
+    assert tracker.rows()[0]["os"] == osdirs.os_name()
+
+
+def test_end_previous_boot(tracker, store, now):
+    for sid in ("here", "old", "legacy", "closed"):
+        tracker.handle(ev("UserPromptSubmit", sid=sid))
+    for sid, boot in (("old", "old-boot"), ("legacy", None), ("closed", "old-boot")):
+        row = store.get_agent(sid)
+        row["boot"] = boot
+        store.upsert_agent(row)
+    tracker.handle(ev("SessionEnd", sid="closed"))
+    closed_at = store.get_agent("closed")["ended_at"]
+    now.advance(seconds=5)
+    assert tracker.end_previous_boot() == 2
+    rows = {r["session_id"]: r for r in tracker.rows()}
+    assert rows["old"]["ended"] and rows["legacy"]["ended"] and not rows["here"]["ended"]
+    assert rows["old"]["ended_at"] == now().isoformat() and rows["closed"]["ended_at"] == closed_at
+    assert tracker.end_previous_boot() == 0
+    now.advance(seconds=61)  # the normal linger removes them
+    assert [r["session_id"] for r in tracker.rows()] == ["here"]
+
+
+_V1_AGENTS = """CREATE TABLE agents(
+    session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL, project_name TEXT NOT NULL,
+    mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
+    where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
+    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT)"""
+
+
+@pytest.mark.parametrize("version,agents_table", [(1, True), (0, True), (0, False)],
+                         ids=["v1", "before-versioning", "before-agents"])
+def test_migration_2_adds_columns(paths, version, agents_table):
+    """A version 1 hub.db (or one made before versioning, or before phase 2's agents table)
+    gains the agents os and boot columns; its rows are kept."""
+    con = sqlite3.connect(paths.db)
+    con.execute("CREATE TABLE entries(id TEXT PRIMARY KEY, ts TEXT NOT NULL, source TEXT NOT NULL, "
+                "text TEXT NOT NULL)")
+    if agents_table:
+        con.execute(_V1_AGENTS)
+        con.execute("INSERT INTO agents VALUES('s1','/w','w','w',0,NULL,NULL,NULL,'cli',NULL,'running',"
+                    "NULL,'2026-10-21T12:00:00','2026-10-21T12:00:00','2026-10-21T12:00:00',NULL)")
+    con.execute(f"PRAGMA user_version={version}")
+    con.commit()
+    con.close()
+    s = Store(paths.db)
+    s.init_schema()
+    assert s.schema_version() == SCHEMA_VERSION >= 2
+    assert [r[1] for r in s._db.execute("PRAGMA table_info(agents)")][-2:] == ["os", "boot"]
+    if agents_table:
+        row = s.get_agent("s1")
+        assert row["status"] == "running" and row["os"] is None and row["boot"] is None
+    s.close()
+
+
+def test_malformed_map_only_costs_suggestions(store, paths):
+    """A map.json that parses but has the wrong shape never breaks rows()."""
+    tr = AgentTracker(store, paths, lambda: {"agents_end_linger_s": 60, "agents_stale_h": 12},
+                      now=lambda: T0)
+    tr.handle({"session_id": "s1", "hook_event_name": "SessionStart", "cwd": str(paths.root / "x"),
+               "entrypoint": "cli"})
+    (paths.brain / "map.json").write_text('{"projects": [42, {"name": "no slug"}]}', encoding="utf-8")
+    rows = tr.rows()
+    assert len(rows) == 1 and rows[0]["suggest"] is None

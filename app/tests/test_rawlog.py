@@ -49,6 +49,28 @@ def test_rejects_blank_and_bad_source(tmp_path):
     assert not (tmp_path / "log").exists()
 
 
+def test_append_never_recreates_a_vanished_brain(tmp_path):
+    """The drive went away mid-run: the append refuses, and neither brain/ nor the root comes back."""
+    root = tmp_path / "BrainHub"
+    with pytest.raises(OSError, match="isn't there"):
+        append_entry(root / "brain", "typed after the drive went", "pc")
+    assert not root.exists()
+    (root / "brain").mkdir(parents=True)  # brain/ there, log/ not yet: only the levels below it are made
+    e = append_entry(root / "brain", "first entry", "pc", datetime(2026, 10, 20, 9, 0, 0))
+    assert read_log(root / "brain") == [e]
+
+
+def test_file_problems(tmp_path):
+    from brainhub.rawlog import file_problems
+    e = append_entry(tmp_path, "some text here", "pc", datetime(2026, 10, 20, 9, 0, 0))
+    assert file_problems(log_path(tmp_path, e.ts)) == []
+    assert file_problems(log_path(tmp_path, datetime(2026, 10, 21))) == []  # absent
+    p = log_path(tmp_path, e.ts)
+    p.write_bytes(p.read_bytes()[:-30])
+    [problem] = file_problems(p)
+    assert "2026-10-20.md" in problem and "truncated" in problem
+
+
 def test_append_only(tmp_path):
     a = append_entry(tmp_path, "one", "pc", datetime(2026, 10, 20, 9, 0, 0))
     before = log_path(tmp_path, a.ts).read_bytes()
@@ -142,3 +164,15 @@ def test_append_fsyncs_inside_the_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(rl.os, "fsync", lambda fd: (seen.append(rl._APPEND_LOCK.locked()), real(fd)))
     append_entry(tmp_path, "durable", "pc")
     assert seen == [True]
+
+
+def test_append_keeps_a_given_id(tmp_path):
+    ts = datetime(2026, 10, 20, 23, 59, 30)
+    e = append_entry(tmp_path, "held while D: was away", "widget", ts, entry_id="e-20261020-235930-beef")
+    assert e.id == "e-20261020-235930-beef" and e.ts == ts
+    assert read_log(tmp_path) == [e]
+    for bad in ("e-20261020-235931-beef",  # its timestamp part is not ts
+                "e-20261020-235930-BEEF", "x", "e-20261020-235930-beef\n", 42):
+        with pytest.raises(ValueError):
+            append_entry(tmp_path, "nope", "pc", ts, entry_id=bad)
+    assert read_log(tmp_path) == [e]  # nothing written for a refused id

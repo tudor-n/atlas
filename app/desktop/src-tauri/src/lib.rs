@@ -1,9 +1,12 @@
 //! BrainHub desktop shell (design §8): the `widget` window, the tray, autostart and the hub
 //! supervisor. The hub serves the widget page; this shell only frames it.
 
+pub mod claude_watch;
 pub mod config;
 pub mod supervisor;
 
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -15,10 +18,109 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_window_state::StateFlags;
 
-use supervisor::{Supervisor, CREATE_NO_WINDOW};
+use supervisor::{Notice, Supervisor};
+#[cfg(windows)]
+use supervisor::CREATE_NO_WINDOW;
+
+#[cfg(test)]
+mod shell_source;
 
 const WIDGET: &str = "widget";
+const TRAY: &str = "main";
 const TICK: Duration = Duration::from_secs(2);
+
+/// Set when the shell set `GDK_BACKEND` itself (D1). Its children (the hub, xdg-open, and the
+/// browsers they start) don't inherit it: a browser started from here would run under XWayland too.
+static FORCED_GDK_BACKEND: AtomicBool = AtomicBool::new(false);
+
+/// Ruling D1: on Linux the shell runs under XWayland, where KWin honours keep-above, skip-taskbar
+/// and a remembered position (a native Wayland window can ask for none of them). This must run
+/// before GTK starts, while the process has one thread. A `GDK_BACKEND` from the environment wins.
+#[cfg(target_os = "linux")]
+fn use_xwayland() {
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+        FORCED_GDK_BACKEND.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Take the shell's own environment changes back out of a child's environment.
+pub(crate) fn child_env(cmd: &mut Command) {
+    if FORCED_GDK_BACKEND.load(Ordering::Relaxed) {
+        cmd.env_remove("GDK_BACKEND");
+    }
+}
+
+/// Quit cleanly on SIGTERM (logout) and SIGINT (Ctrl+C), as the tray's Quit does (D1): `exit(0)`
+/// leads to `RunEvent::Exit`, where the window-state plugin saves the position and the supervisor
+/// stops the hub. Without this a signal ends the shell on the spot, saving nothing. The handler
+/// only writes a byte to a pipe; a plain thread reads it and asks the app to exit.
+#[cfg(unix)]
+fn quit_on_signals(app: AppHandle) -> std::io::Result<()> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::AtomicI32;
+
+    const SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
+    static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
+    extern "C" fn on_signal(_: libc::c_int) {
+        // Async-signal-safe only: one write(2) to a non-blocking pipe, with errno kept for the
+        // code the signal interrupted.
+        #[cfg(target_os = "linux")]
+        let saved = unsafe { *libc::__errno_location() };
+        let _ = unsafe { libc::write(WAKE_FD.load(Ordering::Relaxed), b"q".as_ptr().cast(), 1) };
+        #[cfg(target_os = "linux")]
+        unsafe {
+            *libc::__errno_location() = saved
+        };
+    }
+
+    // Close-on-exec from the start, so the hub and xdg-open never inherit the pipe. Only the write
+    // end is non-blocking, so the handler never blocks; the reader thread blocks on the read end.
+    let mut fds: [libc::c_int; 2] = [-1; 2];
+    #[cfg(target_os = "linux")]
+    let piped = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } == 0;
+    #[cfg(not(target_os = "linux"))]
+    let piped = unsafe {
+        libc::pipe(fds.as_mut_ptr()) == 0
+            && libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC) != -1
+            && libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC) != -1
+    };
+    let made = piped && unsafe { libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK) } != -1;
+    if !made {
+        return Err(std::io::Error::last_os_error());
+    }
+    WAKE_FD.store(fds[1], Ordering::Relaxed);
+    let mut wake = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    // The reader runs before any handler is installed, so a caught signal is never left unread.
+    std::thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        loop {
+            match wake.read(&mut byte) {
+                Ok(1) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                _ => return,
+            }
+        }
+        // A second signal ends the shell at once, as it would have without this.
+        for sig in SIGNALS {
+            unsafe { libc::signal(sig, libc::SIG_DFL) };
+        }
+        app.exit(0);
+    });
+    for sig in SIGNALS {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        let failed = unsafe {
+            libc::sigemptyset(&mut action.sa_mask) != 0 || libc::sigaction(sig, &action, std::ptr::null_mut()) != 0
+        };
+        if failed {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 struct Shared(Arc<Mutex<Supervisor>>);
@@ -48,15 +150,27 @@ fn toggle_widget(app: &AppHandle) {
 }
 
 /// The default browser at `url`, via `cmd /C start "" <url>` without a console flash.
+#[cfg(windows)]
 fn open_browser(url: &str) {
-    let mut cmd = std::process::Command::new("cmd");
+    use std::os::windows::process::CommandExt;
+    let mut cmd = Command::new("cmd");
     cmd.args(["/C", "start", "", url]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     let _ = cmd.spawn();
+}
+
+/// The default browser at `url`, via `xdg-open`, detached: stdio closed, its own process group (a
+/// Ctrl+C meant for the shell doesn't reach a browser it starts), and reaped on a thread.
+#[cfg(unix)]
+fn open_browser(url: &str) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut cmd = Command::new("xdg-open");
+    cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+    child_env(&mut cmd);
+    if let Ok(mut child) = cmd.spawn() {
+        std::thread::spawn(move || child.wait());
+    }
 }
 
 fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<Wry>) {
@@ -119,18 +233,61 @@ fn keep_on_screen<R: Runtime>(window: &Window<R>) {
     }
 }
 
+/// The tray's tooltip, and its menu's first line (disabled) while there is a notice, on both OSes:
+/// Linux's tray (AppIndicator) shows no tooltip, so the menu says it there too.
+struct TrayNotice {
+    menu: Menu<Wry>,
+    line: MenuItem<Wry>,
+    shown: Option<Notice>,
+}
+
+impl TrayNotice {
+    fn show(&mut self, app: &AppHandle, notice: Option<Notice>) {
+        if notice == self.shown {
+            return;
+        }
+        let tooltip = notice.map_or_else(|| "BrainHub".to_string(), |n| format!("BrainHub — {}", n.text()));
+        if let Some(tray) = app.tray_by_id(TRAY) {
+            let _ = tray.set_tooltip(Some(tooltip));
+        }
+        match notice {
+            Some(n) => {
+                let text = n.text();
+                let _ = self.line.set_text(format!("{}{}", text[..1].to_uppercase(), &text[1..]));
+                if self.shown.is_none() {
+                    let _ = self.menu.insert(&self.line, 0);
+                }
+            }
+            None => {
+                let _ = self.menu.remove(&self.line);
+            }
+        }
+        self.shown = notice;
+    }
+}
+
 /// Every 2 s: let the supervisor act, point the widget at the hub once the port answers (see
-/// `needs_navigate`: never again after that), and keep "Restart hub" in sync.
-fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>) {
+/// `needs_navigate`: never again after that), and keep "Restart hub" and the tray notice in sync.
+/// In runtime mode a start first runs claude-sync and the update step (up to 150 s): that runs
+/// here, without the supervisor's lock, so the tray's Restart and Quit never wait for it.
+fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>, mut notice: TrayNotice) {
     std::thread::spawn(move || {
         let target = format!("http://127.0.0.1:{port}/widget");
         let mut navigated = false;
         loop {
-            let (up, owns) = {
+            let prep = sup.lock().tick();
+            if let Some(prep) = prep {
+                // Say what is already known (a widget update from the last step) before the wait.
+                let known = sup.lock().notice();
+                notice.show(&app, known);
+                prep.run();
+                sup.lock().start_prepared(prep);
+            }
+            let (up, owns, now) = {
                 let mut s = sup.lock();
-                s.tick();
-                (s.last_up(), s.owns_child())
+                (s.last_up(), s.owns_child(), s.notice())
             };
+            notice.show(&app, now);
             if let Some(w) = app.get_webview_window(WIDGET) {
                 let current = w.url().ok().map(|u| u.to_string());
                 if needs_navigate(up, navigated, current.as_deref(), &target) {
@@ -149,9 +306,12 @@ fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    use_xwayland();
     let cfg = config::default_path().map(|p| config::load(&p)).unwrap_or_default();
     let port = cfg.port;
-    let sup = Shared(Arc::new(Mutex::new(Supervisor::new(cfg))));
+    let state = config::state_dir().unwrap_or_else(std::env::temp_dir); // temp: no home folder at all
+    let sup = Shared(Arc::new(Mutex::new(Supervisor::new(cfg, state))));
     let sup_for_exit = sup.clone();
 
     let app = tauri::Builder::default()
@@ -170,11 +330,25 @@ pub fn run() {
                 .skip_taskbar(true)
                 .resizable(false)
                 .shadow(false)
+                // Shown below, once its window type is set.
+                .visible(false)
                 .build()?;
+            // D1: a utility window stays out of KWin's Alt+Tab. The type counts only if it is set
+            // before the window is first shown.
+            #[cfg(target_os = "linux")]
+            if let Ok(window) = widget.gtk_window() {
+                use gtk::prelude::GtkWindowExt;
+                window.set_type_hint(gtk::gdk::WindowTypeHint::Utility);
+            }
             // A remembered (or first-launch) position may leave the window partly off-screen.
             keep_on_screen(&widget.as_ref().window());
+            widget.show()?;
 
             let handle = app.handle();
+            #[cfg(unix)]
+            if let Err(e) = quit_on_signals(handle.clone()) {
+                eprintln!("brainhub-desktop: SIGTERM/SIGINT won't quit cleanly: {e}");
+            }
             let open = MenuItem::with_id(handle, "open", "Open BrainHub", true, None::<&str>)?;
             let toggle = MenuItem::with_id(handle, "toggle", "Show/Hide widget", true, None::<&str>)?;
             let autostart_on = handle.autolaunch().is_enabled().unwrap_or(false);
@@ -183,10 +357,12 @@ pub fn run() {
             let quit = MenuItem::with_id(handle, "quit", "Quit", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(handle)?;
             let menu = Menu::with_items(handle, &[&open, &toggle, &login, &restart, &sep, &quit])?;
+            // The notice line (no slot, widget update): shown at the top only while it applies.
+            let notice_line = MenuItem::with_id(handle, "notice", "", false, None::<&str>)?;
 
             let sup_menu = sup.clone();
             let login_item = login.clone();
-            let mut tray = TrayIconBuilder::with_id("main").tooltip("BrainHub").menu(&menu).on_menu_event(
+            let mut tray = TrayIconBuilder::with_id(TRAY).tooltip("BrainHub").menu(&menu).on_menu_event(
                 move |app, e| match e.id.as_ref() {
                     "open" => open_browser(&format!("http://127.0.0.1:{port}/")),
                     "toggle" => toggle_widget(app),
@@ -204,7 +380,17 @@ pub fn run() {
             }
             tray.build(app)?;
 
-            watch(handle.clone(), sup.clone(), port, restart);
+            // Here, not before the builder: only the one instance that runs gets this far (the
+            // single-instance plugin ends a second launch before setup).
+            let claude_watch = {
+                let s = sup.lock();
+                s.record_shell();
+                s.claude_watch()
+            };
+            if let Some(w) = claude_watch {
+                w.spawn();
+            }
+            watch(handle.clone(), sup.clone(), port, restart, TrayNotice { menu, line: notice_line, shown: None });
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -6,7 +6,6 @@ import contextlib
 import json
 import logging
 import re
-import sys
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +14,11 @@ from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from . import claude_integration as ci
+from . import claude_sync
+from . import holding
+from . import osdirs
+from . import rootguard
+from . import runtime
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -119,18 +123,26 @@ async def index(request: web.Request) -> web.StreamResponse:
 
 
 async def state(request: web.Request) -> web.Response:
-    app = request.app
+    app, held_problems = request.app, []
+    drive_ = await t(drive, app, held_problems)
     return web.json_response({
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
         "backup": app["backup"].status(), "log_error": app["log_error"],
-        "startup_error": list(app["startup_errors"]) or None,
-        "brain_path": str(app["paths"].brain)})
+        "startup_error": [*app["startup_errors"], *held_problems] or None,
+        "brain_path": str(app["paths"].brain), "os": osdirs.os_name(),
+        "warnings": list(app["warnings"]), "drive": drive_,
+        "runtime": await t(runtime.hub_view, osdirs.state_dir())})
 
 
 async def setup(request: web.Request) -> web.Response:
     app, paths = request.app, request.app["paths"]
     if setup_done(app):
         return err(409, "setup already done")
+    # A brain is only ever created on a fresh root, checked now: the drive may have gone since start.
+    status = await t(rootguard.check_root, paths)
+    if status.state != "fresh":
+        return err(409, status.message or "setup only runs on an empty folder, and this root is "
+                                          "already marked as a brain (data/root.json)")
     body = await body_dict(request)
     m = _map_from(body.get("map"))
     remote = body.get("backup_remote")
@@ -149,6 +161,8 @@ async def setup(request: web.Request) -> web.Response:
     if remote:
         await t(save_settings, paths, {"backup_remote": remote})
     await t(app["on_commit"], sha)
+    # Last, so a marker always means a finished setup (an interrupted one is adopted at next start).
+    await t(rootguard.create_marker, paths)
     return web.json_response({"ok": True})
 
 
@@ -253,13 +267,20 @@ async def post_entry(request: web.Request) -> web.Response:
     app = request.app
     body = await body_dict(request)
     text, source = body.get("text"), body.get("source")
-    if not setup_done(app):
+    # A root that was ok at start had a brain: if map.json is gone now, the drive went away mid-run
+    # and the capture is held below, not refused.
+    if not setup_done(app) and app["root_status"].state != "ok":
         return err(409, "run setup first")
     if not isinstance(text, str) or not text.strip():
         return err(400, "entry text is blank")
     if source not in CAPTURE_SOURCES:
         return err(400, f"source must be one of {list(CAPTURE_SOURCES)}")
-    entry = await t(append_entry, app["paths"].brain, text, source)  # the log comes first
+    try:
+        entry = await t(append_entry, app["paths"].brain, text, source)  # the log comes first
+    except OSError as e:  # the root went read-only or away mid-run: hold it on this OS instead
+        log.error("the raw log can't be written (%s); the capture is held on this OS", e)
+        record = await t(holding.hold, osdirs.state_dir(), app["paths"], text, source, datetime.now())
+        return web.json_response({"entry_id": record["id"], "held": True})
     try:
         await t(app["store"].add_entry, entry)
         await t(app["store"].index_entry, entry)
@@ -437,7 +458,9 @@ async def get_widget(request: web.Request) -> web.Response:
     app = request.app
     state = await t(_widget_state, app)
     state["arm_reachable"] = await app["arm"].reachable(state["settings"]["arm_url"])
-    return web.json_response(await t(build_widget, state))
+    summary = await t(build_widget, state)
+    summary.update(drive=await t(drive, app), warnings=list(app["warnings"]))
+    return web.json_response(summary)
 
 
 async def widget_page(request: web.Request) -> web.StreamResponse:
@@ -614,6 +637,31 @@ async def patch_agent(request: web.Request) -> web.Response:
     return web.json_response(row)
 
 
+def _map_committer(app: web.Application):
+    def commit(m: BrainMap) -> None:
+        save_map(app["paths"].brain, m)
+        app["on_commit"](app["repo"].commit_all("map edit"))
+    return commit
+
+
+async def link_agent(request: web.Request) -> web.Response:
+    """The "link to <name>" button on an Agents row: its folder joins that project on this OS
+    (dual-boot design §6.4). Same JSON and local_only rules as every other POST."""
+    app = request.app
+    slug = (await body_dict(request)).get("slug")
+    if not isinstance(slug, str) or not slug:
+        raise ValueError("slug must be a project slug")
+    try:
+        row = await t(app["agents"].link, request.match_info["session_id"], slug, _map_committer(app))
+    except KeyError:
+        raise web.HTTPNotFound(reason="unknown session") from None
+    if row is None:
+        return err(409, "this session has no link to that project any more")
+    await app["broadcast"]("map.changed", {})
+    await app["broadcast"]("agents.changed", {})
+    return web.json_response(row)
+
+
 async def delete_agent(request: web.Request) -> web.Response:
     app = request.app
     await t(app["agents"].remove, request.match_info["session_id"])
@@ -622,6 +670,8 @@ async def delete_agent(request: web.Request) -> web.Response:
 
 
 def _integration_view(app: web.Application) -> dict:
+    # No legacy adoption here: moving the passthrough file on a GET would cut the live status line
+    # off from it until a reinstall. install/uninstall adopt and rewrite the line together.
     view = ci.status(app["claude_settings_path"], port=app["port"])
     return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
 
@@ -634,12 +684,12 @@ async def get_integration(request: web.Request) -> web.Response:
 
 
 def _integration_change(app: web.Application, install: bool) -> dict:
-    paths, target = app["paths"], app["claude_settings_path"]
+    paths, target, state = app["paths"], app["claude_settings_path"], osdirs.state_dir()
     if install:
-        ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                   port=app["port"], data_dir=paths.data)
+        python, script = ci.hook_paths(state)
+        ci.install(target, python=python, script=script, port=app["port"], state_dir=state, data_dir=paths.data)
     else:
-        ci.uninstall(target, data_dir=paths.data)
+        ci.uninstall(target, state_dir=state, data_dir=paths.data)
     return _integration_view(app)
 
 
@@ -655,6 +705,117 @@ async def post_integration_uninstall(request: web.Request) -> web.Response:
         return web.json_response(await t(_integration_change, request.app, False))
     except ci.IntegrationError as e:
         raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+# -- Claude Code sync (plan Task 11): the last summary and the per-OS keys -------------------
+def _claude_sync_view() -> dict:
+    return claude_sync.view(osdirs.state_dir(), claude_sync.default_shared_dir())
+
+
+async def get_claude_sync(request: web.Request) -> web.Response:
+    """The last claude-sync summary (<state>/claude-sync.json, None before the first run), whether
+    the shared store is there, and the per-OS settings keys (the defaults and the owner's)."""
+    return web.json_response(await t(_claude_sync_view))
+
+
+async def put_claude_sync_per_os_keys(request: web.Request) -> web.Response:
+    """{"keys": [...]}: the owner's extra per-OS keys, kept in the shared store's
+    settings.shared.json. 409 while the store isn't available, or while a sync runs."""
+    body = await body_dict(request)
+    state, shared = osdirs.state_dir(), claude_sync.default_shared_dir()
+    try:
+        await t(claude_sync.set_per_os_keys, shared, body.get("keys"), state)
+    except (claude_sync.StoreUnavailable, claude_sync.Busy) as e:
+        return err(409, str(e))
+    return web.json_response(await t(_claude_sync_view))
+
+
+# -- reduced and read-only modes (dual-boot design §6.5 items 2 and 3) -----------
+def drive(app: web.Application, problems: list | None = None) -> dict | None:
+    """The drive banner: None while the root is fine, else its state, the message and how many
+    captures this OS holds for this root. Held files that can't be read are described in
+    `problems`."""
+    status = app["root_status"]
+    if status.state in ("ok", "fresh"):
+        return None
+    return {"state": status.state, "message": status.message,
+            "held": len(holding.held(osdirs.state_dir(), problems, app["paths"]))}
+
+
+async def hold_entry(request: web.Request) -> web.Response:
+    """POST /api/entries while the root isn't writable: the capture goes to this OS's holding
+    inbox, on disk before the answer, marked with this root. It reaches the raw log, with its own
+    id and ts, at the first start of a hub on this root once it is writable."""
+    body = await body_dict(request)
+    text, source = body.get("text"), body.get("source")
+    if not isinstance(text, str) or not text.strip():
+        return err(400, "entry text is blank")
+    if source not in CAPTURE_SOURCES:
+        return err(400, f"source must be one of {list(CAPTURE_SOURCES)}")
+    record = await t(holding.hold, osdirs.state_dir(), request.app["paths"], text, source, datetime.now())
+    return web.json_response({"entry_id": record["id"], "held": True})
+
+
+async def ignored(request: web.Request) -> web.Response:
+    """Hook events and usage while the root isn't usable: accepted and dropped, so the owner's
+    Claude Code hooks stay fast and silent. The JSON rules still apply."""
+    await body_dict(request)
+    return web.Response(status=204)
+
+
+async def unavailable(request: web.Request) -> web.Response:
+    app = request.app
+    return web.json_response({"error": app["root_status"].message, "drive": await t(drive, app)},
+                             status=503)
+
+
+async def reduced_state(request: web.Request) -> web.Response:
+    """GET /api/state in reduced mode: setup_done is null and `drive` is set, so the UI shows the
+    banner and the capture box and never offers setup."""
+    app, held_problems = request.app, []
+    drive_ = await t(drive, app, held_problems)
+    return web.json_response({"setup_done": None, "drive": drive_, "warnings": list(app["warnings"]),
+                              "os": osdirs.os_name(), "log_error": None,
+                              "startup_error": held_problems or None})
+
+
+async def reduced_widget(request: web.Request) -> web.Response:
+    """GET /api/widget in reduced mode: the banner is the synopsis; there are no tiles."""
+    app = request.app
+    return web.json_response({"synopsis": app["root_status"].message, "attention": True, "tiles": [],
+                              "drive": await t(drive, app), "warnings": list(app["warnings"])})
+
+
+# Opening a page writes nothing, so it works in every mode (the widget's "Open in BrainHub").
+_HARMLESS_POSTS = ("/api/open",)
+_IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
+
+
+@web.middleware
+async def readonly_guard(request: web.Request, handler):
+    """Read-only root: reads work (Today, journal, recall); a capture goes to the holding inbox;
+    hook events and usage are ignored; anything else that would write is refused with the
+    reason (503)."""
+    method, path = request.method, request.path
+    if method in ("GET", "HEAD", "OPTIONS") or (method == "POST" and path in _HARMLESS_POSTS):
+        return await handler(request)
+    if method == "POST" and path == "/api/entries":
+        return await hold_entry(request)
+    if method == "POST" and path in _IGNORED_POSTS:
+        return await ignored(request)
+    return await unavailable(request)
+
+
+def add_reduced_routes(app: web.Application) -> None:
+    """The reduced app's routes (no hub.db, no git, nothing written under the root)."""
+    app.add_routes([
+        web.get("/", index), web.get("/widget", widget_page), web.get("/api/state", reduced_state),
+        web.post("/api/entries", hold_entry),
+        web.post("/api/hooks/event", ignored), web.post("/api/usage", ignored),
+        web.get("/api/widget", reduced_widget), web.post("/api/open", post_open),
+        web.get("/ws", ws_handler),
+        web.route("*", "/api/{tail:.*}", unavailable),
+    ])
 
 
 def add_routes(app: web.Application) -> None:
@@ -678,10 +839,13 @@ def add_routes(app: web.Application) -> None:
         web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
         web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
         web.patch("/api/agents/{session_id}", patch_agent),
+        web.post("/api/agents/{session_id}/link", link_agent),
         web.delete("/api/agents/{session_id}", delete_agent),
         web.get("/api/integration", get_integration),
         web.post("/api/integration/install", post_integration_install),
         web.post("/api/integration/uninstall", post_integration_uninstall),
+        web.get("/api/claude-sync", get_claude_sync),
+        web.put("/api/claude-sync/per-os-keys", put_claude_sync_per_os_keys),
         web.get("/api/widget", get_widget), web.get("/widget", widget_page),
         web.post("/api/open", post_open),
         web.get("/ws", ws_handler),

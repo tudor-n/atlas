@@ -20,6 +20,7 @@ _HEADER = re.compile(
 _END = "\n<!-- /entry -->\n"
 _SEP = "\n"  # blank line after each entry
 _LOG_FILE = re.compile(r"[0-9]{4}/[0-9]{2}/[0-9]{4}-[0-9]{2}-[0-9]{2}\.md")
+ENTRY_ID = re.compile(r"e-([0-9]{8}-[0-9]{6})-[0-9a-f]{4}")  # its middle part is the ts, to the second
 
 
 def new_entry_id(ts: datetime) -> str:
@@ -30,26 +31,50 @@ def log_path(brain: Path, ts: datetime) -> Path:
     return Path(brain) / "log" / f"{ts:%Y}" / f"{ts:%m}" / f"{ts:%Y-%m-%d}.md"
 
 
+def check_entry_id(entry_id, ts: datetime) -> None:
+    """Raise ValueError unless entry_id has the id shape and its timestamp part is ts."""
+    m = ENTRY_ID.fullmatch(entry_id) if isinstance(entry_id, str) else None
+    if m is None:
+        raise ValueError(f"bad entry id: {entry_id!r}")
+    if m.group(1) != f"{ts:%Y%m%d-%H%M%S}":
+        raise ValueError(f"entry id {entry_id} does not match its timestamp {ts.isoformat()}")
+
+
 def append_entry(brain: Path, text: str, source: str,
-                 now: datetime | None = None) -> Entry:
+                 now: datetime | None = None, entry_id: str | None = None) -> Entry:
+    """Append one entry and fsync it. `entry_id` is given only for a capture held while the root
+    wasn't writable (holding.py): it keeps the id it was given then, with its own ts as `now`.
+    `brain` must be an existing folder: only the log/YYYY/MM levels below it are ever created, so
+    a drive that went away mid-run raises OSError instead of getting a new brain (or root)."""
     global _issued
     if not text.strip():
         raise ValueError("entry text is blank")
     if source not in SOURCES:
         raise ValueError(f"unknown source: {source!r}")
     ts = (now or datetime.now()).replace(microsecond=0)
+    if entry_id is not None:
+        check_entry_id(entry_id, ts)
     text.encode("utf-8")  # fail before touching the file if unencodable
+    brain = Path(brain)
+    if not brain.is_dir():
+        raise FileNotFoundError(f"the brain folder {brain} isn't there or can't be read; "
+                                "nothing was written")
     path = log_path(brain, ts)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    for folder in (brain / "log", path.parent.parent, path.parent):
+        folder.mkdir(exist_ok=True)  # never parents=True: that would recreate a vanished brain
     with _APPEND_LOCK:
         second, ids = _issued
-        if second != ts:
-            ids = set()
-            _issued = (ts, ids)
-        entry_id = new_entry_id(ts)
-        while entry_id in ids:  # same second and same 4 hex chars: draw again
+        if entry_id is not None:  # an old ts: the ids issued this second stay as they are
+            if second == ts:
+                ids.add(entry_id)
+        else:
+            if second != ts:
+                ids = set()
+                _issued = (ts, ids)
             entry_id = new_entry_id(ts)
-        ids.add(entry_id)
+            while entry_id in ids:  # same second and same 4 hex chars: draw again
+                entry_id = new_entry_id(ts)
+            ids.add(entry_id)
         entry = Entry(id=entry_id, ts=ts, source=source, text=text)
         record = (f"<!-- entry id={entry.id} ts={ts.isoformat()} source={source} "
                   f"len={len(text)} -->\n{text}{_END}{_SEP}")
@@ -121,6 +146,17 @@ def _parse_file(path: Path, problems: list | None = None) -> list[Entry]:
             continue
         entries.append(entry)
     return entries
+
+
+def file_problems(path: Path) -> list[str]:
+    """What the tolerant reader reports about one log file: [] when it is intact or absent.
+    Raises OSError when it can't be read."""
+    problems: list[str] = []
+    try:
+        _parse_file(Path(path), problems)
+    except FileNotFoundError:
+        return []
+    return problems
 
 
 def read_log(brain: Path, problems: list | None = None) -> list[Entry]:

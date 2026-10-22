@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, DRAFT_KEY, loadDraft, saveDraft } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -77,6 +77,14 @@ test('popupRows for other tiles', () => {
   assert.equal(popupRows('deadlines', W({ deadlines: [{ text: 'd', due: '2026-10-25', project: 'p' }] }))[0].meta, '2026-10-25');
   assert.equal(popupRows('review', W({ review: { proposals: 2, failed: 1 } })).length, 2);
   assert.equal(popupRows('arm', W()).length, 0);
+});
+
+test('synopsis shows the drive banner while the root is not usable', () => {
+  assert.equal(synopsisText(W({ synopsis: '2 due today', drive: null })), '2 due today');
+  const drive = { state: 'missing', message: "BrainHub's drive isn't available.", held: 0 };
+  assert.equal(synopsisText(W({ synopsis: 'ignored', drive })), drive.message);
+  assert.equal(synopsisText(W({ drive: { ...drive, held: 2 } })), `2 captures held on this OS · ${drive.message}`);
+  assert.equal(synopsisText(null), '');
 });
 
 function memStorage() {

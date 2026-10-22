@@ -2,13 +2,15 @@
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
+import { runtimeText } from './runtime-model.js';
+import { renderClaudeSync } from './claude-sync.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const HINTS = {
   port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
-  claude_path: 'Command or full path of the claude CLI. Takes effect after BrainHub restarts.',
+  claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after BrainHub restarts.',
   quiet_hours: 'Stored now; used when reminders arrive.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',
@@ -119,6 +121,9 @@ export async function render(container) {
   container.appendChild(el('h1', {}, 'Settings'));
   const hintLine = el('p', { class: 'muted' });
   container.appendChild(hintLine);
+  // ---- Runtime: one quiet line, only when the hub runs from a runtime slot (filled below).
+  const runtimeLine = el('p', { class: 'muted', hidden: true });
+  container.appendChild(runtimeLine);
 
   // ---- Brain map
   const mapMsg = el('div', { role: 'alert' });
@@ -234,12 +239,14 @@ export async function render(container) {
     hintLine.appendChild(el('code', {}, state.brain_path));
     hintLine.appendChild(document.createTextNode(' in Obsidian for a graph view.'));
   }
+  runtimeLine.textContent = runtimeText(state.runtime);
+  runtimeLine.hidden = !runtimeLine.textContent;
 
   try {
     const map = normalizeMap(await api.get('/api/map'));
     if (dead) return cleanup;
     const saved = savedNodes(map);  // these slugs are read-only; new rows still auto-slug
-    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n) });
+    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n), os: state.os });
     const saveBtn = el('button', { type: 'button', class: 'primary', onclick: async () => {
       if (hasErrors(editors.validateAndShow())) { say(mapMsg, 'Fix the problems above, then save.'); return; }
       saveBtn.disabled = true;
@@ -317,6 +324,10 @@ export async function render(container) {
         el('dt', {}, 'Last hook event'), el('dd', {}, whenText(s.last_hook_at)),
         el('dt', {}, 'Last usage update'), el('dd', {}, whenText(s.last_usage_at)),
         el('dt', {}, 'Settings file'), el('dd', {}, el('code', {}, s.settings_path || ''))),
+      // Quiet: installed before `runtime init`, or its interpreter or script has moved since.
+      (s.hooks_installed || s.statusline_installed) && s.paths_current === false
+        ? el('p', { class: 'quiet-note' }, 'Reinstall: the installed hooks point at an old Python or script.')
+        : null,
       el('div', { class: 'actions' },
         el('button', { type: 'button', class: 'primary', onclick: run('/api/integration/install', 'Installed.') }, 'Install'),
         el('button', { type: 'button', onclick: run('/api/integration/uninstall', 'Removed.') }, 'Remove')),
@@ -331,6 +342,12 @@ export async function render(container) {
     }
   }
   await loadIntegration();
+
+  // ---- Claude Code sync (claude-sync: shared memory, skills and settings across the OSes)
+  const syncBox = el('div', {});
+  container.appendChild(el('h2', {}, 'Claude Code sync'));
+  container.appendChild(syncBox);
+  await renderClaudeSync(syncBox, () => dead);
 
   subs.push(api.onEvent('map.changed', () => loadTree()));
   subs.push(api.onEvent('items.changed', () => loadTree()));

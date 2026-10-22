@@ -10,6 +10,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2" }
+# The shell-source digest (build.rs, src/shell_source.rs): the sha2 tauri already uses.
+sha2 = "0.10"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -18,3 +20,14 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-window-state = "2"
+
+[dev-dependencies]
+# src/shell_source.rs's tests (build.rs uses it for the real digest).
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The version tauri 2 uses (`cargo tree -i gtk`), for the widget's window type hint (ruling D1).
+gtk = "0.18"

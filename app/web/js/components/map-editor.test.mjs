@@ -1,7 +1,7 @@
 // Run with: node --test app/web/js/components/map-editor.test.mjs (pure logic, no DOM needed).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { slugify, validateMap, defaultMap, renameProjectRefs, dropProjectRefs } from './map-editor.js';
+import { slugify, validateMap, defaultMap, normalizeMap, pathOs, renameProjectRefs, dropProjectRefs } from './map-editor.js';
 
 test('slugify follows brainmap.slugify', () => {
   assert.equal(slugify('Acme Café'), 'acme-cafe');
@@ -29,6 +29,41 @@ test('validateMap: slug format, duplicates, company, unknown project, reserved s
   assert.ok(e.people.some((x) => /doesn't exist/.test(x)));
   assert.ok(e.people.some((x) => /"people" is reserved/.test(x)));
   assert.ok(e.areas.some((x) => /"log" is reserved/.test(x)) && !e.areas.some((x) => /extra/.test(x)));
+});
+
+test('pathOs follows brainmap.path_os', () => {
+  assert.equal(pathOs('D:\\RobotArmControl'), 'windows');
+  assert.equal(pathOs('d:/x'), 'windows');
+  assert.equal(pathOs('\\\\nas\\share'), 'windows');
+  assert.equal(pathOs('/home/u/dev/x'), 'linux');
+  for (const odd of ['relative\\x', 'D:', '', null]) assert.equal(pathOs(odd), null);
+});
+
+test('normalizeMap: os_folders round-trip, legacy folders move to their column and folders is dropped', () => {
+  const m = normalizeMap({ projects: [{ slug: 'robotarm', name: 'RobotArm', is_company: false,
+    folders: ['D:\\Old', '/home/u/old', 'relative', 'D:\\RobotArmControl'],
+    os_folders: { windows: ['D:\\RobotArmControl'], linux: ['/home/u/dev/RobotArmControl', 5], mac: ['/x'] } }] });
+  const p = m.projects[0];
+  assert.ok(!('folders' in p));
+  // A legacy entry of no known shape lands under Windows (maps from before dual boot were made there),
+  // where validateMap flags it instead of it being dropped silently.
+  assert.deepEqual(p.os_folders, { windows: ['D:\\RobotArmControl', 'D:\\Old', 'relative'],
+    linux: ['/home/u/dev/RobotArmControl', '/home/u/old'] });
+  assert.deepEqual(normalizeMap(JSON.parse(JSON.stringify(m))), m);
+  assert.deepEqual(normalizeMap({ projects: [{ slug: 'x', name: 'X' }] }).projects[0].os_folders, { windows: [], linux: [] });
+});
+
+test('validateMap: a folder in the wrong column is a project error', () => {
+  const m = defaultMap();
+  const p = { slug: 'robotarm', name: 'RobotArm', is_company: false,
+    os_folders: { windows: ['/home/u/x', 'relative'], linux: ['D:\\RobotArmControl'] } };
+  m.projects.push(p);
+  const e = validateMap(m).projects;
+  assert.ok(e.some((x) => x.includes('/home/u/x') && x.includes('Folders on Linux')));
+  assert.ok(e.some((x) => x.includes('D:\\RobotArmControl') && x.includes('Folders on Windows')));
+  assert.ok(e.some((x) => x.includes('"relative"')));
+  p.os_folders = { windows: ['D:\\RobotArmControl', '\\\\nas\\x'], linux: ['/home/u/x'] };
+  assert.deepEqual(validateMap(m).projects, []);
 });
 
 test('typing a second project through another project\'s slug does not steal its people', () => {

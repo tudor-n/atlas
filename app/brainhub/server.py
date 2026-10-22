@@ -6,12 +6,14 @@ import logging
 import os
 import sqlite3
 import sys
+import warnings
 import webbrowser
 from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
 
+from . import holding, osdirs, winwatch
 from .agents import AgentTracker
 from .backup import BackupPusher
 from .claude_integration import default_settings_path
@@ -21,8 +23,9 @@ from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
-from .routes import add_routes, errors, local_only, setup_done
-from .store import Store, commit_hook
+from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
+from .routes import add_reduced_routes, add_routes, errors, local_only, readonly_guard, setup_done
+from .store import SchemaTooNew, Store, commit_hook
 from .usage import UsageStore
 from .widget import ArmProbe
 
@@ -30,19 +33,32 @@ log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 t = asyncio.to_thread
+# Root states the full app can't run on: run_server serves the reduced app for them instead.
+UNAVAILABLE = ("missing", "foreign", "newer")
+RECHECK_SECONDS = 15.0  # P8: how often a reduced or read-only hub looks at the root again
+EXIT_RESTART = 75  # P8: the root is usable again; the shell restarts the hub at once, with no backoff
+
+
+class RootUnavailable(Exception):
+    """The full app can't run on this root (missing, foreign or newer than this code, or read-only
+    with an index that can't be read): nothing was created or changed. run_server serves the
+    reduced app instead."""
+
+    def __init__(self, status: RootStatus):
+        super().__init__(status.message)
+        self.status = status
 
 
 # -- startup -----------------------------------------------------------------
 # Every step is wrapped: a failure is logged and listed in /api/state as `startup_error`, and
 # the hub keeps serving. Capture only needs the raw log to be writable.
-def _clear_stale_git_lock(app: web.Application) -> None:
-    """No hub git process runs before startup finishes, so an index.lock is a crash leftover."""
-    lock = app["paths"].brain / ".git" / "index.lock"
-    if lock.is_file():
-        lock.unlink()
-        log.warning("removed a stale %s left by a crash", lock)
+def _clear_stale_git_locks(app: web.Application) -> None:
+    """No hub git process runs before startup finishes, so a git lock is a crash leftover."""
+    removed = ", ".join(f"brain/{p}" for p in app["repo"].clear_stale_locks())
+    if removed:
+        log.warning("removed stale %s left by a crash", removed)
         app["startup_errors"].append(
-            "removed a stale brain/.git/index.lock left by a crash (nothing else was changed)")
+            f"removed stale {removed} left by a crash (nothing else was changed)")
 
 
 def _commit_owner_edits(app: web.Application) -> None:
@@ -78,6 +94,24 @@ def _backfill_log(app: web.Application) -> None:
         app["log_error"] = "; ".join(problems)
 
 
+def _flush_held(app: web.Application) -> None:
+    """Captures held for this root while it wasn't writable go into the raw log with their own id
+    and ts; the raw log step right after indexes them. Each is marked queued as a fresh capture
+    is, so the filing queue step files them all (the cap on never-filed entries doesn't apply).
+    Captures held for another BrainHub folder (this OS's state folder is shared by every hub on
+    it) stay held, in one line of startup_errors."""
+    done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
+    for entry_id in done.appended:
+        app["worker"].mark_queued(entry_id)
+    if done.elsewhere:
+        n = len(done.elsewhere)
+        folders = ", ".join(sorted({r["root"]["path"] for r in done.elsewhere}))
+        held, left = ("1 capture held on this OS belongs", "it was") if n == 1 else (
+            f"{n} captures held on this OS belong", "they were")
+        app["startup_errors"].append(f"{held} to another BrainHub folder ({folders}); {left} left in "
+                                     "the holding folder")
+
+
 def _rebuild_notes(app: web.Application) -> None:
     """Notes are tens of MB at most: re-index all of them on every start, so edits made while
     the hub was off (or a deleted note) can never leave recall quoting stale text."""
@@ -100,12 +134,14 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("database", store.init_schema)
     if not setup_done(app):
         return []
-    step("git lock", _clear_stale_git_lock, app)
+    step("git lock", _clear_stale_git_locks, app)
+    step("agents", app["agents"].end_previous_boot)
     step("git setup", repo.init)
     step("owner edits", _commit_owner_edits, app)
     step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
+    step("held captures", _flush_held, app)
     step("raw log", _backfill_log, app)
     step("notes index", _rebuild_notes, app)
     step("filing history", app["worker"].recover_from_history)
@@ -122,7 +158,37 @@ async def _prune_agents(app: web.Application) -> None:
             logging.getLogger(__name__).exception("agent prune failed")
 
 
+def _request_exit(app: web.Application, code: int) -> None:
+    """Stop the server gracefully; run_server exits with `code`."""
+    with warnings.catch_warnings():  # aiohttp warns on changing a started app; read only after the stop
+        warnings.simplefilter("ignore", DeprecationWarning)
+        app["exit_code"] = code
+    app["stop"].set()
+
+
+async def _watch_root(app: web.Application) -> None:
+    """Reduced or read-only mode (P8): look at the root again every recheck_interval seconds.
+    Once it is ok, stop with EXIT_RESTART, so the shell restarts the hub at once and the full
+    app starts fresh (and flushes the held captures)."""
+    while True:
+        await asyncio.sleep(app["recheck_interval"])
+        try:
+            status = await t(check_root, app["paths"])
+        except Exception:
+            log.exception("root re-check failed")
+            continue
+        if status.state == "ok":
+            log.warning("the root %s is usable again: stopping to restart in full", app["paths"].root)
+            _request_exit(app, EXIT_RESTART)
+            return
+
+
 async def on_startup(app: web.Application) -> None:
+    if app["root_status"].state == "readonly":
+        # Every startup step writes (git, hub.db, the brain), and so do the workers, the backup
+        # and the agents prune: none of them runs. Only the watch for a writable root does.
+        app["tasks"] = [asyncio.create_task(_watch_root(app))]
+        return
     for entry_id in await t(_startup_sync, app):
         app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
     if app["start_workers"]:
@@ -141,28 +207,53 @@ async def on_cleanup(app: web.Application) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    app["store"].close()
+    if "store" in app:  # the reduced app has none
+        app["store"].close()
 
 
-def _open_store(paths: Paths, problems: list[str]) -> Store:
-    """hub.db is a rebuildable index: a damaged one is moved aside and rebuilt from brain/."""
+CORRUPTION = ("malformed", "not a database", "file is encrypted")  # what SQLite says about real damage
+
+
+def _corrupt(e: sqlite3.DatabaseError) -> bool:
+    return any(m in str(e).lower() for m in CORRUPTION)
+
+
+def _open_store(paths: Paths, problems: list[str], *, readonly: bool = False) -> Store:
+    """hub.db is a rebuildable index: a damaged one is moved aside and rebuilt from brain/.
+    Damaged means real corruption only: SQLite says malformed, not a database or encrypted, or
+    PRAGMA quick_check finds damage. Anything else is re-raised and nothing is moved: a newer
+    schema (SchemaTooNew), a locked file, a read-only root, a file that can't be opened (dual-boot
+    design §6.5 item 2). With readonly=True (a read-only root) nothing is ever moved or written."""
     store = None
     try:
-        store = Store(paths.db)
-        store.init_schema()
-        return store
+        store = Store(paths.db, readonly=readonly)
+        damage = store.quick_check()
+        if not damage:
+            store.init_schema()
+            return store
+    except SchemaTooNew:  # not a DatabaseError: never moved aside
+        store.close()
+        raise
     except sqlite3.DatabaseError as e:
         if store is not None:
             store.close()
-        aside = paths.db.with_name(f"hub.db.damaged-{datetime.now():%Y%m%d-%H%M%S}")
-        for suffix in ("", "-wal", "-shm"):
-            src = paths.db.with_name(paths.db.name + suffix)
-            if src.exists():
-                src.replace(aside.with_name(aside.name + suffix))
-        log.error("damaged %s moved to %s: %s", paths.db, aside, e)
-        problems.append(f"the index {paths.db.name} was damaged ({e}); moved it to {aside.name} "
-                        "and rebuilt it from brain/")
-        return Store(paths.db)
+        if readonly or not _corrupt(e):
+            raise
+        reason = str(e)
+    else:
+        store.close()
+        reason = "quick_check: " + "; ".join(damage[:3])
+        if readonly:
+            raise sqlite3.DatabaseError(f"{paths.db.name} is damaged ({reason})")
+    aside = paths.db.with_name(f"hub.db.damaged-{datetime.now():%Y%m%d-%H%M%S}")
+    for suffix in ("", "-wal", "-shm"):
+        src = paths.db.with_name(paths.db.name + suffix)
+        if src.exists():
+            src.replace(aside.with_name(aside.name + suffix))
+    log.error("damaged %s moved to %s: %s", paths.db, aside, reason)
+    problems.append(f"the index {paths.db.name} was damaged ({reason}); moved it to {aside.name} "
+                    "and rebuilt it from brain/")
+    return Store(paths.db)
 
 
 def _default_opener(url: str) -> None:
@@ -173,17 +264,50 @@ def _default_opener(url: str) -> None:
         webbrowser.open(url)
 
 
+def _warnings(paths: Paths) -> list[str]:
+    """Quiet one-line notes for the UI (never popups): time zone, Fast Startup (Windows)."""
+    marker = read_marker(paths)
+    tz = tz_mismatch(marker) if marker else None
+    return ([tz] if tz else []) + winwatch.fast_startup_warnings()
+
+
+def _run_state(app: web.Application, recheck_interval: float) -> None:
+    """What run_server and the root watch share: the exit code (P8) and the stop event."""
+    app["exit_code"], app["stop"], app["recheck_interval"] = 0, asyncio.Event(), recheck_interval
+
+
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
-               claude_settings_path: Path | None = None) -> web.Application:
-    app = web.Application(middlewares=[local_only, errors])
-    paths.data.mkdir(parents=True, exist_ok=True)
+               claude_settings_path: Path | None = None, status: RootStatus | None = None,
+               recheck_interval: float = RECHECK_SECONDS) -> web.Application:
+    # The root is classified before anything touches it: the hub never creates a root. run_server
+    # passes the status it took the lock on, so both agree.
+    status = status or check_root(paths)
+    if status.state in UNAVAILABLE:
+        raise RootUnavailable(status)
+    readonly = status.state == "readonly"
+    if status.state in ("ok", "fresh"):
+        paths.data.mkdir(exist_ok=True)  # inside the existing root; never the root itself
+    app = web.Application(middlewares=[local_only, errors, readonly_guard] if readonly
+                          else [local_only, errors])
     startup_errors: list[str] = []
     settings = load_settings(paths, startup_errors)
-    store = _open_store(paths, startup_errors)
+    try:
+        store = _open_store(paths, startup_errors, readonly=readonly)
+    except SchemaTooNew as e:
+        raise RootUnavailable(RootStatus("newer", str(e))) from e
+    except sqlite3.Error as e:
+        if not readonly:
+            raise  # locked or can't be opened: run_server reports it; nothing was moved
+        raise RootUnavailable(RootStatus("readonly", f"{status.message} Its index {paths.db.name} "
+                                                     f"can't be read ({e}), so only capture works "
+                                                     "until then.")) from e
     repo = BrainRepo(paths.brain)
     app["sockets"], app["tasks"], app["background"] = set(), [], set()
     app["log_error"], app["start_workers"] = None, start_workers
     app["startup_errors"] = startup_errors
+    app["root_status"] = status  # as found at start (setup later turns a fresh root into ok)
+    app["warnings"] = _warnings(paths)
+    _run_state(app, recheck_interval)
 
     async def broadcast(type_: str, data: dict) -> None:
         extra = [("items.changed", {})] if type_ in ("filing.done", "filing.failed") else []
@@ -215,6 +339,32 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     if paths.web.is_dir():  # code-relative; never created under the data root
         app.router.add_static("/static/", paths.web)
     app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+    app.on_cleanup.append(on_cleanup)
+    return app
+
+
+async def _start_reduced(app: web.Application) -> None:
+    if app["root_status"].state != "newer":  # newer data never turns older while this code runs
+        app["tasks"] = [asyncio.create_task(_watch_root(app))]
+
+
+def create_reduced_app(paths: Paths, status: RootStatus, *,
+                       recheck_interval: float = RECHECK_SECONDS) -> web.Application:
+    """The hub when the full app can't run on the root (dual-boot design §6.5 item 2): the pages,
+    the drive banner, and capture into this OS's holding inbox. It never opens hub.db, never runs
+    git and never writes under the root. Same middleware as the full app."""
+    app = web.Application(middlewares=[local_only, errors])
+    app["paths"], app["root_status"] = paths, status
+    app["sockets"], app["tasks"], app["background"] = set(), [], set()
+    app["warnings"] = _warnings(paths)
+    app["port"] = load_settings(paths)["port"]  # run_server sets the bound one
+    app["opener"] = _default_opener
+    _run_state(app, recheck_interval)
+    add_reduced_routes(app)
+    if paths.web.is_dir():
+        app.router.add_static("/static/", paths.web)
+    app.on_startup.append(_start_reduced)
     app.on_shutdown.append(on_shutdown)
     app.on_cleanup.append(on_cleanup)
     return app

@@ -37,6 +37,8 @@ function stepFor(msg) {
 export async function render(container) {
   let server = {};
   try { server = await api.get('/api/settings'); } catch (_) { /* defaults below */ }
+  let os = null;  // labels this PC's folder column
+  try { os = (await api.get('/api/state')).os; } catch (_) { /* both columns stay unlabelled */ }
   const serverQuiet = Array.isArray(server.quiet_hours) ? server.quiet_hours : ['23:00', '08:00'];
   const saved = loadSaved();
   const st = saved
@@ -49,6 +51,7 @@ export async function render(container) {
   const save = () => persist(st);
   const editors = createMapEditors(st.map, {
     onChange: () => { save(); if (serverErrors.length) { serverErrors = []; showServerErrors(); } },
+    os,
   });
 
   const bar = el('ol', { class: 'wizard-steps', 'aria-label': 'Setup steps' });
@@ -74,7 +77,7 @@ export async function render(container) {
 
   const sections = [
     ['Areas are the top-level folders. The four defaults stay; add your own or rename any.', editors.areas.node],
-    ['Projects get their own folder. Mark the one that is your company, if any.', editors.projects.node],
+    ['Projects get their own folder. Mark the one that is your company, if any. Add the code folders on this PC; the other OS\'s column can wait until you are on it.', editors.projects.node],
     ['The courses you are taking at uni.', editors.courses.node],
     ['People you often write about, and the projects they belong to.', editors.people.node],
   ];

@@ -11,6 +11,9 @@ _SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _DEFAULT_AREAS = ("general", "projects", "uni", "personal")
 # Top-level folders the brain already uses. Only the area entries with the four default slugs may use those.
 _RESERVED = ("log", "_items", "people") + _DEFAULT_AREAS
+# A project's folders per OS (Plan decision P7): {"windows": [...], "linux": [...]}.
+OS_NAMES = ("windows", "linux")
+_WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 
 @dataclass
@@ -31,6 +34,44 @@ def default_map() -> BrainMap:
     return BrainMap(areas=[{"slug": s, "name": s.capitalize()} for s in _DEFAULT_AREAS])
 
 
+def path_os(folder) -> str | None:
+    """The OS a folder path belongs to, by its shape: a drive letter or UNC path is Windows, a
+    leading "/" is Linux. Anything else (relative, blank) belongs to neither and is ignored."""
+    if not isinstance(folder, str):
+        return None
+    if _WINDOWS_PATH.match(folder):
+        return "windows"
+    return "linux" if folder.startswith("/") else None
+
+
+def folders_for(project: dict, os_name: str) -> list[str]:
+    """A project's folders on one OS: its `os_folders` list for that OS, then the legacy `folders`
+    entries whose shape belongs to that OS (P7). Tolerant of a hand-edited map.json."""
+    per_os = project.get("os_folders")
+    own = per_os.get(os_name) if isinstance(per_os, dict) else None
+    out = [f for f in own if isinstance(f, str)] if isinstance(own, list) else []
+    legacy = project.get("folders")
+    if isinstance(legacy, list):
+        out += [f for f in legacy if path_os(f) == os_name]
+    return out
+
+
+def _os_folder_errors(slug, os_folders) -> list[str]:
+    if not isinstance(os_folders, dict):
+        return [f"project {slug!r}: os_folders must be an object with windows and linux lists"]
+    errors = []
+    for key, folders in os_folders.items():
+        if key not in OS_NAMES:
+            errors.append(f"project {slug!r}: os_folders has an unknown OS {key!r} (use windows or linux)")
+        elif not isinstance(folders, list) or not all(isinstance(f, str) for f in folders):
+            errors.append(f"project {slug!r}: os_folders.{key} must be a list of folder paths")
+        else:
+            # Catches a Windows path typed into the Linux column and the reverse.
+            errors += [f'project {slug!r}: "{f}" is not a {key} folder path (os_folders.{key})'
+                       for f in folders if path_os(f) != key]
+    return errors
+
+
 def validate_map(m: BrainMap) -> list[str]:
     errors: list[str] = []
     for label, nodes in (("area", m.areas), ("project", m.projects),
@@ -48,6 +89,9 @@ def validate_map(m: BrainMap) -> list[str]:
                 errors.append(f"{label} slug is reserved: {slug}")
             if not n.get("name"):
                 errors.append(f"{label} {slug!r} has no name")
+    for p in m.projects:
+        if "os_folders" in p:
+            errors += _os_folder_errors(p.get("slug", ""), p["os_folders"])
     if sum(1 for p in m.projects if p.get("is_company")) > 1:
         errors.append("at most one project can be the company")
     known = {p.get("slug") for p in m.projects}
@@ -77,8 +121,9 @@ def save_map(brain: Path, m: BrainMap) -> None:
         raise ValueError(errors)
     brain = Path(brain)
     brain.mkdir(parents=True, exist_ok=True)
-    (brain / "map.json").write_text(
-        json.dumps(_to_dict(m), indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    # LF always: both OSes write this file, and it must not flip between CRLF and LF in git.
+    with open(brain / "map.json", "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(_to_dict(m), indent=2, sort_keys=True, ensure_ascii=False))
 
 
 def ensure_folders(brain: Path, m: BrainMap) -> None:
@@ -97,7 +142,7 @@ def add_node(m: BrainMap, ntype: str, name: str, parent: str | None) -> BrainMap
     new = copy.deepcopy(m)
     slug = slugify(name)
     if ntype == "project":
-        target, node = new.projects, {"slug": slug, "name": name, "is_company": False, "folders": []}
+        target, node = new.projects, {"slug": slug, "name": name, "is_company": False, "os_folders": {}}
     elif ntype == "course":
         target, node = new.courses, {"slug": slug, "name": name}
     elif ntype == "person":
@@ -110,6 +155,23 @@ def add_node(m: BrainMap, ntype: str, name: str, parent: str | None) -> BrainMap
     if any(n["slug"] == slug for n in target):
         raise ValueError(f"duplicate {ntype} slug: {slug}")
     target.append(node)
+    errors = validate_map(new)
+    if errors:
+        raise ValueError(errors)
+    return new
+
+
+def add_os_folder(m: BrainMap, slug: str, os_name: str, folder: str) -> BrainMap:
+    """Return a new map with `folder` added to project `slug`'s folders on `os_name`."""
+    new = copy.deepcopy(m)
+    project = next((p for p in new.projects if p.get("slug") == slug), None)
+    if project is None:
+        raise ValueError(f"unknown project: {slug}")
+    per_os = project.setdefault("os_folders", {})
+    if not isinstance(per_os, dict) or not isinstance(per_os.setdefault(os_name, []), list):
+        raise ValueError(_os_folder_errors(slug, per_os))
+    if folder not in per_os[os_name]:
+        per_os[os_name].append(folder)
     errors = validate_map(new)
     if errors:
         raise ValueError(errors)

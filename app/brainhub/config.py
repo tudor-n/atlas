@@ -115,6 +115,10 @@ def validate_setting(key: str, value) -> None:
             raise ValueError(f"{key} must be between {lo} and {hi}")
     if isinstance(value, str) and not value.strip() and (key == "claude_path" or key.endswith("_model")):
         raise ValueError(f"{key} must not be empty")
+    # settings.json is shared by both OSes, and a path only works on one of them (P6).
+    if key == "claude_path" and ("/" in value or "\\" in value):
+        raise ValueError("claude_path must be a command name (like claude), not a path; "
+                         "each OS finds it on its own PATH")
 
 
 def load_settings(paths: Paths, problems: list | None = None) -> dict:
@@ -158,7 +162,7 @@ def save_settings(paths: Paths, patch: dict) -> dict:
     settings = load_settings(paths)
     settings.update(patch)
     target = paths.settings_file
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(exist_ok=True)  # data/ only, never the root (it may be gone)
     tmp = target.with_name(target.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(settings, indent=2))

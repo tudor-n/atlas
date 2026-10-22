@@ -3,6 +3,7 @@
 import * as api from '../api.js';
 import { el, clear, fmtWhen } from '../dom.js';
 import { confirmCard } from '../components/confirm-card.js';
+import { readonlyReason } from '../drive.js';
 
 const openCards = new Set();   // entry ids the owner expanded; survives re-renders
 let reviewOpen = true;
@@ -29,6 +30,8 @@ export async function render(container, _params, query) {
   let loading = false;
   let again = false;
   let dirty = false;
+  let readonly = '';       // read-only root: confirm and tick are disabled, with this as their title
+  const blocked = () => readonly;
 
   const notice = query && NOTICES[query.get('notice')];
   if (notice) container.appendChild(el('p', { class: 'banner', role: 'status' }, notice));
@@ -46,8 +49,10 @@ export async function render(container, _params, query) {
     if (typing()) { dirty = true; return; }  // don't wipe what the owner is typing
     loading = true;
     try {
-      const [today, proposals, failed] = await Promise.all([
-        api.get('/api/today'), api.get('/api/proposals'), api.get('/api/filings?status=failed')]);
+      const [today, proposals, failed, st] = await Promise.all([
+        api.get('/api/today'), api.get('/api/proposals'), api.get('/api/filings?status=failed'),
+        api.get('/api/state')]);
+      readonly = readonlyReason(st.drive);
       if (!dead) draw({ today, proposals, failed });
     } catch (e) {
       if (!dead) { clear(root).appendChild(el('p', { class: 'error', role: 'alert' }, `Couldn't load Today: ${e.message}`)); }
@@ -104,7 +109,7 @@ export async function render(container, _params, query) {
     let card = null;
     const mount = () => {
       if (card) return;
-      card = confirmCard(entryId, { entryText: text });
+      card = confirmCard(entryId, { entryText: text, blocked });
       destroyers.push(() => card.destroy());
       d.appendChild(card);
     };
@@ -159,9 +164,10 @@ export async function render(container, _params, query) {
     const meta = [it.area, it.project, it.person].filter(Boolean).join(' / ');
     const when = [it.due ? `due ${fmtWhen(it.due)}` : '', it.remind_at ? `remind ${fmtWhen(it.remind_at)}` : '',
       it.kind === 'waiting' ? `waiting since ${String(it.created).slice(0, 10)}` : ''].filter(Boolean).join(' · ');
+    const reason = blocked();
     return el('li', { class: 'item' },
-      el('button', { class: 'icon', type: 'button', 'aria-label': `Done: ${it.text}`, title: 'Done',
-        onclick: () => doIt({ status: 'done' }) }, '✓'),
+      el('button', { class: 'icon', type: 'button', 'aria-label': `Done: ${it.text}`, title: reason || 'Done',
+        disabled: reason ? true : null, onclick: () => doIt({ status: 'done' }) }, '✓'),
       el('div', { class: 'item-main' },
         el('div', {}, it.text, nudge ? [' ', el('span', { class: 'nudge' }, 'nudge?')] : null),
         el('div', { class: 'meta' }, [meta, when].filter(Boolean).join(' · ')),

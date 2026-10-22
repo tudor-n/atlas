@@ -1,7 +1,7 @@
 // Desktop widget page: collapsed synopsis bar, expanded capture + tiles + popups (design §7.1).
 import { get, post, onEvent } from './api.js';
 import { el, clear } from './dom.js';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, loadDraft, saveDraft } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, loadDraft, saveDraft } from './widget-model.js';
 
 const WIDTH = 520;
 const OFFLINE = 'BrainHub offline · retrying';
@@ -45,9 +45,10 @@ const bar = el('div', { class: 'bar', 'data-tauri-drag-region': true }, grip, do
 
 const capture = el('input', { class: 'capture', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
 const captureStatus = el('div', { class: 'capture-status', role: 'status' });
+const notes = el('div', { class: 'notes', hidden: true });  // quiet warnings (time zone, Fast Startup)
 const grid = el('div', { class: 'grid' });
 const popup = el('div', { class: 'popup', hidden: true });
-const body = el('div', { class: 'body', hidden: true }, capture, captureStatus, grid, popup);
+const body = el('div', { class: 'body', hidden: true }, capture, captureStatus, notes, grid, popup);
 root.appendChild(el('div', { class: 'panel' }, bar, body));
 
 function setExpanded(on) {
@@ -85,10 +86,11 @@ async function onCaptureKey(ev) {
   if (!text.trim() || saving) return;
   saving = true;
   try {
-    await post('/api/entries', { text, source: 'widget' });
+    const res = await post('/api/entries', { text, source: 'widget' });
     if (capture.value === text) capture.value = '';
     saveDraft(draftStore(), capture.value); // cleared, or whatever was typed during the save
-    showStatus('Saved', false);
+    showStatus(res && res.held ? 'Saved · held on this OS' : 'Saved', false);
+    if (res && res.held) scheduleRefresh(); // the banner's held count
   } catch (e) {
     showStatus(e.message || 'Could not save', true);
   } finally {
@@ -101,10 +103,14 @@ function renderBar() {
   synopsis.classList.toggle('offline', offline);
   if (offline) {
     synopsis.textContent = OFFLINE;
+    synopsis.classList.remove('drive');
+    synopsis.title = '';
     dot.hidden = true;
   } else if (data) {
-    synopsis.textContent = data.synopsis;
-    dot.hidden = !data.attention;
+    synopsis.textContent = synopsisText(data);
+    synopsis.title = data.drive ? synopsis.textContent : '';  // the banner is long: all of it on hover
+    synopsis.classList.toggle('drive', !!data.drive);
+    dot.hidden = !(data.attention || data.drive);
   }
 }
 
@@ -153,6 +159,9 @@ function focusKey() {
 function renderBody() {
   if (!expanded || !data) return;
   const key = focusKey();
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  notes.textContent = warnings.join(' ');
+  notes.hidden = !warnings.length;
   clear(grid);
   for (const name of data.tiles) {
     if (!TILE_LABEL[name]) continue;

@@ -41,6 +41,19 @@ _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _DATETIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}")
 _ENTRY_ID = re.compile(r"e-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
+# Names Windows can't hold (dual-boot design §6.3). Device names count with any extension and in
+# any case; Windows also reserves COM and LPT with 0 or a superscript digit, and git for Windows
+# refuses CONIN$ and CONOUT$.
+_WIN_BAD_CHARS = frozenset('<>:"|?*\\')
+_WIN_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$",
+                          *(f"{p}{d}" for p in ("com", "lpt") for d in "0123456789¹²³")})
+INVALID_ON_WINDOWS = "filed paths not valid on Windows: "
+
+
+def _case_key(name: str) -> str:
+    """NTFS compares names by uppercasing each character on its own (so ı, ſ and ς match I, S
+    and Σ there), unlike str.lower()."""
+    return "".join(c.upper() if len(c.upper()) == 1 else c for c in name)
 
 
 # -- prompt ------------------------------------------------------------------
@@ -178,6 +191,47 @@ def protected_tops(changed: list[str]) -> list[str]:
     .claude, .obsidian...)."""
     tops = {p.split("/")[0] for p in changed}
     return sorted(t for t in tops if t.lower() in PROTECTED or t.startswith("."))
+
+
+def _windows_name_problem(name: str) -> str | None:
+    """Why a Windows checkout can't hold this one path component, or None."""
+    for c in name:
+        if c in _WIN_BAD_CHARS or ord(c) < 32:
+            return f"character {c!r}"
+    if name.endswith((".", " ")):
+        return "ends with a dot or space"
+    if name.split(".", 1)[0].rstrip(" ").lower() in _WIN_DEVICES:
+        return f"reserved name {name!r}"
+    return None
+
+
+def invalid_windows_paths(changed: list[str], existing: list[str]) -> list[str]:
+    """"<path> (<why>)" for each of `changed` (the paths a filing adds or renames to) that a
+    Windows checkout can't hold: a component with a reserved or control character, a trailing
+    dot or space, or a device name (con, nul.md, LPT1.txt...); or a name equal, in another case,
+    to a different name among `existing`, the other changed paths, or the folders of either.
+    Windows git would see such a file as deleted, and its next "owner edits" commit would record
+    the deletion. A name already in `existing` exactly is never a clash."""
+    def prefixes(p: str) -> list[str]:
+        parts = p.split("/")
+        return ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+
+    known = {q for p in existing for q in prefixes(p)}
+    by_key: dict[str, set[str]] = {}
+    for q in known | {q for p in changed for q in prefixes(p)}:
+        by_key.setdefault(_case_key(q), set()).add(q)
+    bad = []
+    for p in changed:
+        why = next((w for w in map(_windows_name_problem, p.split("/")) if w), None)
+        if why is None:
+            for q in prefixes(p):
+                others = by_key[_case_key(q)] - {q}
+                if others and q not in known:
+                    why = f"same name as {min(others)} in another case"
+                    break
+        if why:
+            bad.append(f"{p} ({why})")
+    return bad
 
 
 def _prepare_worktree(root: Path, m: BrainMap) -> None:
@@ -330,6 +384,10 @@ class FilingWorker:
             # file changes: "file <id>:" in history is how a rebuilt index knows it was filed.
             sha = await t(wt.commit_all, f"file {entry_id}: {synopsis[:60]}", True)
             if sha:
+                # A name Windows can't hold never reaches main: the filing fails visibly instead.
+                bad = invalid_windows_paths(await t(wt.new_paths, sha), await t(self.repo.tracked_paths))
+                if bad:
+                    raise RuntimeError(INVALID_ON_WINDOWS + ", ".join(bad))
                 new = await t(self.repo.cherry_pick, sha)
                 if new is None:
                     raise RuntimeError("conflict with concurrent edits — retry")

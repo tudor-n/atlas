@@ -4,10 +4,17 @@ import pytest
 
 from brainhub.claude_runner import ClaudeError, ClaudeRunner, build_args, child_env
 
+from tests.fakes import fake_cli, kill_pid_file, pid_gone
+
 
 def test_child_env_strips_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
     assert "ANTHROPIC_API_KEY" not in child_env()
+
+
+def test_child_env_disables_auto_memory(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", raising=False)
+    assert child_env()["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
 
 
 def test_build_args_json():
@@ -30,16 +37,24 @@ async def test_missing_cli_raises(tmp_path):
                          allowed_tools=[], json_schema={}, max_turns=1, timeout_s=5)
 
 
+def test_claude_found_in_local_bin_fallback(tmp_path, monkeypatch):
+    # The native installer puts claude in ~/.local/bin, which a hub started at login may not
+    # have on PATH.
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert ClaudeRunner("claude").claude_path is None
+    exe = tmp_path / ".local" / "bin" / ("claude.exe" if sys.platform == "win32" else "claude")
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert ClaudeRunner("claude").claude_path == str(exe)
+
+
 # Live-process tests against a stand-in "claude" (a Python script), no real CLI needed.
 import sys
 
 
 def _fake_cli(tmp_path, body):
-    script = tmp_path / "fake_claude.py"
-    script.write_text(body, encoding="utf-8")
-    bat = tmp_path / "fake_claude.bat"
-    bat.write_text('@"%s" "%s" %%*\r\n' % (sys.executable, script), encoding="utf-8")
-    return str(bat)
+    return fake_cli(tmp_path, body)
 
 
 _KW = dict(model="haiku", allowed_tools=[], max_turns=1)
@@ -185,3 +200,22 @@ async def test_children_get_no_console_window(tmp_path, monkeypatch):
                          json_schema={}, timeout_s=1, **_KW)
     assert [Path(c[0]).name.lower() for c in calls] == ["fake_claude.bat", "taskkill"]
     assert all(flags & subprocess.CREATE_NO_WINDOW for _, flags in calls), calls
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups (Windows kills the tree with taskkill /T)")
+async def test_timeout_kills_process_group(tmp_path):
+    """A run cut off by its timeout takes its tool children with it (dual-boot design §6.5)."""
+    pid_file = tmp_path / "child.pid"
+    body = ("import subprocess, time\n"
+            "child = subprocess.Popen(['sleep', '30'])\n"
+            f"with open({str(pid_file)!r}, 'w') as f:\n"
+            "    f.write(str(child.pid))\n"
+            "time.sleep(60)\n")
+    r = ClaudeRunner(_fake_cli(tmp_path, body))
+    try:
+        with pytest.raises(ClaudeError, match="timed out"):
+            await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                             json_schema={}, timeout_s=2, **_KW)
+        assert pid_gone(int(pid_file.read_text()), timeout=3)
+    finally:
+        kill_pid_file(pid_file)

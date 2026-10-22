@@ -43,6 +43,21 @@ def test_command_and_model_must_not_be_empty(paths, key):
         save_settings(paths, {key: "  "})
 
 
+def test_claude_path_must_be_bare(paths):
+    import json
+    assert save_settings(paths, {"claude_path": "claude"})["claude_path"] == "claude"
+    for bad in ("C:\\x\\claude.exe", "/usr/bin/claude", "bin/claude"):
+        with pytest.raises(ValueError, match="must be a command name"):
+            save_settings(paths, {"claude_path": bad})
+    # A path stored by an older hub (it is shared by both OSes) falls back to the bare default.
+    paths.settings_file.write_text(json.dumps({"claude_path": "C:\\Users\\o\\.local\\bin\\claude.exe",
+                                               "nudge_days": 5}), encoding="utf-8")
+    problems = []
+    s = load_settings(paths, problems)
+    assert s["claude_path"] == "claude" and s["nudge_days"] == 5
+    assert len(problems) == 1 and "claude_path" in problems[0] and "command name" in problems[0]
+
+
 def test_corrupt_file_falls_back_to_defaults_and_is_not_rewritten(paths):
     paths.settings_file.write_text("{oops", encoding="utf-8")
     problems = []

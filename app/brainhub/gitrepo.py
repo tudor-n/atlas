@@ -16,6 +16,9 @@ PUSH_TIMEOUT_S = 120
 # has a hidden console that git inherits; without this flag a console-less parent would make git
 # pop up a visible one (Ruling 13).
 _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+# Lock files a crash or power cut can leave in .git (plus any refs/**/*.lock); each one blocks
+# the git commands that need it until it is removed (dual-boot design §6.3).
+STALE_LOCKS = ("index.lock", "HEAD.lock", "config.lock", "packed-refs.lock")
 
 
 def redact(text: str) -> str:
@@ -38,12 +41,23 @@ class BrainRepo:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._lock = _lock_for(self.path)
+        # Every git call names this repo as safe: files the other OS created may have another
+        # owner, and git would refuse them as "dubious ownership" (dual-boot design §5.4). git
+        # wants / separators here on Windows too. A worktree is checked as its own path.
+        self._safe = "safe.directory=" + str(self.path.resolve()).replace("\\", "/")
+        # Names are case-sensitive on POSIX and not on Windows, whatever the shared .git/config
+        # says. A brain made on Windows has core.ignorecase=true: git on Linux would then not see
+        # an agent's robot.md next to Robot.md (the filing would drop it quietly instead of failing
+        # on the clash), and a case-only rename made on Windows would be committed as a deletion.
+        # A brain made on Linux has no core.ignorecase, and Windows git would compare case on NTFS.
+        self._config = ["-c", self._safe, "-c", f"core.ignorecase={str(sys.platform == 'win32').lower()}"]
 
     # -- plumbing ----------------------------------------------------------
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         """Run git without taking the lock (caller must hold it)."""
         return subprocess.run(
-            ["git", *args], cwd=self.path, capture_output=True, text=True, encoding="utf-8", **_NO_WINDOW
+            ["git", *self._config, *args], cwd=self.path, capture_output=True, text=True,
+            encoding="utf-8", **_NO_WINDOW
         )
 
     def _git(self, *args: str) -> subprocess.CompletedProcess:
@@ -90,6 +104,26 @@ class BrainRepo:
             self._check(self._run("config", "user.name", "BrainHub"), "config")
             self._check(self._run("config", "user.email", "brainhub@localhost"), "config")
             self._check(self._run("config", "core.autocrlf", "false"), "config")
+            # ntfs3 reports execute bits, so a repo made on Linux would otherwise see mode changes.
+            self._check(self._run("config", "core.filemode", "false"), "config")
+
+    def clear_stale_locks(self) -> list[str]:
+        """Delete the git lock files a crash or power cut left behind (STALE_LOCKS and any
+        refs/**/*.lock) and return them, repo-relative with / separators. A leftover
+        refs/heads/main.lock would otherwise block every commit. Only safe while no git process
+        runs on this repo: the hub calls it once at startup, before any of its git calls."""
+        git = self.path / ".git"
+        if not git.is_dir():
+            return []
+        found = [git / name for name in STALE_LOCKS]
+        if (git / "refs").is_dir():
+            found += sorted((git / "refs").rglob("*.lock"))
+        removed = []
+        for f in found:
+            if f.is_file():
+                f.unlink()
+                removed.append(f.relative_to(self.path).as_posix())
+        return removed
 
     def ensure_gitattributes(self) -> bool:
         """Write brain/.gitattributes (`* -text`) if it is missing. True if it was created;
@@ -200,10 +234,12 @@ class BrainRepo:
         The error text has credentials redacted before it is shortened."""
         self._ensure_repo()
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        # SSH remotes: never a passphrase prompt or askpass dialog (design §6.3).
+        env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
         try:
             r = subprocess.run(
-                ["git", "-c", "credential.interactive=never", "push", "--end-of-options",
-                 remote_url, "HEAD:refs/heads/main"],
+                ["git", "-c", "credential.interactive=never", "-c", self._safe, "push",
+                 "--end-of-options", remote_url, "HEAD:refs/heads/main"],
                 cwd=self.path, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 env=env, stdin=subprocess.DEVNULL, timeout=timeout, **_NO_WINDOW)
         except subprocess.TimeoutExpired:
@@ -212,6 +248,7 @@ class BrainRepo:
 
     # -- worktrees / cherry-pick ------------------------------------------
     def worktree_add(self, path: Path) -> "BrainRepo":
+        """A detached worktree at HEAD (its git calls use this OS's case rule, see __init__)."""
         path = Path(path).resolve()
         r = self._git("worktree", "add", "--detach", str(path), "HEAD")
         self._check(r, "worktree add")
@@ -229,7 +266,9 @@ class BrainRepo:
                 line.startswith("worktree ") and Path(line[9:]).resolve() == path for line in listing
             )
             if registered:
-                self._run("worktree", "remove", "--force", str(path))
+                # --force twice: a power cut during `worktree add` leaves it locked
+                # ("initializing"), and a single --force (or prune) skips locked worktrees.
+                self._run("worktree", "remove", "--force", "--force", str(path))
                 if path.exists():  # Windows may leave residue after git removed the registration
                     shutil.rmtree(path, ignore_errors=True)
             self._run("worktree", "prune")
@@ -250,3 +289,15 @@ class BrainRepo:
             self._git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", sha),
             "diff-tree")  # --root: the first commit (setup) lists its files too
         return [p.replace("\\", "/") for p in r.stdout.split("\0") if p]
+
+    def new_paths(self, sha: str) -> list[str]:
+        """The paths `sha` adds, copies or renames to (a rename lists its new name only)."""
+        r = self._check(
+            self._git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "-M",
+                      "--diff-filter=ACR", sha), "diff-tree")
+        return [p for p in r.stdout.split("\0") if p]
+
+    def tracked_paths(self) -> list[str]:
+        """Every path in the index (`git ls-files`), verbatim."""
+        r = self._check(self._git("ls-files", "-z"), "ls-files")
+        return [p for p in r.stdout.split("\0") if p]

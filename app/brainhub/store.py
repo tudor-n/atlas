@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 _ITEM_FIELDS = [f.name for f in fields(Item)]
 _SKIP_DIRS = ("log", "_items")
 _HEADING = re.compile(r"^#+\s+(.*?)\s*$")
+BUSY_TIMEOUT = 5.0  # seconds a statement waits for another connection's lock before "database is locked"
 
 
 def is_note_path(rel: str) -> bool:
@@ -30,6 +31,33 @@ def is_note_path(rel: str) -> bool:
     parts = rel.replace("\\", "/").split("/")
     return (rel.lower().endswith(".md") and parts[0].lower() not in _SKIP_DIRS
             and not any(p.startswith(".") for p in parts))
+
+
+def _migrate_2(db: sqlite3.Connection) -> None:
+    """Agents rows record the OS and the boot they were seen in (dual-boot design §6.6). A db
+    made before the agents table existed gets it, with both columns, from _SCHEMA."""
+    cols = {r[1] for r in db.execute("PRAGMA table_info(agents)")}
+    for col in ("os", "boot"):
+        if cols and col not in cols:
+            db.execute(f"ALTER TABLE agents ADD COLUMN {col} TEXT")
+
+
+# The schema version lives in PRAGMA user_version (dual-boot design §5.2). _SCHEMA is always the
+# latest schema; MIGRATIONS[n] moves a version n-1 database to version n.
+SCHEMA_VERSION = 2
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_2}
+
+
+class SchemaTooNew(Exception):
+    """hub.db was written by a newer BrainHub. It is never migrated, rebuilt or moved aside: code
+    meeting data newer than it understands refuses it (a dev copy pointed at the real root, or an
+    OS whose runtime is behind the other's)."""
+
+    def __init__(self, found: int, known: int):
+        super().__init__(f"hub.db was written by a newer BrainHub (schema {found}; this copy knows up "
+                         f"to {known}). Update BrainHub on this OS; nothing was changed.")
+        self.found, self.known = found, known
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries(
@@ -49,7 +77,7 @@ CREATE TABLE IF NOT EXISTS agents(
     session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL, project_name TEXT NOT NULL,
     mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
     where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
-    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT);
+    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT, os TEXT, boot TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     kind UNINDEXED, ref UNINDEXED, date UNINDEXED, body,
     tokenize='unicode61 remove_diacritics 2');
@@ -79,9 +107,18 @@ def _item(r) -> Item:
 
 
 class Store:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, readonly: bool = False):
+        """readonly: the root isn't writable (dual-boot design §6.5). The file is opened immutable,
+        so SQLite takes no lock and writes nothing, not even a journal or the -shm file. A -wal left
+        by a crash is not read then: the view is the one at the last checkpoint."""
         self._lock = threading.RLock()
-        self._db = sqlite3.connect(str(db_path), check_same_thread=False)
+        self.readonly = readonly
+        if readonly:
+            uri = f"{Path(db_path).resolve().as_uri()}?mode=ro&immutable=1"
+            self._db = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            self._db.row_factory = sqlite3.Row
+            return
+        self._db = sqlite3.connect(str(db_path), timeout=BUSY_TIMEOUT, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         try:
             self._db.execute("PRAGMA journal_mode=WAL")
@@ -90,9 +127,51 @@ class Store:
             raise
 
     def init_schema(self) -> None:
+        """Create, migrate or check the schema. user_version 0 is a new database, or one made
+        before versioning (whose tables are version 1); lower versions are migrated in order;
+        a higher one raises SchemaTooNew before anything is written. A read-only store is only
+        checked: one that would need creating or migrating can't be read, so it raises
+        sqlite3.OperationalError (the hub then serves the reduced app)."""
         with self._lock:
-            self._db.executescript(_SCHEMA)
+            version = self._db.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise SchemaTooNew(version, SCHEMA_VERSION)
+            if version == 0 and self._db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
+                version = 1  # made before versioning: the version 1 tables
+            if self.readonly:
+                if version < SCHEMA_VERSION:
+                    raise sqlite3.OperationalError(
+                        f"hub.db has schema {version} and this BrainHub reads {SCHEMA_VERSION}; it is "
+                        "updated at the first start on a writable root")
+                return
+            if 0 < version < SCHEMA_VERSION:
+                self._migrate(version)
+            self._db.executescript(_SCHEMA)  # IF NOT EXISTS: fills a new db, keeps existing tables
+            self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             self._db.commit()
+
+    def _migrate(self, version: int) -> None:
+        """Run MIGRATIONS[version+1..SCHEMA_VERSION] and record the new version, all or nothing."""
+        self._db.execute("BEGIN")
+        try:
+            for n in range(version + 1, SCHEMA_VERSION + 1):
+                MIGRATIONS[n](self._db)
+            self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            self._db.commit()
+        except BaseException:
+            self._db.rollback()
+            raise
+
+    def schema_version(self) -> int:
+        with self._lock:
+            return self._db.execute("PRAGMA user_version").fetchone()[0]
+
+    def quick_check(self) -> list[str]:
+        """SQLite's own quick integrity check: [] when the file is sound, else what it found."""
+        with self._lock:
+            rows = [r[0] for r in self._db.execute("PRAGMA quick_check").fetchall()]
+        return [] if rows == ["ok"] else rows
 
     def close(self) -> None:
         with self._lock:
@@ -288,7 +367,7 @@ class Store:
     # agents (live Claude Code sessions, fed by hook events)
     _AGENT_COLS = ("session_id", "cwd", "project", "project_name", "mapped", "branch", "title",
                    "part_override", "entrypoint", "where_override", "status", "note",
-                   "started_at", "status_since", "last_event_at", "ended_at")
+                   "started_at", "status_since", "last_event_at", "ended_at", "os", "boot")
 
     @staticmethod
     def _agent(r) -> dict:
@@ -314,8 +393,18 @@ class Store:
         return [self._agent(r) for r in rows]
 
     def delete_agents(self, ids: list[str]) -> None:
+        if self.readonly:  # pruning runs on reads too; on a read-only root the rows wait for a writable one
+            return
         with self._lock, self._db:
             self._db.executemany("DELETE FROM agents WHERE session_id=?", [(i,) for i in ids])
+
+    def end_agents_not_of_boot(self, boot: str, stamp: str) -> int:
+        """Set ended_at=stamp on every open row seen in another boot (or before rows recorded
+        one); the number of rows ended."""
+        with self._lock, self._db:
+            return self._db.execute(
+                "UPDATE agents SET ended_at=? WHERE ended_at IS NULL AND (boot IS NULL OR boot<>?)",
+                (stamp, boot)).rowcount
 
     # fts
     def index_entry(self, e: Entry) -> None:

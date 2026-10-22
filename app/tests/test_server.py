@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 
 import pytest
@@ -46,6 +47,8 @@ async def test_setup_then_state(client, app):
     state = await (await client.get("/api/state")).json()
     assert state["setup_done"] is False and state["log_error"] is None
     assert state["brain_path"] == str(app["paths"].brain)
+    assert state["os"] == ("windows" if sys.platform == "win32" else "linux")
+    assert state["warnings"] == [] and app["root_status"].state == "fresh"
     r = await client.post("/api/setup", json={"map": MAP, "backup_remote": None})
     assert r.status == 200
     assert (await (await client.get("/api/state")).json())["setup_done"] is True
@@ -296,6 +299,42 @@ async def test_stale_index_lock_is_removed_at_startup(aiohttp_client, app_paths)
     assert not lock.exists()
     assert any("index.lock" in e for e in state["startup_error"])
     assert not repo.is_dirty()  # the owner-edits commit after it worked
+
+
+async def test_stale_ref_lock_is_removed_at_startup(aiohttp_client, app_paths):
+    """A hard power-off can leave refs/heads/main.lock, which would block every commit."""
+    repo = _setup_brain(app_paths)
+    lock = app_paths.brain / ".git" / "refs" / "heads" / "main.lock"
+    lock.write_text("", encoding="utf-8")
+    (app_paths.brain / "general" / "mine.md").parent.mkdir(parents=True, exist_ok=True)
+    (app_paths.brain / "general" / "mine.md").write_text("owner note", encoding="utf-8")
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert not lock.exists()
+    assert any("brain/.git/refs/heads/main.lock" in e for e in state["startup_error"])
+    assert not repo.is_dirty()
+
+
+async def test_ghost_rows_ended_at_start(aiohttp_client, app_paths):
+    """Sessions seen before this boot (of either OS) can't be running now: they are marked ended
+    at startup instead of lingering as ghost "running" rows (dual-boot design §6.6)."""
+    from brainhub import osdirs
+    from brainhub.store import Store
+    _setup_brain(app_paths)
+    stamp = datetime.now().replace(microsecond=0).isoformat()
+    row = {"cwd": "/w", "project": "w", "project_name": "w", "mapped": False, "branch": None,
+           "title": None, "part_override": None, "entrypoint": "cli", "where_override": None,
+           "status": "running", "note": None, "started_at": stamp, "status_since": stamp,
+           "last_event_at": stamp, "ended_at": None}
+    s = Store(app_paths.db)
+    s.init_schema()
+    s.upsert_agent({**row, "session_id": "ghost", "os": "windows", "boot": "old"})
+    s.upsert_agent({**row, "session_id": "live", "os": osdirs.os_name(), "boot": osdirs.boot_id()})
+    s.close()
+    app, c, state = await _started(aiohttp_client, app_paths)
+    assert app["store"].get_agent("ghost")["ended_at"] is not None
+    assert app["store"].get_agent("live")["ended_at"] is None
+    rows = {r["session_id"]: r for r in await (await c.get("/api/agents")).json()}
+    assert rows["ghost"]["ended"] and rows["ghost"]["os"] == "windows" and not rows["live"]["ended"]
 
 
 async def test_corrupt_settings_uses_defaults_keeps_file_and_capture_works(aiohttp_client, app_paths):

@@ -7,6 +7,17 @@ export const DEFAULT_AREAS = ['general', 'projects', 'uni', 'personal'];
 // Top-level brain folders (mirrors brainmap._RESERVED). Only the four default areas may use the default slugs.
 const RESERVED = ['log', '_items', 'people', ...DEFAULT_AREAS];
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+// A project's folders per OS (Plan decision P7): os_folders = {windows: [...], linux: [...]}.
+const OS_NAMES = ['windows', 'linux'];
+const OS_LABEL = { windows: 'Windows', linux: 'Linux' };
+const OS_EXAMPLE = { windows: 'D:\\RobotArmControl', linux: '/home/you/dev/RobotArmControl' };
+
+// Same rules as brainmap.path_os: a drive letter or UNC path is Windows, a leading "/" is Linux, else null.
+export function pathOs(folder) {
+  if (typeof folder !== 'string') return null;
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(folder)) return 'windows';
+  return folder.startsWith('/') ? 'linux' : null;
+}
 
 // Same rules as brainmap.slugify: NFKD, drop combining marks, lowercase, non-alphanumeric runs to "-", trimmed.
 export function slugify(name) {
@@ -28,8 +39,22 @@ export function normalizeMap(raw) {
   const nodes = (v) => (Array.isArray(v) ? v.filter((n) => n && typeof n === 'object' && !Array.isArray(n)) : []);
   const strs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
   const base = (n) => ({ ...n, slug: typeof n.slug === 'string' ? n.slug : '', name: typeof n.name === 'string' ? n.name : '' });
+  // Legacy `folders` entries move to the column their shape belongs to, and `folders` is dropped: the
+  // editor saves os_folders only. An entry of no known shape goes under Windows (maps from before dual
+  // boot were made there), where validateMap flags it rather than it vanishing.
+  const osFolders = (n) => {
+    const per = n.os_folders && typeof n.os_folders === 'object' ? n.os_folders : {};
+    const out = Object.fromEntries(OS_NAMES.map((os) => [os, strs(per[os])]));
+    for (const f of strs(n.folders)) out[pathOs(f) || 'windows'].push(f);
+    for (const os of OS_NAMES) out[os] = [...new Set(out[os])];
+    return out;
+  };
   if (Array.isArray(raw.areas)) m.areas = nodes(raw.areas).map(base);
-  m.projects = nodes(raw.projects).map((n) => ({ ...base(n), is_company: n.is_company === true, folders: strs(n.folders) }));
+  m.projects = nodes(raw.projects).map((n) => {
+    const p = { ...base(n), is_company: n.is_company === true, os_folders: osFolders(n) };
+    delete p.folders;
+    return p;
+  });
   m.courses = nodes(raw.courses).map(base);
   m.people = nodes(raw.people).map((n) => ({ ...base(n), projects: strs(n.projects) }));
   return m;
@@ -50,6 +75,18 @@ export function validateMap(m) {
       if (!String(n.name || '').trim()) out[key].push(`The ${label} "${slug}" needs a name.`);
       if (RESERVED.includes(slug) && !(key === 'areas' && DEFAULT_AREAS.includes(slug))) {
         out[key].push(`${who}: "${slug}" is reserved. Pick another folder name.`);
+      }
+    }
+  }
+  for (const p of m.projects) {
+    const who = p.name || p.slug || 'a new project';
+    for (const os of OS_NAMES) {
+      for (const f of (p.os_folders && p.os_folders[os]) || []) {
+        const actual = pathOs(f);
+        if (actual === os) continue;
+        out.projects.push(actual
+          ? `${who}: "${f}" is a ${OS_LABEL[actual]} folder. Move it to Folders on ${OS_LABEL[actual]}.`
+          : `${who}: "${f}" isn't a full ${OS_LABEL[os]} folder path (like ${OS_EXAMPLE[os]}).`);
       }
     }
   }
@@ -151,10 +188,11 @@ function nameSlug(item, { slugLocked, slugChanged, changed }) {
   return [field('Name', nameInput, 'grow'), field('Folder name', slugInput, 'slug')];
 }
 
-// createMapEditors(map, {onChange, isExisting}) -> {areas, projects, courses, people, validate, validateAndShow}
+// createMapEditors(map, {onChange, isExisting, os}) -> {areas, projects, courses, people, validate, validateAndShow}
 // Each editor has {node, refresh, setErrors}. onChange fires after every edit (callers persist or clear errors).
 // isExisting(node) is true for nodes already saved on the server (Settings): their slug is read-only.
-export function createMapEditors(map, { onChange, isExisting = () => false } = {}) {
+// os is the hub's OS (state.os): its folder column is labelled "(this PC)".
+export function createMapEditors(map, { onChange, isExisting = () => false, os = null } = {}) {
   let live = false;  // show errors while typing only after a first failed Next/Save
   const editors = {};
 
@@ -175,7 +213,7 @@ export function createMapEditors(map, { onChange, isExisting = () => false } = {
   const projectsChanged = () => { editors.people.refresh(); changed(); };
   editors.projects = rowsEditor({
     map, key: 'projects', label: 'project', addText: 'Add a project', changed: projectsChanged,
-    blank: () => ({ slug: '', name: '', is_company: false, folders: [] }),
+    blank: () => ({ slug: '', name: '', is_company: false, os_folders: { windows: [], linux: [] } }),
     onRemove: (p) => dropProjectRefs(map, p.slug),
     makeRow: (p) => {
       const company = el('input', { type: 'checkbox', checked: p.is_company === true,
@@ -185,12 +223,21 @@ export function createMapEditors(map, { onChange, isExisting = () => false } = {
           editors.projects.refresh();
           changed();
         } });
-      const folders = el('textarea', { rows: 2, spellcheck: 'false', value: (p.folders || []).join('\n'),
-        oninput: () => { p.folders = folders.value.split('\n').map((s) => s.trim()).filter(Boolean); changed(); } });
+      // One column per OS; each OS matches sessions against its own column only.
+      const folders = (col) => {
+        const box = el('textarea', { rows: 2, spellcheck: 'false', value: ((p.os_folders && p.os_folders[col]) || []).join('\n'),
+          placeholder: `Optional, one per line, like ${OS_EXAMPLE[col]}`,
+          oninput: () => {
+            p.os_folders = { ...p.os_folders, [col]: box.value.split('\n').map((s) => s.trim()).filter(Boolean) };
+            delete p.folders;
+            changed();
+          } });
+        return field(`Folders on ${OS_LABEL[col]}${col === os ? ' (this PC)' : ''}`, box, 'grow');
+      };
       return [
         nameSlug(p, { slugLocked: isExisting(p), slugChanged: renameRefs, changed: projectsChanged }),
         el('label', { class: 'check' }, company, 'This is my company'),
-        field('Folder paths on this PC (optional, one per line)', folders, 'wide'),
+        el('div', { class: 'wide edit-grid' }, OS_NAMES.map(folders)),
       ];
     },
   });

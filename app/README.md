@@ -1,4 +1,4 @@
-# BrainHub (phases 1 and 2)
+# BrainHub (phases 1 and 2, on Kubuntu and Windows)
 
 BrainHub is a local second brain. You type free text; a headless Claude Code agent files it into a git-versioned Markdown `brain/` and *proposes* tasks, which you confirm. Recall is instant local search plus a cited answer.
 
@@ -6,51 +6,98 @@ BrainHub is a local second brain. You type free text; a headless Claude Code age
 - **Review:** nothing becomes an item until you confirm it. Today, project, people and deadline views show the confirmed items.
 - **Recall:** search hits appear at once; Claude answers from them with citations, or says `Nothing on that.`
 - **Phase 2:** a usage meter (your Claude 5-hour and weekly limits), an Agents panel (your Claude Code sessions on this PC), a desktop widget, and a desktop shell with a tray icon, start at login and hub self-healing. See [Phase 2](#phase-2-usage-meter-agents-panel-widget-desktop-shell).
+- **Dual boot:** the laptop runs Kubuntu and Windows, one at a time. Both run the same master commit against one shared root on `D:` (`D:\BrainHub` = `/mnt/data/BrainHub`), with the same features. A missing or read-only drive never starts an empty brain and never loses a capture ([Drive banner](#drive-banner-holding-inbox-and-recovery)). Claude Code memory, skills and settings are shared too ([claude-sync](#claude-code-sync-claude-sync)).
 
 ## Requirements
-- Windows, Python >= 3.12, git
-- The Claude Code CLI (`claude`) installed and **logged in** with your subscription
-- Only to build the desktop shell: Rust (MSVC) and the Visual Studio 2022 C++ build tools, see [`desktop/README.md`](desktop/README.md)
-
-## Install
-From `D:\BrainHub\app`:
-
-```
-py -3 -m venv .venv
-.venv/Scripts/python -m pip install -e ".[test]"
-```
-
-## Run
-```
-.venv/Scripts/python -m brainhub --root D:\BrainHub
-```
-Then open <http://127.0.0.1:8090>. `--port N` overrides the port (default 8090, setting `port`); the hub then uses that port everywhere (Open in BrainHub, the integration install). If the port is already taken (say, a second hub on the same root), it stops at once with `port N on 127.0.0.1 is already in use`, before any startup work. Once phase 2 is set up, the desktop shell starts the hub for you (see [Desktop shell](#desktop-shell)).
-
-## First run
-The setup wizard asks for your map: areas, projects (and which are companies, with their folders), courses and people, plus quiet hours and an optional backup remote. Finishing it creates the `brain/` git repo (commit `setup`). You can edit the map later in Settings.
+- Kubuntu 26.04 or Windows 11, with git, [uv](https://docs.astral.sh/uv/) (it installs the Python in `.python-version`, 3.14; the code needs >= 3.12) and `gh`, logged in (the update step reads CI results through it).
+- The Claude Code CLI (`claude`) installed and **logged in** with your subscription. `claude_path` is a bare command name; each OS finds it on its own `PATH`, then in `~/.local/bin`.
+- Only to build the desktop shell: Rust and the platform's build prerequisites, see [`desktop/README.md`](desktop/README.md).
+- Only for the JS tests: Node 24 (via nvm on Kubuntu).
 
 ## Where data lives
-- `brain/`: your Markdown notes, its own git repo. `log/` holds the verbatim raw entries, `_items/` the confirmed items (`items.json`) and the proposals still waiting for you (`proposals.json`), `map.json` the map. Every filing, confirmation and item edit is a commit (a filing is `file <entry id>: <synopsis>`); your own edits are committed as they are ("owner edits"). The agent never modifies `log/`, `_items/`, `map.json` or any dot-file.
-- `data/hub.db`: the search index and filing state. It is a rebuildable index: if it is lost or damaged, the next start rebuilds it from `brain/` (entries filed before are recognised from their `file <entry id>:` commits and are not filed again; pending proposals come back from `_items/proposals.json`; if more than 10 entries turn out never to have been filed, they wait in To review for you to press Retry instead of all being filed at once). Phase 2 adds its `agents` table (Agents panel rows, which expire on their own).
+**Shared: the root** (`D:\BrainHub` = `/mnt/data/BrainHub`). Everything here is the same on both OSes and holds no absolute paths or per-OS state.
+- `app/` (with the rest of the repo): the **live copy** of the code. Master only, never edited by hand; each OS fast-forwards it before starting the hub ([Updates](#updates)).
+- `brain/`: your Markdown notes, its own git repo. `log/` holds the verbatim raw entries, `_items/` the confirmed items (`items.json`) and the proposals still waiting for you (`proposals.json`), `map.json` the map (always LF). Every filing, confirmation and item edit is a commit (a filing is `file <entry id>: <synopsis>`); your own edits are committed as they are ("owner edits"). The agent never modifies `log/`, `_items/`, `map.json` or any dot-file.
+- `data/hub.db`: the search index and filing state. It is a rebuildable index: if it is damaged, the next start moves it aside and rebuilds it from `brain/` (entries filed before are recognised from their `file <entry id>:` commits and are not filed again; pending proposals come back from `_items/proposals.json`; if more than 10 entries turn out never to have been filed, they wait in To review for you to press Retry instead of all being filed at once). Only real damage moves it: a locked or unopenable `hub.db` stops the start with a message and nothing is moved. Phase 2 adds its `agents` table (Agents panel rows, which expire on their own; each row records its OS).
 - `data/settings.json`: your preferences and the backup URL. Keep it; it is not in `brain/`.
-- `data/worktrees/`: temporary agent checkouts, removed after each filing.
-- Phase 2:
-  - `data/usage.json`: the last known usage figures.
-  - `data/claude_integration.json` and `data/statusline_passthrough.txt`: written while the Claude Code integration is installed; they remember the status line you had before, if any.
-  - `data/hub.log`: output of a hub started by the desktop shell, plus the shell's own lines.
-- Outside the root: `%LOCALAPPDATA%\BrainHub\desktop.json` (desktop shell config), and the shell's window position and WebView2 data (see `desktop/README.md`).
+- `data/usage.json`: the last known usage figures (same account on both OSes).
+- `data/root.json`: the root's marker (a random id, the brain format, the time zone it was made in), written by setup. `data/hub.lock`: which hub runs on this root.
+- `data/worktrees/`: temporary agent checkouts, removed after each filing (a leftover from the other OS is removed at the next start).
 
 `brain/` and `data/` are git-ignored by the code repo.
 
+**Per OS: the state folder**: `${XDG_DATA_HOME:-~/.local/share}/brainhub/` on Kubuntu, `%LOCALAPPDATA%\BrainHub\` on Windows (`BRAINHUB_STATE_DIR` replaces it). It is on the local disk, so it works without `D:`.
+- `claude_integration.json` and `statusline_passthrough.txt`: written while the Claude Code integration is installed on this OS; they remember the status line you had before, if any.
+- `holding/`: captures held while the root wasn't writable ([Drive banner](#drive-banner-holding-inbox-and-recovery)).
+- `hub.log`: output of a hub started by the desktop shell, plus the shell's own lines.
+- `runtime/` (the two runtime slots and `current.json`), `update.json` (the last update step), `shell.json` (the running shell's source digest), `hook/hook_client.py` (the stable copy the hooks run).
+- `claude-sync.json`, `claude-sync.log`, `claude-sync-last.json` and `claude-sync-backups/` ([claude-sync](#claude-code-sync-claude-sync)).
+
+**Per OS: the config folder**: `${XDG_CONFIG_HOME:-~/.config}/brainhub/desktop.json` on Kubuntu, `%LOCALAPPDATA%\BrainHub\desktop.json` on Windows (`BRAINHUB_CONFIG_DIR` replaces the folder). Also per OS: the shell's window position and web view data (see `desktop/README.md`), and its start-at-login entry.
+
+**Shared: the Claude store**: `D:\ClaudeShared` = `/mnt/data/ClaudeShared` (`BRAINHUB_SHARED_DIR` replaces it): Claude Code memory, skills and portable settings, its own git repo.
+
+## Setup on each OS
+Do Kubuntu first, then Windows. The setup wizard runs once, on the first OS; the second opens the same brain.
+
+Run these commands from a **dev copy**, never from the live copy: a venv never lives on `D:` (each OS keeps its own). On Kubuntu that is `~/dev/BrainHub/app`; on Windows a clone on the local disk. Below, `bh` stands for `uv run --no-sync python -m brainhub`, the live copy and the root are both `/mnt/data/BrainHub` (Kubuntu) or `D:\BrainHub` (Windows), and the store is `/mnt/data/ClaudeShared` or `D:\ClaudeShared`.
+
+1. **Tools.**
+   - Kubuntu: uv, git, `gh auth login`, then `gh auth setup-git` (the brain's backup push then uses HTTPS without prompts); Rust and the Tauri libraries ([`desktop/README.md`](desktop/README.md)).
+   - Windows: `winget install astral-sh.uv`, git, `gh` (`winget install GitHub.cli`) and `gh auth login`; Rust and the Visual Studio C++ build tools.
+2. **The dev copy's venv:** in its `app/`, `uv sync --locked` (add `--extra test` to run the tests).
+3. **The live copy:** a clean checkout of `master` at the root, with `core.filemode` set to `false` in its git config (ntfs3 reports execute bits, so otherwise Linux git sees every file as changed). A clone made by Windows git already has it; check with `git config core.filemode`.
+4. **The first runtime slot:** `bh runtime init --live <live copy>`. It builds only a commit on `master` that the local `origin/master` has, and the first venv sync may download Python (a few minutes). `bh runtime status` shows the result.
+5. **The desktop shell:** build it from the live copy with a local `CARGO_TARGET_DIR` and `--locked` (in `<live copy>/app/desktop/src-tauri`):
+   - Kubuntu: `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`;
+   - Windows: `set CARGO_TARGET_DIR=%LOCALAPPDATA%\brainhub-target`, then `cargo build --release --locked`.
+   - Without `--locked`, cargo may rewrite `Cargo.lock` in the live copy, and a dirty live copy holds back every update.
+6. **Point the shell at the slot:** `bh desktop-config --runtime --live <live copy> --root <root>`. Then start `brainhub-desktop` from the target folder and tick **Start at login** in the tray ([Desktop shell](#desktop-shell)).
+7. **The Claude Code integration:** Settings → Claude Code integration → Install, or `bh integration install --root <root>`, after step 4 (the hooks then run the stable copy in the state folder; Settings says "Reinstall" when they don't).
+8. **claude-sync:** once, on the first OS, create the store: `bh claude-sync init --shared <store>`, then add your private backup repo with `git -C <store> remote add origin <url>`. Then on each OS: `bh claude-sync --dry-run` to see what it would do, and `bh claude-sync` (it merges this OS's existing memory into the store). Label notes that are only true on one OS: "(Windows only)" / "(Linux only)". From then on the shell runs it.
+9. **First OS only: the setup wizard** on the real root ([First run](#first-run)), filling in both OS columns for project folders where you can.
+10. **Checks:** the same time zone on both OSes (Europe/Bucharest; otherwise a quiet warning says so). On Windows, Fast Startup and hibernation stay off (`powercfg /h off` as admin; a quiet warning appears if an update turns hibernation back on).
+
+## Run
+The desktop shell starts the hub for you. To run one by hand (development, on a temp root and a temp state folder, never the real root):
+```
+BRAINHUB_STATE_DIR=/tmp/bh-state uv run --no-sync python -m brainhub --root /tmp/bh-test
+```
+(Windows: `set BRAINHUB_STATE_DIR=%TEMP%\bh-state`, then `uv run --no-sync python -m brainhub --root %TEMP%\bh-test`.) Then open <http://127.0.0.1:8090>. `--port N` overrides the port (default 8090, setting `port`); the hub then uses that port everywhere (Open in BrainHub, the integration install). If the port is already taken, it stops at once with `port N on 127.0.0.1 is already in use`, before any startup work. A second hub on the same root on this OS is refused too, whatever its port. The hub never creates the root folder: point `--root` at an existing folder (an empty one to start a new brain).
+
+## First run
+The setup wizard asks for your map: areas, projects (and which are companies, with their folders on Windows and on Linux; "(this PC)" marks this OS's column), courses and people, plus quiet hours and an optional backup remote. It runs only on a fresh root: an existing folder with no brain yet (nothing in `brain/`, no `map.json`; the live copy's files beside it are fine). Finishing it creates the `brain/` git repo (commit `setup`) and the marker `data/root.json`. You can edit the map later in Settings.
+
+## Drive banner, holding inbox and recovery
+At every start, before touching anything, the hub checks the root:
+
+| Root | What runs |
+|---|---|
+| ok, or fresh (setup can create a brain) | the full app |
+| **missing**: the folder isn't there or can't be read, or (Kubuntu) its drive isn't mounted (Windows left NTFS unclean, say) | a reduced app: the banner and the capture box; everything else shows the banner |
+| **read-only** | the full app, read-only: Today, journal and recall work; confirm and tick are disabled with the reason; other changes answer with the reason (the reduced app if `hub.db` can't be read read-only) |
+| **foreign**: `brain/` has files but no `map.json`, or the marker is there and `map.json` isn't | the reduced app; the banner says to point it at the right folder or restore `brain/` |
+| **newer**: made by a newer BrainHub (brain format or `hub.db` schema) | the reduced app until this OS updates |
+
+- **The banner** sits at the top of the app and in the widget's synopsis. For an unmounted drive it reads "BrainHub's drive isn't available. Boot Windows once and shut it down normally; Windows checks and repairs the drive. Then come back." BrainHub never runs `ntfsfix` or any repair itself.
+- **Captures are never lost.** While the root can't be written, each capture goes to this OS's holding inbox (`<state>/holding/`), on disk before the box says saved. The banner adds "N captures held on this OS". The next full start on that root moves them into the raw log with their original time (each in its own day's file), then files them as usual, so their confirm cards appear then. Held captures belong to the root they were typed for, so a dev hub on a temp root never takes them. They stay on the OS where they were typed: Windows can't see Kubuntu's held captures, and they arrive at the next Kubuntu boot.
+- **Recovery.** A reduced or read-only hub looks at the root again every 15 s. Once it is usable, the hub stops with exit code 75 and the desktop shell starts it again at once, in full. A hub you started by hand prints that it stopped, so start it again.
+- **One hub per root.** `data/hub.lock` refuses a second hub on this OS in this boot. A lock left by the other OS, an earlier boot or a dead hub is taken over.
+- **Quiet warnings** (one line under the header, never a popup): this OS's time zone differs from the one the brain was made in; hibernation (and with it Fast Startup) is on again (Windows).
+- **Clean-up at start:** stale git locks in `brain/.git` are removed, Agents rows from before this boot are ended, and leftover filing worktrees are removed.
+
+## Updates
+On the dual boot each OS runs the hub from one of two runtime slots in its state folder, and the shell runs an update step before every hub start. It fast-forwards the live copy (only a clean checkout of `master`, only to a commit whose CI passed on both OSes, never anything but `--ff-only`), builds the other slot when the live copy moved, and switches to it once its code and venv are both ready. If anything stops it (offline, a dirty or diverged live copy, CI pending or failed, a venv that can't sync), the hub starts on the slot it already has, and Settings' Runtime line says "update pending (reason)". **Restart hub** in the tray runs the step again. When the shell's own source changed, the tray and Settings say "widget update available": rebuild as in setup step 5. Details: [`desktop/README.md`](desktop/README.md) → Runtime mode.
+
 ## Backup
-Create an **empty, private** GitHub repository, then paste its URL in Settings (backup remote). The hub pushes `brain/` shortly after commits (debounced, 5 minutes by default). Push status shows in the Settings view; "Push now" forces it. A push never asks for a password: git runs without a terminal prompt or credential-manager window and gives up after 120 s, so sign in to GitHub once with git (or use an SSH key without a passphrase prompt) before relying on it.
+Create an **empty, private** GitHub repository, then paste its URL in Settings (backup remote). The hub pushes `brain/` shortly after commits (debounced, 5 minutes by default). Push status shows in the Settings view; "Push now" forces it. A push never asks for a password: git runs without a terminal prompt or credential-manager window and gives up after 120 s, so set up credentials on each OS before relying on it: Git Credential Manager on Windows, `gh auth setup-git` (HTTPS) on Kubuntu.
 
 `brain/.gitattributes` (`* -text`) keeps line endings exactly as written, so a restore with `git clone` gives a readable raw log even where git converts line endings by default.
 
 ## Claude and `ANTHROPIC_API_KEY`
 All Claude calls run `claude -p` on your subscription. `ANTHROPIC_API_KEY` is removed from the environment of every child process **on purpose**, and `--bare` is never used, so you are never billed per token by accident. Models are settings: filing `sonnet`, quick recall `haiku`, deeper recall `sonnet`.
 
-The hub's agents run isolated from your own Claude Code setup: they load no settings files (`--setting-sources ""`), so none of your plugins, hooks or permission rules apply; no MCP servers (`--strict-mcp-config`); no skills or slash commands; no saved sessions; and only the built-in tools each job needs (`--tools`: none for quick recall, `Read Glob Grep` for dig deeper, `Read Write Edit Glob Grep` for filing). Your login still works, since it is not a setting. Because they load no settings, the hub's own agents never fire BrainHub's hooks, so they never show up in the Agents panel.
+The hub's agents run isolated from your own Claude Code setup: they load no settings files (`--setting-sources ""`), so none of your plugins, hooks or permission rules apply; no MCP servers (`--strict-mcp-config`); no skills or slash commands; no saved sessions; no auto memory (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so filings leave nothing in `~/.claude/projects`); and only the built-in tools each job needs (`--tools`: none for quick recall, `Read Glob Grep` for dig deeper, `Read Write Edit Glob Grep` for filing). Your login still works, since it is not a setting. Because they load no settings, the hub's own agents never fire BrainHub's hooks, so they never show up in the Agents panel. A filing that would create a path Windows can't hold (a reserved name or character, a trailing dot or space, or two names differing only in case) fails into To review instead of reaching `brain/`.
 
 ## Security
 The server binds `127.0.0.1` only. Writes require `Content-Type: application/json` and a same-origin `Origin`/`Host`, so cross-site requests from other web pages are blocked. The UI renders text with `textContent` only.
@@ -62,15 +109,16 @@ Phase 2 keeps the same model. Any local program can already reach the hub, so a 
 ### Claude Code integration
 The usage meter and the Agents panel are fed by your own Claude Code: hooks report session events, and the status line reports your rate limits. Both run `hook_client.py`, a tiny standard-library script that posts to the hub and **never prints anything or fails visibly**: with the hub down it gives up after about 0.3 s and exits quietly.
 
-Install it once (it writes your user settings, so only when you ask):
+Install it once on each OS (it writes your user settings, so only when you ask):
 - **Settings view → "Claude Code integration" → Install**, or
-- `.venv\Scripts\python -m brainhub integration install --root D:\BrainHub`
+- `uv run --no-sync python -m brainhub integration install --root <root>`
 
-Remove it with **Remove** in the same section, or `... integration uninstall --root D:\BrainHub`. `... integration status --root D:\BrainHub` prints what is installed. `--settings PATH` targets another settings file (for tests). The Settings section also shows the last hook event and the last usage update the hub received, and whether the installed port matches.
+Remove it with **Remove** in the same section, or `... integration uninstall --root <root>`. `... integration status --root <root>` prints what is installed. `--settings PATH` targets another settings file (for tests). The Settings section also shows the last hook event and the last usage update the hub received, whether the installed port matches, and "Reinstall" when the installed hooks point at an old Python or script.
 
-What it changes in `%USERPROFILE%\.claude\settings.json` (or `%CLAUDE_CONFIG_DIR%\settings.json`):
-- Under `hooks`, one entry for each of `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure` and `SessionEnd`. Each runs `<app>\.venv\Scripts\python.exe -I -S <app>\brainhub\hook_client.py event --port <port>` directly (no shell), with a 5 s timeout. `UserPromptSubmit`, `Notification` and `PostToolUse` are async so they never hold you up; the others are synchronous so they are not lost when a session closes.
-- `statusLine` runs `hook_client.py statusline --port <port>` and prints a compact line such as `Sonnet · 5h 62% ↻14:02 · 7d 31%`. If you already had a status line, it is saved in `data/claude_integration.json`, keeps running (its output is shown instead of ours), and is put back exactly on Remove.
+What it changes in `~/.claude/settings.json` (Windows: `%USERPROFILE%\.claude\settings.json`; or `$CLAUDE_CONFIG_DIR/settings.json`):
+- Under `hooks`, one entry for each of `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Notification`, `Stop`, `StopFailure` and `SessionEnd`. Each runs `<python> -I -S <hook_client.py> event --port <port>` directly (no shell), with a 5 s timeout. On the dual boot (once `runtime init` has run) `<python>` is the base Python the runtime venvs are made from and `<hook_client.py>` is the stable copy `<state>/hook/hook_client.py`, which no update moves; in a dev setup they are the venv's python and the checkout's `brainhub/hook_client.py`. `UserPromptSubmit`, `Notification` and `PostToolUse` are async so they never hold you up; the others are synchronous so they are not lost when a session closes.
+- `statusLine` runs `hook_client.py statusline --port <port>` and prints a compact line such as `Sonnet · 5h 62% ↻14:02 · 7d 31%` (on Kubuntu the command is quoted for `sh`). If you already had a status line, it is saved in the state folder (`claude_integration.json`, `statusline_passthrough.txt`), keeps running (its output is shown instead of ours), and is put back exactly on Remove.
+- Each OS keeps its own: installing or removing on one OS never touches the other's settings, saved status line or hooks.
 - Every other key, and every hook of your own, is left as it was. Before each write the file is copied to `settings.json.brainhub-backup-YYYYmmdd-HHMMSS` next to it, and the write is atomic. A file that isn't valid JSON, or has an unexpected shape, is refused and left untouched.
 - Install again after changing the hub's `port` (the Settings hint says so); install is idempotent. New Claude Code sessions pick the change up; restart sessions that were already open.
 
@@ -90,25 +138,26 @@ The **Agents** view lists your Claude Code sessions on this PC: project, part, w
 | finished | the turn ended; it's your turn |
 | ended | the session closed (shown muted until it disappears; it no longer counts in the widget, even if it was closed mid-turn) |
 
-- **Project:** the map project whose folders contain the session's folder (set project folders in Settings → map), otherwise the git repository's folder name. **Part:** your rename, else the session title (`/rename`), else the branch without its prefix (`feat/wrist-servo` → `wrist-servo`). **Where:** terminal, IDE (VS Code), desktop app, or unknown (hover to see the raw value Claude Code reported). **Next-time flag:** "2 next-time notes for Robot arm" (mapped projects only); it is shown to you only and never sent to the agent.
+- **Project:** the map project whose folders on this OS contain the session's folder (set project folders in Settings → map; matching ignores case on Windows and is exact on Linux), otherwise the git repository's folder name. **Part:** your rename, else the session title (`/rename`), else the branch without its prefix (`feat/wrist-servo` → `wrist-servo`). **Where:** terminal, IDE (VS Code), desktop app, or unknown (hover to see the raw value Claude Code reported, and the OS). **Next-time flag:** "2 next-time notes for Robot arm" (mapped projects only); it is shown to you only and never sent to the agent.
+- **Link to a project:** an unmapped session whose folder has the same name as a project's folder on the other OS (`~/dev/RobotArmControl` and `D:\RobotArmControl`) shows "link to <name>"; one click adds the folder to that project for this OS. Nothing is mapped automatically.
 - Click a part to rename it, change Where from its menu, or remove a stale row (✕). Edits stick for the session.
-- A row disappears `agents_end_linger_s` seconds after its session ends, or after `agents_stale_h` hours without events (a crashed session).
+- A row disappears `agents_end_linger_s` seconds after its session ends, or after `agents_stale_h` hours without events (a crashed session). Rows from before this boot (a crash, or the other OS) are ended when the hub starts.
 - `claude -p` and SDK runs (entrypoint `sdk-…`) and anything running inside the hub's own `data/` or `brain/` never appear.
 
 ### Widget
 `http://127.0.0.1:<port>/widget` is a small always-dark panel; it works in any browser, and the desktop shell shows it in a frameless always-on-top window.
-- **Collapsed:** one line, e.g. `3 due today · 1 waiting on Teammate A · 5h 62% (resets 14:20) · 2 agents running`, or `All clear`. An amber dot means something waits for you: proposals or failed filings to review, an agent waiting, or usage at or above the warning level.
+- **Collapsed:** one line, e.g. `3 due today · 1 waiting on Teammate A · 5h 62% (resets 14:20) · 2 agents running`, or `All clear`. An amber dot means something waits for you: proposals or failed filings to review, an agent waiting, or usage at or above the warning level. With a drive banner, the line shows the banner instead.
 - **Expanded** (the ▾ button): a capture box (Enter saves, with source `widget`; Esc collapses) and tiles: Today, Usage, Agents, People, Deadlines, To review, Projects, Robot arm (`widget_tiles` picks and orders them). A tile opens a popup with up to 6 rows and "Open in BrainHub ↗". The Robot arm tile says reachable or offline from `arm_url`.
 - It refreshes on hub events and every 60 s; with the hub down it says `BrainHub offline · retrying`, and it reconnects by itself when the hub is back (the desktop shell doesn't reload it).
 - What you type in the capture box is kept as a draft in the page's local storage until it's saved. If the page reloads, the widget opens expanded with your text back in the box.
 
 ### Desktop shell
-`app/desktop/` is a Tauri v2 shell, "BrainHub Desktop": the widget window, the tray icon, start at login, and a supervisor that starts the hub (hidden, no console windows) if it isn't running and restarts it after a crash. It holds no logic of its own. Full instructions: [`desktop/README.md`](desktop/README.md). In short:
-1. Build once: in `app\desktop\src-tauri`, `cargo build --release` (about 5 minutes the first time) gives `target\release\brainhub-desktop.exe`.
-2. Configure: `.venv\Scripts\python -m brainhub desktop-config --root D:\BrainHub` writes `%LOCALAPPDATA%\BrainHub\desktop.json` (`port`, `root`, `python` = the venv's `python.exe`, `app_dir`). The shell starts the hub with `--port <port>` from this file and without a visible console (the hidden console it gets is shared by the git and claude processes the hub runs, so none of them flashes a window). After changing the port, re-run it **and restart BrainHub Desktop**: the shell reads the file only at start.
-3. Run `brainhub-desktop.exe`. Tray: Open BrainHub, Show/Hide widget, Start at login, Restart hub (only for a hub the shell started), Quit (stops that hub too).
-4. **Start at login** (tray, off by default) adds the exe to `HKCU\...\CurrentVersion\Run`; untick to remove.
-5. Logs: `<root>\data\hub.log` (hub output and the shell's `[brainhub-desktop t=…]` lines).
+`app/desktop/` is a Tauri v2 shell, "BrainHub Desktop", built on each OS (WebView2 on Windows, WebKitGTK under XWayland on Kubuntu): the widget window, the tray icon, start at login, and a supervisor that starts the hub (on Windows without console windows) if it isn't running and restarts it after a crash. It holds no logic of its own. Full instructions: [`desktop/README.md`](desktop/README.md). In short:
+1. Build once per OS, from the live copy, into a local target folder (setup step 5): about 5 minutes the first time; the result is `<target dir>/release/brainhub-desktop` (`.exe` on Windows).
+2. Configure: `desktop-config --runtime --live <live copy> --root <root>` (setup step 6) writes `desktop.json` to the config folder: `port`, `root`, `live`, `state`. The shell then runs claude-sync once and the update step before starting the hub from the current runtime slot with `--port <port>`. (Without `--runtime` it writes the dev form, `python` and `app_dir`, and starts the hub straight from that checkout.) After changing the port, re-run it **and restart BrainHub Desktop**: the shell reads the file only at start.
+3. Run `brainhub-desktop`. Tray: Open BrainHub, Show/Hide widget, Start at login, Restart hub (only for a hub the shell started), Quit (stops that hub too).
+4. **Start at login** (tray, off by default): the `HKCU\...\CurrentVersion\Run` key on Windows, `~/.config/autostart/` on Kubuntu (KDE lists it under Autostart); untick to remove.
+5. Logs: `hub.log` in the state folder (hub output and the shell's `[brainhub-desktop t=…]` lines).
 
 ### Phase 2 settings
 All in the Settings view.
@@ -122,28 +171,52 @@ All in the Settings view.
 | `arm_url` | `http://127.0.0.1:8080` | The robot arm UI: the widget's Robot arm tile checks and opens it. |
 | `widget_tiles` | all eight, in order | Which tiles the expanded widget shows, and their order. |
 
-### Owner verification checklist
-These need your machine and eyes, after merging phase 2:
-1. Run `python -m brainhub integration install --root D:\BrainHub`, or press Install in Settings.
-2. Start a terminal session: a row with Where "terminal" should appear, then go running and finished.
-3. Start a VS Code extension session. Does a row appear, and what does Where say? If it says "unknown", report the raw entrypoint from its tooltip.
-4. Start a desktop app local Code session: same check.
-5. Open Claude Design in the desktop app. If no row appears, it stays excluded (spec §7.1). Nothing is scraped.
-6. Check whether the Usage view updates from VS Code or desktop sessions. The status line may only run in the terminal; if so, usage updates only while a terminal session is active, which is acceptable (spec §11).
-7. Run `desktop-config`, launch `brainhub-desktop.exe`, tick "Start at login", reboot, and check that the widget and hub come up.
+## Claude Code sync (`claude-sync`)
+`python -m brainhub claude-sync` keeps your own Claude Code the same on both OSes through the shared store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`). Your login, sessions, history and plugin installs stay per OS.
+- **Memory:** a home session (started in your home folder) loads your personal memory; a project session loads only that project's notes, on both OSes, from the same files. claude-sync merges this OS's existing notes into the store (after a backup to `<state>/claude-sync-backups/`; a note that clashes is kept under a second name, `<name>.<os>.md`), then points Claude Code there through `autoMemoryDirectory` in `~/.claude/settings.local.json` (home) and in each project's `.claude/settings.local.json` (git-ignored through the repo's `info/exclude`). A project is the same on both OSes when its folder has the same name in `~/dev` and on `D:\`; `pairs.json` in the store lists exceptions (`{"<name>": {"linux": "<folder>", "windows": "<folder>"}}`). The live copy is never pointed.
+- **The header line:** every shared `MEMORY.md` starts with "Shared by Windows and Kubuntu. Label any note that is only true on one OS: (Windows only) / (Linux only)."
+- **Skills:** your own skills in `~/.claude/skills/` move into the store and are linked back (plugin and claude.ai-synced skills are left alone).
+- **Settings:** each key of `~/.claude/settings.json` is shared both ways (the later change wins; removals, like a disabled plugin, carry over), except the per-OS keys: `hooks`, `statusLine`, `permissions`, `env`, `defaultShell`, `apiKeyHelper`, `autoMemoryDirectory`, any value holding an absolute path, and the keys you add in Settings → Claude Code sync. `enabledPlugins` and `extraKnownMarketplaces` are shared, and Claude Code fetches missing plugins itself.
+- **It never deletes a memory note or a skill.** It commits the store and pushes it to `origin` when one is set, without prompts.
+- **When it runs:** in runtime mode the desktop shell runs it once at start (before the first hub), runs `--settings-only` within 5 s of a change to `settings.json`, and a full sync every 10 minutes, so notes written during sessions are committed in batches. By hand: `claude-sync [--dry-run]`. With the store missing (`D:` not mounted) it changes nothing.
+- Problems go to `<state>/claude-sync.log`; Settings → Claude Code sync shows the last run as a quiet note.
+
+## Verification on both OSes (dual-boot design §10)
+Run after the rollout, with your machine and eyes. Drills run against a temp root or a scratch mount, never the real root.
+- **CI** is green on both OSes for the commit you run.
+- **Round trip:** capture on Kubuntu; reboot: on Windows it's in Today and the journal, and recall finds it; confirm an item and tick another; reboot: both show on Kubuntu. `git status` is clean in `brain/` and in the live copy on both OSes.
+- **On each OS** (this includes the phase 2 checklist):
+  1. Install the integration (setup step 7).
+  2. A terminal session: a row with Where "terminal" appears, then goes running and finished.
+  3. A VS Code extension session: does a row appear, and what does Where say? If it says "unknown", report the raw entrypoint from its tooltip (it fixes `WHERE_BY_ENTRYPOINT` in `agents.py`).
+  4. On Windows, a desktop-app local Code session: same check. Claude Design in the desktop app: if no row appears, it stays excluded (spec §7.1). Nothing is scraped.
+  5. The Usage view updates from a terminal session (and from VS Code or the desktop app, if the status line runs there; if it only runs in the terminal, that is acceptable, spec §11). The status line doesn't run under `claude -p`.
+  6. The widget is transparent, on top, draggable, remembers its position and stays on screen; the tray works; with Start at login ticked, the hub and widget come up after a reboot.
+- **Drills:**
+  - **Drive not available:** a hub on a missing root (or, on Kubuntu, a root under an fstab mount point that isn't mounted) shows the banner, creates nothing, and holds a capture; once the root is back, the hub restarts (exit 75) and the capture reaches the raw log with its original time.
+  - **Read-only root** (`chmod -R a-w` on a temp root): reading works, captures are held, confirm and tick are disabled with the reason, and `hub.db` is unchanged.
+  - **Hub killed mid-filing, then the other OS boots on the same root:** the filing is recovered, no ghost agents remain, git is clean, and stale locks are cleared.
+  - **A filing proposing a Windows-invalid or case-clashing path:** it is rejected into To review, and nothing is deleted on Windows.
+  - **Fast Startup turned back on** (Windows): a quiet warning appears.
+  - **A second hub on a root that already has one** (say, a dev copy started against the live root): on a temp root, start a hub, then another on the same root with another `--port`: refused.
+  - **Integration installed on both OSes, then removed on one** (with `--settings <temp file>` on each): the other OS's status line and hooks are untouched.
+- **Claude Code parity:** a note written in a home session on Kubuntu is in the next home session on Windows; the same for a project note; skills and plugins match on both; a Windows-only note is labelled.
+- **Updates:** a trivial change merged on GitHub is picked up at the next start on each OS; an offline start runs the current code quietly; a dirty live copy is left alone, with a note in Settings; a commit without green CI on both OSes is not pulled; with `D:` unmounted the hub still starts from its runtime slot, in reduced mode; if one OS pulled a dependency change and the other boots offline, the other keeps its previous slot (and runs reduced if the data is already newer), and nothing crashes.
 
 ## Tests
-From `D:\BrainHub\app`:
+From `app/` in a dev copy (Kubuntu `~/dev/BrainHub/app`):
 ```
-.venv/Scripts/python -m pytest -q
+uv sync --locked --extra test
+uv run --no-sync python -m pytest -q
 node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs
 ```
-From `D:\BrainHub\app\desktop\src-tauri` (with `%USERPROFILE%\.cargo\bin` on `PATH`):
+(On Kubuntu load nvm first: `source ~/.nvm/nvm.sh`.) From `app/desktop/src-tauri`, with the local target folder:
 ```
-cargo test
-cargo build --release
+CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test
 ```
-The Python tests use a fake Claude runner; none of them call the real CLI. They point `CLAUDE_CONFIG_DIR` and `LOCALAPPDATA` at temp folders, so they never touch your Claude settings or `desktop.json`.
+(Windows: `set CARGO_TARGET_DIR=%LOCALAPPDATA%\brainhub-target`, then `cargo test`, with `%USERPROFILE%\.cargo\bin` on `PATH`.) CI runs the Python and JS tests on Ubuntu and Windows for every PR and push to master, and the Rust tests and a build when `app/desktop/` changes. A test that only makes sense on one OS is skipped on the other and runs in CI there.
+
+The Python tests use a fake Claude runner; none of them call the real CLI. They point `CLAUDE_CONFIG_DIR`, `LOCALAPPDATA`, `BRAINHUB_STATE_DIR`, `BRAINHUB_CONFIG_DIR` and `BRAINHUB_SHARED_DIR` at temp folders, so they never touch your Claude settings, your state or config folder, `desktop.json` or the Claude store.
 
 ## Known limitations
 Deferred on purpose; none of them loses data.
@@ -170,18 +243,25 @@ Deferred on purpose; none of them loses data.
 - Whether the agents still read a user-level `CLAUDE.md` memory file under `--setting-sources ""` is not verified; keep yours free of instructions that would clash with filing.
 
 Phase 2 (the full list, with the test gaps, is in [`phase2-decisions.md`](../docs/superpowers/phase2-decisions.md)):
-- Whether hooks fire, and what Where says, in VS Code and desktop-app sessions is not verified yet (checklist items 3–5); whether the status line runs there is not documented (item 6).
+- Whether hooks fire, and what Where says, in VS Code and desktop-app sessions is not verified yet, on either OS (verification items 3–4); whether the status line runs there is not documented (item 5).
 - Usage only updates while a Claude Code session with the status line runs.
-- After changing `port`: restart the hub, install the integration again, re-run `desktop-config` and restart BrainHub Desktop. Until then a shell-started hub stays on the old port (the shell passes `--port`), so everything keeps working on the old one.
+- After changing `port`: restart the hub, install the integration again, re-run `desktop-config` and restart BrainHub Desktop, on each OS. Until then a shell-started hub stays on the old port (the shell passes `--port`), so everything keeps working on the old one.
 - An event after a session's `SessionEnd` (other than a new start) doesn't revive the row, so it still disappears after the linger. Ignorable events still bump a row's "last event" time, which can change the order.
 - Backups of `settings.json` made by Install/Remove are never pruned; delete old ones by hand.
-- If `data/claude_integration.json` is unreadable when you install again, the saved previous status line is lost (it is still in the backups).
+- If the state folder's `claude_integration.json` is unreadable when you install again, the saved previous status line is lost (it is still in the backups).
 - The status line can take up to about 2.75 s (4.5 s worst case) when a saved previous status line command hangs.
 - A desktop shell killed hard leaves the hub it started running; the next launch uses it, but "Restart hub" is then greyed out.
-- `data/hub.log` grows without bound.
+- `hub.log` in the state folder grows without bound.
 - The widget is kept inside the screen's work area when it is built and whenever it resizes, not while you drag it: a widget dragged partly off-screen stays there until it next expands or collapses.
-- The desktop exe keeps WebView2 data in `%LOCALAPPDATA%\dev.brainhub.desktop` and the window position in `%APPDATA%\dev.brainhub.desktop\.window-state.json` even when `LOCALAPPDATA` is overridden.
+- The desktop exe keeps its web view data and window position in the real folders even when the env overrides are set (`%LOCALAPPDATA%\dev.brainhub.desktop` and `%APPDATA%\dev.brainhub.desktop\.window-state.json` on Windows; `~/.local/share/dev.brainhub.desktop` and `~/.config/dev.brainhub.desktop` on Kubuntu).
 - The capture draft lives in the widget page's local storage, which belongs to `127.0.0.1:<port>`: after a port change an unsaved draft from before stays behind with the old port.
+
+Dual boot (the full list is in [`dual-boot-decisions.md`](../docs/superpowers/dual-boot-decisions.md) → Residuals):
+- The shell can't update itself: after "widget update available", rebuild it by hand (setup step 5).
+- Held captures stay on the OS where they were typed until that OS boots again with the root usable.
+- The read-only view doesn't read a `-wal` file left by a crash, so the newest index changes can be missing until the next full start (the raw log is complete either way).
+- An integration installed before `runtime init` keeps the dev paths until it is installed again (Settings says "Reinstall").
+- claude-sync doesn't share a user-level `CLAUDE.md`, and doesn't list plugins or MCP servers that need per-OS setup.
 
 ## Measured
 ### Phase 1
@@ -237,11 +317,37 @@ With stdin left open, `claude -p` first waits 3 s for it ("no stdin data receive
 | `desktop-config` re-run, shell restarted | hub started with `--port 8098`, widget on `127.0.0.1:8098/widget` |
 | A second hub by hand on the taken port | exited in 0.26 s with `port 8098 on 127.0.0.1 is already in use`, no startup work |
 
-## Not in phase 2
-- **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests.
+### Phase dual-boot (Linux)
+Real end-to-end run on 2026-10-22 on Kubuntu with Claude Code 2.1.308 (plan Task 10), on a scratch root (`/tmp/bh-e2e-t10/root`, port 8099, a scratch `BRAINHUB_STATE_DIR`, all deleted afterwards). Setup mapped project `robotarm` to the Linux folder `<scratch>/robotarm` (`os_folders.linux`; not a git repo, so no branch). The scratch state folder was put in runtime mode by hand (a `runtime/current.json` and the stable `hook/hook_client.py`), so `integration install --settings <scratch>/claude/settings.json` wrote the runtime paths: the base interpreter `~/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14` (uv's minor-version link) and `<state>/hook/hook_client.py`, in exec form, and the status line as one `sh`-quoted command. The hub's `/api/integration` showed it installed, port matching.
+
+**Login.** A scratch `CLAUDE_CONFIG_DIR` has no login: `claude -p` there still fired SessionStart, UserPromptSubmit and SessionEnd through the installed hooks, then printed `Not logged in · Please run /login` and exited 1 after 0.8 s. The runs below used the real config folder with only `--settings <scratch file>` (no credentials copied). The real `~/.claude/settings.json` hashed `e9f21709…81de2b71` before and after, mtime unchanged. Even with `--no-session-persistence`, Claude Code created an empty `~/.claude/projects/-tmp-bh-e2e-t10-robotarm/memory/`, which was removed.
+
+**Forced entrypoint**, as in phase 2. The unmodified installed hooks, pointed at a stdlib sink, delivered SessionStart, UserPromptSubmit, Stop and SessionEnd, each with `entrypoint: sdk-cli` and only the allow-listed fields. For the Agents run, a copy of the installed settings wrapped each hook as `{"command": "env", "args": ["CLAUDE_CODE_ENTRYPOINT=cli", <python>, "-I", "-S", <hook_client.py>, "event", "--port", "8099"]}` (same timeouts and async flags).
+
+`claude -p --model haiku --settings <forced copy> --no-session-persistence "Reply with just: ok"` in `<scratch>/robotarm`, without `ANTHROPIC_API_KEY`, stdin closed; `/api/agents` polled every 0.25 s:
+
+| Time after launch | Agents panel |
+|---|---|
+| 0.5 s | new row: project `robotarm` (mapped by its Linux folder, "Robot arm"), where `terminal`, status idle |
+| 0.8 s | running |
+| 2.6 s | finished |
+| 2.8 s | ended (SessionEnd); `claude` printed `ok` and exited at 3.6 s |
+| 62.6 s | row gone (`agents_end_linger_s` = 60) |
+
+| Check | Result |
+|---|---|
+| Status line under `claude -p` | doesn't run: no usage POST reached the sink or the hub in either run |
+| A realistic status line JSON piped into the installed `statusLine.command` through `sh -c` | 0.03 s; printed `Sonnet · 5h 62% ↻18:46 · 7d 31%`. `/api/usage` then had five_hour 62.4 % and seven_day 31 %; the widget synopsis read `5h 62% (resets 18:46)` |
+| Status line with the hub down | 0.03 s, same line printed |
+| Hook event with the hub down | 0.04 s, exit 0, no output |
+| An `sdk-cli` event posted to the hub | 204, no row |
+| Uninstall on the scratch file | our entries removed (the file became `{}`), with a backup written first; the update step's `hook/hook_client.py` kept |
+
+## Not built yet
+- **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests. On the dual boot it must reach the hub at one fixed address whichever OS is booted, and its pairing tokens go in shared `data/` (dual-boot design §8.3).
 - **Phase 4:** voice, and the tray's "pause notifications" with it.
-- **Phase 5:** Google Calendar.
+- **Phase 5:** Google Calendar (OAuth tokens in shared `data/`, so it is authorised once).
 - **Phase 6:** phone.
 - **Any time:** semantic search; a file watcher for owner edits (phase 1 residual).
 
-Phase 1 already stores `quiet_hours` and project `folders` so those phases need no data migration.
+Phase 1 already stores `quiet_hours` and project folders (now per OS) so those phases need no data migration.
