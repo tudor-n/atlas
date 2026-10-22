@@ -63,7 +63,7 @@
 | P8 | **Coming back from reduced mode:** while reduced, the hub re-checks the root every 15 s. When it becomes usable, it stops with exit code **75**, and the shell's supervisor restarts it at once (no backoff), so the full app starts fresh. A hand-run hub prints that it stopped so it can be restarted. | §6.5 |
 | P9 | **CI gate:** a master commit may be pulled only when its check runs (via `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`) include `test (ubuntu-latest)` and `test (windows-latest)` with conclusion `success`, and no check run has failed (`failure`, `cancelled`, `timed_out`, `action_required`). Pending checks mean "not yet". | §5.5 |
 | P10 | **Per-OS folders:** state = `$BRAINHUB_STATE_DIR`, else Linux `${XDG_DATA_HOME:-~/.local/share}/brainhub`, Windows `%LOCALAPPDATA%\BrainHub`. Shell config = `$BRAINHUB_CONFIG_DIR`, else Linux `${XDG_CONFIG_HOME:-~/.config}/brainhub`, Windows `%LOCALAPPDATA%\BrainHub`. The env overrides exist for tests and are honoured by the Rust side too. | §4 |
-| P11 | **Boot identity** (agent clean-up and the hub lock): Linux `/proc/sys/kernel/random/boot_id`; Windows the boot time from `GetTickCount64`, rounded to the minute. A row or lock from the other OS always has a different boot id. | §6.5, §6.6 |
+| P11 | **Boot identity** (agent clean-up and the hub lock): Linux `/proc/sys/kernel/random/boot_id`; Windows the registry boot counter (`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters\BootId`, read-only), falling back to the boot time from `GetTickCount64` rounded to the minute. A row or lock from the other OS always has a different boot id. (Amended by ruling D4.) | §6.5, §6.6 |
 
 ## Review Focus
 
@@ -199,7 +199,7 @@
 - `tests/conftest.py`: the autouse fixture also sets `BRAINHUB_STATE_DIR=<tmp>/state` and `BRAINHUB_CONFIG_DIR=<tmp>/config`.
 - `claude_integration`:
   - `install(…, state_dir: Path)` and `uninstall(…, state_dir: Path)` replace `data_dir`. `STATE_FILE` and `PASSTHROUGH_FILE` live in `state_dir`.
-  - **Legacy adoption (Windows only):** if `<data>/claude_integration.json` or `<data>/statusline_passthrough.txt` exists and the state folder has neither, move them into the state folder. A new `adopt_legacy(data_dir, state_dir, os_name)` is called by install, uninstall and the API view. On Linux the legacy files are left alone and never read.
+  - **Legacy adoption (Windows only):** if `<data>/claude_integration.json` or `<data>/statusline_passthrough.txt` exists and the state folder has neither, move them into the state folder. A new `adopt_legacy(data_dir, state_dir, os_name)` is called by install and uninstall (never by the read-only API view: ruling D3). On Linux the legacy files are left alone and never read.
   - Routes and the CLI pass `osdirs.state_dir()`.
 - `config.validate_setting("claude_path", v)`: also rejects values containing `/` or `\` (P6), with the message "claude_path must be a command name (like claude), not a path; each OS finds it on its own PATH".
 - `ClaudeRunner.__init__`: `shutil.which(name)`, then `Path.home() / ".local" / "bin" / (name + (".exe" if win32 else ""))` if that is a file.

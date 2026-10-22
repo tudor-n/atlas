@@ -57,6 +57,14 @@ def test_state_dir_linux_xdg(tmp_path, monkeypatch):
 
 
 @posix_only
+@pytest.mark.skipif(sys.platform == "win32", reason="XDG rules")
+def test_relative_xdg_value_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.delenv("BRAINHUB_STATE_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", "relative/xdg")
+    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "brainhub"
+
+
 def test_config_dir_linux_xdg(tmp_path, monkeypatch):
     monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
     _home(monkeypatch, tmp_path / "home")
@@ -111,7 +119,15 @@ def test_boot_id_linux_unreadable_is_unknown(tmp_path, monkeypatch, fresh_boot_i
 
 
 @win_only
-def test_boot_id_windows_from_tick_count(fresh_boot_id):
+def test_boot_id_windows_from_boot_counter(fresh_boot_id):
+    assert re.fullmatch(r"win-boot-\d+", osdirs.boot_id())
+
+
+@win_only
+def test_boot_id_windows_falls_back_to_boot_minute(monkeypatch, fresh_boot_id):
+    def unreadable():
+        raise OSError("no BootId")
+    monkeypatch.setattr(osdirs, "_windows_boot_counter", unreadable)
     assert re.fullmatch(r"win-\d+", osdirs.boot_id())
 
 

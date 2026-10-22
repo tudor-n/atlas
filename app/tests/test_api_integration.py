@@ -38,15 +38,25 @@ async def test_integration_state_goes_to_the_state_folder(client, paths, tmp_pat
 
 
 @pytest.mark.parametrize("os_name", ["windows", "linux"])
-async def test_integration_view_adopts_legacy_on_windows_only(client, paths, tmp_path, monkeypatch, os_name):
+async def test_integration_view_never_moves_legacy_files(client, paths, tmp_path, monkeypatch, os_name):
+    """A GET must not move the passthrough file: the installed status line still names it."""
     monkeypatch.setattr(osdirs, "os_name", lambda: os_name)
     (paths.data / ci.STATE_FILE).write_text('{"previous_statusline": null, "installed_at": "2026-10-01T10:00:00"}')
     (paths.data / ci.PASSTHROUGH_FILE).write_text("echo old")
     assert (await client.get("/api/integration")).status == 200
-    state = tmp_path / "state"
+    assert (paths.data / ci.PASSTHROUGH_FILE).exists() and (paths.data / ci.STATE_FILE).exists()
+    assert not (tmp_path / "state" / ci.PASSTHROUGH_FILE).exists()
+
+
+@pytest.mark.parametrize("os_name", ["windows", "linux"])
+async def test_integration_install_adopts_legacy_on_windows_only(client, paths, tmp_path, monkeypatch, os_name):
+    monkeypatch.setattr(osdirs, "os_name", lambda: os_name)
+    (paths.data / ci.STATE_FILE).write_text('{"previous_statusline": null, "installed_at": "2026-10-01T10:00:00"}')
+    (paths.data / ci.PASSTHROUGH_FILE).write_text("echo old")
+    assert (await client.post("/api/integration/install", json={})).status == 200
     moved = os_name == "windows"
-    assert (state / ci.PASSTHROUGH_FILE).exists() is moved and (state / ci.STATE_FILE).exists() is moved
     assert (paths.data / ci.PASSTHROUGH_FILE).exists() is not moved
+    assert (paths.data / ci.STATE_FILE).exists() is not moved
 
 
 async def test_integration_invalid_json_is_400(client, tmp_path):

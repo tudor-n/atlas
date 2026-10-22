@@ -33,8 +33,10 @@ def _localappdata() -> Path:
 
 
 def _xdg(name: str, default: str) -> Path:
-    """`${name:-~/default}`: an unset or empty variable falls back to the default."""
-    return _env_path(name) or Path.home() / default
+    """`${name:-~/default}`: an unset or empty variable falls back to the default, and so does a
+    relative one (the XDG spec says to ignore those)."""
+    value = _env_path(name)
+    return value if value is not None and value.is_absolute() else Path.home() / default
 
 
 def state_dir() -> Path:
@@ -66,13 +68,31 @@ def _linux_boot_id() -> str:
     return value
 
 
+WINDOWS_BOOT_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
+
+
 def _boot_minute(now: float, uptime_ms: int) -> str:
-    """The boot time (now minus uptime) in epoch minutes, rounded so the jitter between two
-    readings never matters."""
+    """The boot time (now minus uptime) in epoch minutes. Only a fallback: a boot time near a
+    minute edge can round differently in two processes, as the wall clock drifts against the
+    tick count."""
     return f"win-{round((now - uptime_ms / 1000) / 60)}"
 
 
+def _windows_boot_counter() -> int:
+    """Windows' own boot counter (a DWORD bumped at every boot), read-only from the registry."""
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WINDOWS_BOOT_KEY) as key:
+        value, kind = winreg.QueryValueEx(key, "BootId")
+    if kind != winreg.REG_DWORD:
+        raise OSError("BootId is not a DWORD")
+    return int(value)
+
+
 def _windows_boot_id() -> str:
+    try:
+        return f"win-boot-{_windows_boot_counter()}"
+    except OSError:
+        pass
     import ctypes
     tick = ctypes.windll.kernel32.GetTickCount64  # ms since boot, sleep and hibernation included
     tick.restype = ctypes.c_ulonglong
@@ -81,10 +101,10 @@ def _windows_boot_id() -> str:
 
 @functools.cache
 def boot_id() -> str:
-    """Identifies this boot of this OS: Linux's kernel boot id, or the Windows boot time to the
-    minute. A row or lock from the other OS always has a different id. It never raises: when it
-    can't be read it returns "unknown-<pid>", which callers treat as a fresh boot. Read once per
-    process (a process never outlives its boot), so the Windows rounding can't flip between calls."""
+    """Identifies this boot of this OS: Linux's kernel boot id, or Windows' registry boot counter
+    (the boot time to the minute if that can't be read). A row or lock from the other OS always
+    has a different id. It never raises: when it can't be read it returns "unknown-<pid>", which
+    callers treat as a fresh boot. Read once per process: a process never outlives its boot."""
     try:
         return _windows_boot_id() if sys.platform == "win32" else _linux_boot_id()
     except Exception:

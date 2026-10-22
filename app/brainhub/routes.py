@@ -623,7 +623,8 @@ async def delete_agent(request: web.Request) -> web.Response:
 
 
 def _integration_view(app: web.Application) -> dict:
-    ci.adopt_legacy(app["paths"].data, osdirs.state_dir(), osdirs.os_name())
+    # No legacy adoption here: moving the passthrough file on a GET would cut the live status line
+    # off from it until a reinstall. install/uninstall adopt and rewrite the line together.
     view = ci.status(app["claude_settings_path"], port=app["port"])
     return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
 

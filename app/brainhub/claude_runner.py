@@ -79,7 +79,10 @@ def build_args(*, model: str, system_prompt_file: Path, allowed_tools: list[str]
 def _local_bin(name: str) -> str | None:
     """The native installer puts claude in ~/.local/bin, which a hub started at login may not
     have on PATH (P6)."""
-    exe = Path.home() / ".local" / "bin" / (name + (".exe" if sys.platform == "win32" else ""))
+    try:
+        exe = Path.home() / ".local" / "bin" / (name + (".exe" if sys.platform == "win32" else ""))
+    except RuntimeError:  # no home folder at all: construction must still never raise
+        return None
     return str(exe) if exe.is_file() else None
 
 
