@@ -6,7 +6,7 @@ A thin Tauri v2 shell around the hub. It shows the hub's `/widget` page in a sma
 - **Rust** via [rustup](https://rustup.rs) (the MSVC toolchain, the default on Windows). `cargo` lives in `%USERPROFILE%\.cargo\bin`; add it to `PATH` if your shell doesn't have it.
 - **Visual Studio 2022 C++ build tools** ("Desktop development with C++": MSVC and a Windows SDK).
 - **WebView2 runtime.** It ships with Windows 11; on Windows 10 install the Evergreen runtime from Microsoft.
-- The hub itself installed as in `app/README.md`.
+- The hub set up as in `app/README.md` → Setup on each OS (uv, a dev copy's venv, `runtime init`).
 
 ## Prerequisites (Linux)
 - **Rust** via [rustup](https://rustup.rs). `cargo` lives in `~/.cargo/bin`.
@@ -14,7 +14,7 @@ A thin Tauri v2 shell around the hub. It shows the hub's `/widget` page in a sma
   ```
   sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
   ```
-- The hub itself installed as in `app/README.md` (`uv sync` in `app/`, which makes `app/.venv`).
+- The hub set up as in `app/README.md` → Setup on each OS (uv, a dev copy's venv, `runtime init`).
 
 Node is not needed to build. It was used once, with `npx @tauri-apps/cli@2 init`, to generate `src-tauri/icons/`.
 
@@ -30,10 +30,10 @@ Linux, from `app/desktop/src-tauri`:
 ```
 CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release
 ```
-The first build takes about 5 minutes. The result is `<target dir>/release/brainhub-desktop.exe` on Windows (about 11 MB) and `<target dir>/release/brainhub-desktop` on Linux, with no installer. `cargo test` (same `CARGO_TARGET_DIR`) runs the unit tests (backoff, config and folder rules, port check, supervisor).
+On the dual boot you build from the live copy (`<live copy>/app/desktop/src-tauri`): add `--locked` there (see [Runtime mode](#runtime-mode), step 4). The first build takes about 5 minutes. The result is `<target dir>/release/brainhub-desktop.exe` on Windows (about 11 MB) and `<target dir>/release/brainhub-desktop` on Linux, with no installer. `cargo test` (same `CARGO_TARGET_DIR`) runs the unit tests (backoff, config and folder rules, port check, supervisor).
 
 ## Configure: `desktop-config`
-From `app/` (Windows: `.venv\Scripts\python`, Linux: `.venv/bin/python` or `uv run python`):
+From `app/` in a dev copy, with `uv run --no-sync python` (or the venv's python: `.venv\Scripts\python` on Windows, `.venv/bin/python` on Linux):
 ```
 python -m brainhub desktop-config --root <data root>
 ```
@@ -43,7 +43,7 @@ This writes `desktop.json` to the shell's config folder and prints its path:
 - `BRAINHUB_CONFIG_DIR`, if set, replaces the folder on both OSes (tests and manual checks use it; the shell reads it too).
 
 ```json
-{"port": 8090, "root": "D:\\BrainHub", "python": "D:\\BrainHub\\app\\.venv\\Scripts\\python.exe", "app_dir": "D:\\BrainHub\\app"}
+{"port": 8090, "root": "/tmp/bh-test", "python": "/home/tudor/dev/BrainHub/app/.venv/bin/python", "app_dir": "/home/tudor/dev/BrainHub/app"}
 ```
 - `port` is the hub's `port` setting. The shell passes it to the hub it starts (`--port`) and reads the file only when it starts, so after you change the port in Settings: re-run the command, then **restart BrainHub Desktop** (tray → Quit, then start it again).
 - `python` is the console python that ran the command. On Windows that is `python.exe` (if you run it with `pythonw.exe`, the `python.exe` beside it). The shell starts it without a window, which gives the hub a hidden console; the git, claude and taskkill processes the hub runs share that console, so none of them flashes a window. (With `pythonw.exe`, which has no console at all, each of them would open a visible one.) On Linux it is the venv's `bin/python`, kept as it is (it's a symlink to the base interpreter, which would run without the venv).
@@ -54,7 +54,7 @@ Without the file, the shell assumes port 8090 and only connects: it never starts
 ## Runtime mode
 The setup above (legacy mode) runs the hub straight from a checkout, which is right for development. On the dual boot each OS instead runs the hub from one of two **runtime slots** in its state folder (`runtime/slot-a`, `runtime/slot-b`: an exact copy of a live-copy commit's `app/` plus its own venv), and an update step keeps them in step with the live copy (`/mnt/data/BrainHub` = `D:\BrainHub`) before every hub start.
 
-1. **Build the first slot**, once per OS (from `app/`; `BRAINHUB_STATE_DIR` moves the state folder, as everywhere):
+1. **Build the first slot**, once per OS (from a dev copy's `app/`, as in `app/README.md` → Setup on each OS; `BRAINHUB_STATE_DIR` moves the state folder, as everywhere):
    ```
    python -m brainhub runtime init --live <live copy>
    ```

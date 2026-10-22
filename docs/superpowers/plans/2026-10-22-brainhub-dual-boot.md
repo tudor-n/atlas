@@ -135,16 +135,16 @@
   - `concurrency` cancels superseded runs on the same ref.
   - Pin action versions to major tags.
 
-- [ ] **Step 1: Make the 10 failing tests portable** (keep each test's intent):
+- [x] **Step 1: Make the 10 failing tests portable** (keep each test's intent):
   - `test_claude_runner.py`: the 8 live-process tests use `fake_cli`.
   - `test_hook_client.py::test_statusline_passthrough_hang_is_bounded`: per-OS hang command. Windows keeps `ping -n 10 127.0.0.1 >nul & echo late`; POSIX uses `sleep 10; echo late`. No test may write `nul` or any other reserved name.
   - `test_agents.py::test_project_from_map_is_case_and_separator_insensitive`: split into `…_windows` (today's asserts, `skipif(sys.platform != "win32")`) and `test_project_from_map_is_exact_on_posix`. Map folder `/home/u/dev/RobotArmControl/`: `/home/u/dev/RobotArmControl/src` matches; `/home/u/dev/robotarmcontrol/src` and `/home/u/dev/RobotArmControlOld` don't; longest match wins between `/home/u/Work` and `/home/u/Work/robot`.
   - The two "Windows console flags" skips stay Windows-only; that's correct, they check `CREATE_NO_WINDOW`.
-- [ ] **Step 2: Rust.** Add `#[cfg(unix)] spawns_logs_and_stops_own_child_unix`, using `/bin/sh` as the stand-in python (it exits at once on null stdin, like `cmd.exe` today). Make `config_missing_file_defaults` use a path that is missing on both OSes (keep the `Z:\…` one; it's simply missing on Linux).
-- [ ] **Step 3: Run** the Python and JS suites on Linux: everything passes, and `app/nul` does not appear (`git status` is clean apart from the intended changes).
-- [ ] **Step 4: Add `.gitattributes`, `uv.lock` and `ci.yml`.** Validate the workflow locally with `actionlint` if available (`go run`/binary download is fine in a temp dir); otherwise review the YAML carefully.
-- [ ] **Step 5: Commit** `ci: portable test suite, LF line endings, CI on Ubuntu and Windows`.
-- [ ] **Step 6: Windows CI run (needs the owner).** Ask the owner to OK pushing `dual-boot` and opening a draft PR, so the workflow runs on both OSes. Fix whatever Windows CI reports (CRLF assumptions, path assumptions) before moving on; Windows failures from here on block the next task.
+- [x] **Step 2: Rust.** Add `#[cfg(unix)] spawns_logs_and_stops_own_child_unix`, using `/bin/sh` as the stand-in python (it exits at once on null stdin, like `cmd.exe` today). Make `config_missing_file_defaults` use a path that is missing on both OSes (keep the `Z:\…` one; it's simply missing on Linux).
+- [x] **Step 3: Run** the Python and JS suites on Linux: everything passes, and `app/nul` does not appear (`git status` is clean apart from the intended changes).
+- [x] **Step 4: Add `.gitattributes`, `uv.lock` and `ci.yml`.** Validate the workflow locally with `actionlint` if available (`go run`/binary download is fine in a temp dir); otherwise review the YAML carefully.
+- [x] **Step 5: Commit** `ci: portable test suite, LF line endings, CI on Ubuntu and Windows`.
+- [x] **Step 6: Windows CI run (needs the owner).** Ask the owner to OK pushing `dual-boot` and opening a draft PR, so the workflow runs on both OSes. Fix whatever Windows CI reports (CRLF assumptions, path assumptions) before moving on; Windows failures from here on block the next task.
 
 ---
 
@@ -176,11 +176,11 @@
   - no blank window (if blank, retry with `WEBKIT_DISABLE_DMABUF_RENDERER=1`).
 - Screenshots via `spectacle -b -n -f -o /tmp/bh-spike-N.png` can be viewed to check the visual items. Items that need the owner's eyes or hands (dragging, Alt+Tab) are asked of the owner in one short list.
 
-- [ ] **Step 1:** Prerequisites installed; shell builds.
-- [ ] **Step 2:** Option 1 checks recorded.
-- [ ] **Step 3:** Option 2 checks recorded.
-- [ ] **Step 4: Decide.** Pick the option that meets the parent spec §3.1 target fully; prefer option 1 if both do (no KWin rule to install). **If neither meets it fully: stop and bring the results to the owner** (design §8.1). Write the result as Ruling D1, with the env vars or rule the shell must apply.
-- [ ] **Step 5:** Clean up (KWin rule, Tauri data folders, temp roots). **Commit** `docs: Wayland widget spike result (ruling D1)`.
+- [x] **Step 1:** Prerequisites installed; shell builds.
+- [x] **Step 2:** Option 1 checks recorded.
+- [x] **Step 3:** Option 2 checks recorded. (Baseline only: native Wayland without a rule. Option 1 was chosen; see D1.)
+- [x] **Step 4: Decide.** Pick the option that meets the parent spec §3.1 target fully; prefer option 1 if both do (no KWin rule to install). **If neither meets it fully: stop and bring the results to the owner** (design §8.1). Write the result as Ruling D1, with the env vars or rule the shell must apply.
+- [x] **Step 5:** Clean up (KWin rule, Tauri data folders, temp roots). **Commit** `docs: Wayland widget spike result (ruling D1)`.
 
 ---
 
@@ -206,7 +206,7 @@
 - `brainmap.save_map`: write with `open(…, "w", encoding="utf-8", newline="\n")`.
 - `/api/state` gains `"os": osdirs.os_name()`.
 
-- [ ] **Step 1: Write failing tests.**
+- [x] **Step 1: Write failing tests.**
   - `test_osdirs.py`:
     - `test_state_dir_env_override`.
     - `test_state_dir_linux_xdg` (posix-only): `XDG_DATA_HOME` set, then unset, falling back to `~/.local/share/brainhub`.
@@ -219,10 +219,10 @@
   - `test_config.py`: `test_claude_path_must_be_bare` (`"claude"` ok; `"C:\\x\\claude.exe"` and `"/usr/bin/claude"` rejected; a stored absolute path in `settings.json` falls back to `"claude"` with a problem listed).
   - `test_claude_runner.py`: `test_claude_found_in_local_bin_fallback` (monkeypatch `Path.home` and an empty PATH).
   - `test_brainmap.py`: `test_map_json_is_lf` (raw bytes contain no `\r\n`, on any OS).
-- [ ] **Step 2: Run:** FAIL.
-- [ ] **Step 3: Implement.** Update existing integration tests to pass `state_dir`.
-- [ ] **Step 4: Run** the full Python suite: PASS.
-- [ ] **Step 5: Commit** `feat: per-OS state folder; integration state leaves shared data; bare claude_path; LF map.json`.
+- [x] **Step 2: Run:** FAIL.
+- [x] **Step 3: Implement.** Update existing integration tests to pass `state_dir`.
+- [x] **Step 4: Run** the full Python suite: PASS.
+- [x] **Step 5: Commit** `feat: per-OS state folder; integration state leaves shared data; bare claude_path; LF map.json`.
 
 ---
 
@@ -242,15 +242,15 @@
 - Map editor: two textareas per project, "Folders on Windows" and "Folders on Linux"; the current OS's column is labelled "(this PC)" (from `state.os`). Editing writes `os_folders` and removes `folders`. A path in the wrong column shows the same inline error style as other map errors.
 - Agents view: an unmapped row with `suggest` shows one small button, "link to <name>", calling the endpoint.
 
-- [ ] **Step 1: Write failing tests.**
+- [x] **Step 1: Write failing tests.**
   - `test_folders_for_mixes_os_folders_and_legacy`.
   - `test_validate_rejects_wrong_column`.
   - `test_resolve_ignores_other_os_folders`: a Windows folder never matches on Linux and the reverse (posix-only and win32-only halves).
   - `test_suggest_link_by_folder_name`: map project robotarm with `os_folders.windows = ["D:\\RobotArmControl"]`; a Linux cwd `<tmp>/dev/RobotArmControl/src` inside a git repo whose top is `<tmp>/dev/RobotArmControl` → suggestion with that top folder. An ambiguous name → None. A mapped row → None.
   - `test_api_link_adds_folder_and_commits`; `test_api_link_409_without_suggestion`.
   - JS: the map-editor model round-trips `os_folders` and drops `folders`; the agents model shows the link action only when `suggest` is set.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** Python + JS: PASS.
-- [ ] **Step 5: Commit** `feat: per-OS project folders in the map, one-click link by folder name`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** Python + JS: PASS.
+- [x] **Step 5: Commit** `feat: per-OS project folders in the map, one-click link by folder name`.
 
 ---
 
@@ -290,7 +290,7 @@
   - `SCHEMA_VERSION = 1` and `MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]]` (empty now; Task 7 adds 2).
   - `init_schema` reads `PRAGMA user_version`: 0 on a db created before versioning → create the schema and set it to `SCHEMA_VERSION`; lower → run migrations in order, then set; higher → raise `SchemaTooNew`.
 
-- [ ] **Step 1: Write failing tests** (`test_rootguard.py`, real temp folders, fake fstab text):
+- [x] **Step 1: Write failing tests** (`test_rootguard.py`, real temp folders, fake fstab text):
   - `test_missing_root_is_never_created`: `create_app` on a non-existent root raises `RootUnavailable`, and the folder still doesn't exist.
   - `test_unmounted_fstab_mount_point_is_missing`: fstab lists `<tmp>/mnt`, `ismount` returns False → missing, even though the folder exists and is empty.
   - `test_fresh_root_allows_setup_and_writes_marker`: root with an `app/` folder and an empty `brain/`; `POST /api/setup` succeeds and `data/root.json` has 32-hex `id` and `brain_format == 1`.
@@ -303,8 +303,8 @@
   - `test_tz_mismatch_warning` (monkeypatch `time.timezone`).
   - `test_lock_from_other_os_is_taken_over`, `test_lock_from_other_boot_is_taken_over`, `test_lock_dead_pid_is_taken_over`, `test_lock_live_same_boot_refuses` (use the test's own pid), `test_release_only_our_lock`.
   - Existing tests that build apps on the `paths` fixture keep working: the fixture's empty `brain/` and `data/` count as fresh, and tests that save a map directly count as legacy and get a marker. Fix any that break by adjusting fixtures, never by weakening the guard.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** the full suite: PASS.
-- [ ] **Step 5: Commit** `feat: root guard (marker, mount check, never create a root), hub lock, tz check, schema versioning`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** the full suite: PASS.
+- [x] **Step 5: Commit** `feat: root guard (marker, mount check, never create a root), hub lock, tz check, schema versioning`.
 
 ---
 
@@ -346,7 +346,7 @@
   - `warnings` render as a quiet one-line note under the header, never a popup.
   - The widget shows the banner text in its synopsis line, and the capture box keeps working.
 
-- [ ] **Step 1: Write failing tests.**
+- [x] **Step 1: Write failing tests.**
   - `test_holding.py`:
     - `test_hold_is_durable_and_listed`;
     - `test_capture_held_then_flushed_with_original_ts`: held at 2026-10-20 23:59:30, flushed on 2026-10-22; it lands in `log/2026/10/2026-10-20.md` with its own ts and id;
@@ -360,9 +360,9 @@
     - `test_recovery_requests_exit_75`: missing root → create it with a marker → after one re-check tick (inject the interval), `app["exit_code"] == 75`.
   - `test_winwatch.py`: monkeypatched reader; `[]` on non-Windows.
   - JS: the widget model's synopsis shows the banner when `drive` is set; the app banner helper formats the held count.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** Python + JS: PASS.
-- [ ] **Step 5: Manual check** on temp roots: a missing root, a read-only root (`chmod -R a-w`), and recovery (the hub exits 75 once the root appears). Note the results in the decisions doc.
-- [ ] **Step 6: Commit** `feat: reduced mode with holding inbox, read-only root, safe hub.db handling, Fast Startup watch`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** Python + JS: PASS.
+- [x] **Step 5: Manual check** on temp roots: a missing root, a read-only root (`chmod -R a-w`), and recovery (the hub exits 75 once the root appears). Note the results in the decisions doc.
+- [x] **Step 6: Commit** `feat: reduced mode with holding inbox, read-only root, safe hub.db handling, Fast Startup watch`.
 
 ---
 
@@ -393,7 +393,7 @@
   - `hook_client._run_passthrough` does the same on POSIX (`start_new_session=True`, `killpg` on timeout); it stays silent and bounded.
 - **Worktree prune across OSes:** keep today's behaviour (`requeue_unfinished` removes leftovers under `data/worktrees`), and add a test where the leftover's `.git` file names an absolute path from the other OS.
 
-- [ ] **Step 1: Write failing tests.**
+- [x] **Step 1: Write failing tests.**
   - `test_gitrepo.py`:
     - `test_git_calls_pass_safe_directory` (spy on `subprocess.run` args);
     - `test_init_sets_filemode_false`;
@@ -407,8 +407,8 @@
     - `test_migration_2_adds_columns` (a v1 db file).
   - `test_claude_runner.py` (posix-only): `test_timeout_kills_process_group`. The fake CLI spawns `sleep 30` and writes its pid to a file; after the timeout that pid is gone.
   - `test_hook_client.py` (posix-only): `test_passthrough_child_killed_on_timeout` (same pattern).
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** the full suite: PASS.
-- [ ] **Step 5: Commit** `feat: brain git hygiene for two OSes, Windows-safe filing paths, boot clean-up, process groups`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** the full suite: PASS.
+- [x] **Step 5: Commit** `feat: brain git hygiene for two OSes, Windows-safe filing paths, boot clean-up, process groups`.
 
 ---
 
@@ -439,7 +439,7 @@
   - The written file is unchanged in shape for now (Task 9 adds runtime mode).
 - `CARGO_TARGET_DIR`: the README tells each OS to use a local target dir (`~/.cache/brainhub-target` on Linux, `%LOCALAPPDATA%\brainhub-target` on Windows).
 
-- [ ] **Step 1: Write failing tests.**
+- [x] **Step 1: Write failing tests.**
   - Rust:
     - `config_path_honours_env_override`;
     - `config_path_xdg` (unix);
@@ -447,9 +447,9 @@
     - `exit_75_restarts_without_backoff` (unix: the stand-in python is `/bin/sh -c 'exit 75'` via a tiny script);
     - `stop_sends_sigterm_first` (unix: the stand-in traps TERM and writes a marker file before exiting).
   - Python: `test_default_target_xdg` (posix), `test_console_python_posix_layout`.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** cargo test + pytest: PASS.
-- [ ] **Step 5: Manual check on Kubuntu** (temp root, temp state, `BRAINHUB_CONFIG_DIR` temp): build, `desktop-config --target`, then run the shell. It spawns the hub, the widget meets D1's checklist, tray → Open opens the browser, tray → Quit stops the hub (SIGTERM visible in `hub.log`). Don't tick "Start at login" with the real autostart folder in a test run. Clean up the Tauri data folders afterwards.
-- [ ] **Step 6: Commit** `feat: desktop shell on Linux (XDG paths, xdg-open, SIGTERM stop, Wayland per D1)`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** cargo test + pytest: PASS.
+- [x] **Step 5: Manual check on Kubuntu** (temp root, temp state, `BRAINHUB_CONFIG_DIR` temp): build, `desktop-config --target`, then run the shell. It spawns the hub, the widget meets D1's checklist, tray → Open opens the browser, tray → Quit stops the hub (SIGTERM visible in `hub.log`). Don't tick "Start at login" with the real autostart folder in a test run. Clean up the Tauri data folders afterwards.
+- [x] **Step 6: Commit** `feat: desktop shell on Linux (XDG paths, xdg-open, SIGTERM stop, Wayland per D1)`.
 
 ---
 
@@ -487,7 +487,7 @@
 - **Shell freshness:** the update step also writes `shell_source` (sha256 of `app/desktop/src-tauri/src/**`, `capabilities/**`, `Cargo.toml`, `Cargo.lock`, `build.rs` and `tauri.conf.json` from the live copy; the algorithm is in `shell_source`'s docstring) to `update.json`. The shell compares it with the hash baked in at build time (`build.rs` env var) and shows "widget update available" in the tray tooltip and Settings. Rebuilding stays a manual, documented command (design §5.3, builder's choice).
 - **Settings:** a "Runtime" line shows the current commit, the last check, and "update pending (reason)" when set (via `/api/state.runtime`, read from `<state>/update.json` and `current.json`).
 
-- [ ] **Step 1: Write failing tests** (`test_update_step.py`, real git: a temp "origin" bare repo, a "live" clone, a fake `gh` and a fake `uv` as executables on a temp PATH, via the Task 1 fake-CLI helper pattern):
+- [x] **Step 1: Write failing tests** (`test_update_step.py`, real git: a temp "origin" bare repo, a "live" clone, a fake `gh` and a fake `uv` as executables on a temp PATH, via the Task 1 fake-CLI helper pattern):
   - `test_fast_forward_when_ci_green`;
   - `test_ci_not_green_is_not_pulled` (pending, failed, and gh missing → all "not green");
   - `test_dirty_live_copy_is_left_alone` (an untracked file → no fetch result applied, the file untouched, `pending == "dirty working tree"`);
@@ -501,9 +501,9 @@
   - `test_never_runs_destructive_git` (spy: a PATH wrapper around git logs subcommands, and none of reset/stash/checkout/clean/merge without `--ff-only` appear);
   - `test_live_missing_is_quiet`.
   - Rust: `runtime_mode_spawn_args` (python path and cwd from a temp `current.json`); `legacy_mode_unchanged`.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** pytest + cargo test: PASS.
-- [ ] **Step 5: Manual check** with a temp "live" clone of the dev copy and a temp state: `runtime init`, start the shell in runtime mode, make a commit in the temp origin, restart → the update is refused while CI isn't green (fake gh) and taken once green.
-- [ ] **Step 6: Commit** `feat: runtime slots and a CI-gated, fast-forward-only update step`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run** pytest + cargo test: PASS.
+- [x] **Step 5: Manual check** with a temp "live" clone of the dev copy and a temp state: `runtime init`, start the shell in runtime mode, make a commit in the temp origin, restart → the update is refused while CI isn't green (fake gh) and taken once green.
+- [x] **Step 6: Commit** `feat: runtime slots and a CI-gated, fast-forward-only update step`.
 
 ---
 
@@ -522,14 +522,14 @@
 - `OUR_SUFFIX` matching also recognises `brainhub/hook/hook_client.py`, and `hook/hook_client.py` under a `brainhub`/`BrainHub` state folder, so status/uninstall find hooks written in runtime mode.
 - **Linux entrypoints:** run one real interactive check with the owner (a terminal session and a VS Code session on Kubuntu, with the integration installed against a temp `CLAUDE_CONFIG_DIR` copy only if possible; otherwise during rollout). Record the raw `CLAUDE_CODE_ENTRYPOINT` values in the decisions doc, and extend `WHERE_BY_ENTRYPOINT` if they differ.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `test_runtime_mode_hooks_use_stable_paths`;
   - `test_posix_statusline_quoting` (a path with a space and a `'`);
   - `test_uninstall_on_one_os_keeps_other_statusline` (two state folders, two settings files, one shared root);
   - `test_status_recognises_runtime_hook_path`.
-- [ ] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run:** PASS.
-- [ ] **Step 5: Real e2e on Kubuntu** against a temp `CLAUDE_CONFIG_DIR` (never the real one), mirroring the phase 2 "Measured" e2e: a `claude -p` run with the hook command forcing `CLAUDE_CODE_ENTRYPOINT=cli` → a row appears in Agents; the status line POSTs usage. Record the timings in `app/README.md` → Measured.
-- [ ] **Step 6: Commit** `feat: Claude Code integration on Linux; stable hook paths across runtime slots`.
+- [x] **Step 2: Run:** FAIL. **Step 3: Implement.** **Step 4: Run:** PASS.
+- [x] **Step 5: Real e2e on Kubuntu** against a temp `CLAUDE_CONFIG_DIR` (never the real one), mirroring the phase 2 "Measured" e2e: a `claude -p` run with the hook command forcing `CLAUDE_CODE_ENTRYPOINT=cli` → a row appears in Agents; the status line POSTs usage. Record the timings in `app/README.md` → Measured.
+- [x] **Step 6: Commit** `feat: Claude Code integration on Linux; stable hook paths across runtime slots`.
 
 ---
 
@@ -561,8 +561,8 @@ Record the winner (Ruling D2), with the exact key encoding observed (the `<key>`
 - The shell runs `claude-sync` once at startup (before the update step, with the current slot's python; skipped quietly if absent). While running, it re-runs the settings part when `~/.claude/settings.json` changes (poll the mtime every 5 s; a notify crate is not needed).
 - **One-time labelling (design §7.5)** is a rollout step done with the owner, not code.
 
-- [ ] **Step 1 (spike):** Linux half now; Windows half at the scheduled reboot. Write Ruling D2. **If nothing works on one OS: stop and bring it to the owner.**
-- [ ] **Step 2: Write failing tests** (`test_claude_sync.py`, temp claude dir, temp shared dir, posix symlinks; Windows junction cases run in CI):
+- [ ] **Step 1 (spike):** Linux half now; Windows half at the scheduled reboot. Write Ruling D2. (Linux half done, ruling D2; the Windows half is still open.) **If nothing works on one OS: stop and bring it to the owner.**
+- [x] **Step 2: Write failing tests** (`test_claude_sync.py`, temp claude dir, temp shared dir, posix symlinks; Windows junction cases run in CI):
   - `test_links_home_and_paired_projects`;
   - `test_local_folder_backed_up_before_link`;
   - `test_merge_keeps_both_on_conflict`;
@@ -579,8 +579,8 @@ Record the winner (Ruling D2), with the exact key encoding observed (the `<key>`
   - `test_missing_shared_dir_changes_nothing`;
   - `test_never_deletes_notes` (run twice with clashes, then count the files);
   - `test_commit_and_quiet_push_failure`.
-- [ ] **Step 3: Run:** FAIL. **Step 4: Implement.** **Step 5: Run:** PASS.
-- [ ] **Step 6: Commit** `feat: claude-sync (shared Claude Code memory, skills and settings across OSes)`.
+- [x] **Step 3: Run:** FAIL. **Step 4: Implement.** **Step 5: Run:** PASS.
+- [x] **Step 6: Commit** `feat: claude-sync (shared Claude Code memory, skills and settings across OSes)`.
 
 ---
 
@@ -588,12 +588,12 @@ Record the winner (Ruling D2), with the exact key encoding observed (the `<key>`
 
 **Files:** `app/CLAUDE.md`, `app/README.md`, `app/desktop/README.md`, `README.md`, `NEXT-SESSION.md`, `docs/superpowers/dual-boot-decisions.md`
 
-- [ ] `app/CLAUDE.md`: no longer "on Windows". Add the live/dev/runtime model, the per-OS state folder, the root guard and reduced mode, the portability rules, and the Linux run/test commands next to the Windows ones. Rule 9 names both real-root paths; rule 12 names both OSes' real settings and the state/config folders.
-- [ ] `app/README.md`: setup on each OS (uv, the runtime init, desktop-config, the integration, claude-sync); the drive banner and the holding inbox; the verification drills (design §10); Measured on Linux.
-- [ ] `app/desktop/README.md`: Linux prerequisites, `CARGO_TARGET_DIR`, the Wayland ruling, autostart on KDE.
-- [ ] Replace `NEXT-SESSION.md` with a short pointer: where things stand, and where the rules and memory now live (shared store). It stops being the only carrier between OSes.
-- [ ] `dual-boot-decisions.md`: every ruling (D1, D2, …) and the known residuals.
-- [ ] **Commit** `docs: dual boot (both OSes, runtime model, guards, claude-sync)`, then ask the owner whether to push and open the PR.
+- [x] `app/CLAUDE.md`: no longer "on Windows". Add the live/dev/runtime model, the per-OS state folder, the root guard and reduced mode, the portability rules, and the Linux run/test commands next to the Windows ones. Rule 9 names both real-root paths; rule 12 names both OSes' real settings and the state/config folders.
+- [x] `app/README.md`: setup on each OS (uv, the runtime init, desktop-config, the integration, claude-sync); the drive banner and the holding inbox; the verification drills (design §10); Measured on Linux.
+- [x] `app/desktop/README.md`: Linux prerequisites, `CARGO_TARGET_DIR`, the Wayland ruling, autostart on KDE.
+- [x] Replace `NEXT-SESSION.md` with a short pointer: where things stand, and where the rules and memory now live (shared store). It stops being the only carrier between OSes.
+- [x] `dual-boot-decisions.md`: every ruling (D1, D2, …) and the known residuals.
+- [x] **Commit** `docs: dual boot (both OSes, runtime model, guards, claude-sync)`, then ask the owner whether to push and open the PR.
 
 ---
 
