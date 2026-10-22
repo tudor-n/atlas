@@ -48,6 +48,7 @@ async def test_setup_then_state(client, app):
     assert state["setup_done"] is False and state["log_error"] is None
     assert state["brain_path"] == str(app["paths"].brain)
     assert state["os"] == ("windows" if sys.platform == "win32" else "linux")
+    assert state["warnings"] == [] and app["root_status"].state == "fresh"
     r = await client.post("/api/setup", json={"map": MAP, "backup_remote": None})
     assert r.status == 200
     assert (await (await client.get("/api/state")).json())["setup_done"] is True

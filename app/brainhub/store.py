@@ -31,6 +31,23 @@ def is_note_path(rel: str) -> bool:
     return (rel.lower().endswith(".md") and parts[0].lower() not in _SKIP_DIRS
             and not any(p.startswith(".") for p in parts))
 
+# The schema version lives in PRAGMA user_version (dual-boot design §5.2). _SCHEMA is always the
+# latest schema; MIGRATIONS[n] moves a version n-1 database to version n.
+SCHEMA_VERSION = 1
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+
+
+class SchemaTooNew(Exception):
+    """hub.db was written by a newer BrainHub. It is never migrated, rebuilt or moved aside: code
+    meeting data newer than it understands refuses it (a dev copy pointed at the real root, or an
+    OS whose runtime is behind the other's)."""
+
+    def __init__(self, found: int, known: int):
+        super().__init__(f"hub.db was written by a newer BrainHub (schema {found}; this copy knows up "
+                         f"to {known}). Update BrainHub on this OS; nothing was changed.")
+        self.found, self.known = found, known
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries(
     id TEXT PRIMARY KEY, ts TEXT NOT NULL, source TEXT NOT NULL, text TEXT NOT NULL);
@@ -90,9 +107,37 @@ class Store:
             raise
 
     def init_schema(self) -> None:
+        """Create, migrate or check the schema. user_version 0 is a new database, or one made
+        before versioning (whose tables are version 1); lower versions are migrated in order;
+        a higher one raises SchemaTooNew before anything is written."""
         with self._lock:
-            self._db.executescript(_SCHEMA)
+            version = self._db.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise SchemaTooNew(version, SCHEMA_VERSION)
+            if version == 0 and self._db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
+                version = 1  # made before versioning: the version 1 tables
+            if 0 < version < SCHEMA_VERSION:
+                self._migrate(version)
+            self._db.executescript(_SCHEMA)  # IF NOT EXISTS: fills a new db, keeps existing tables
+            self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             self._db.commit()
+
+    def _migrate(self, version: int) -> None:
+        """Run MIGRATIONS[version+1..SCHEMA_VERSION] and record the new version, all or nothing."""
+        self._db.execute("BEGIN")
+        try:
+            for n in range(version + 1, SCHEMA_VERSION + 1):
+                MIGRATIONS[n](self._db)
+            self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            self._db.commit()
+        except BaseException:
+            self._db.rollback()
+            raise
+
+    def schema_version(self) -> int:
+        with self._lock:
+            return self._db.execute("PRAGMA user_version").fetchone()[0]
 
     def close(self) -> None:
         with self._lock:

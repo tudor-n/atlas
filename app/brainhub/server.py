@@ -21,8 +21,9 @@ from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
+from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
 from .routes import add_routes, errors, local_only, setup_done
-from .store import Store, commit_hook
+from .store import SchemaTooNew, Store, commit_hook
 from .usage import UsageStore
 from .widget import ArmProbe
 
@@ -30,6 +31,16 @@ log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 t = asyncio.to_thread
+# Root states the full app can't run on (Task 6 serves a reduced app for them instead).
+UNAVAILABLE = ("missing", "foreign", "newer")
+
+
+class RootUnavailable(Exception):
+    """The root is missing, foreign or newer than this code: nothing was created or changed."""
+
+    def __init__(self, status: RootStatus):
+        super().__init__(status.message)
+        self.status = status
 
 
 # -- startup -----------------------------------------------------------------
@@ -145,12 +156,16 @@ async def on_cleanup(app: web.Application) -> None:
 
 
 def _open_store(paths: Paths, problems: list[str]) -> Store:
-    """hub.db is a rebuildable index: a damaged one is moved aside and rebuilt from brain/."""
+    """hub.db is a rebuildable index: a damaged one is moved aside and rebuilt from brain/.
+    A newer one is not damaged: SchemaTooNew is raised and the file is left alone."""
     store = None
     try:
         store = Store(paths.db)
         store.init_schema()
         return store
+    except SchemaTooNew:  # not a DatabaseError: never moved aside
+        store.close()
+        raise
     except sqlite3.DatabaseError as e:
         if store is not None:
             store.close()
@@ -173,17 +188,34 @@ def _default_opener(url: str) -> None:
         webbrowser.open(url)
 
 
+def _warnings(paths: Paths) -> list[str]:
+    """Quiet one-line notes for the UI (never popups)."""
+    marker = read_marker(paths)
+    tz = tz_mismatch(marker) if marker else None
+    return [tz] if tz else []
+
+
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
                claude_settings_path: Path | None = None) -> web.Application:
+    # The root is classified before anything touches it: the hub never creates a root.
+    status = check_root(paths)
+    if status.state in UNAVAILABLE:
+        raise RootUnavailable(status)
+    if status.state in ("ok", "fresh"):
+        paths.data.mkdir(exist_ok=True)  # inside the existing root; never the root itself
     app = web.Application(middlewares=[local_only, errors])
-    paths.data.mkdir(parents=True, exist_ok=True)
     startup_errors: list[str] = []
     settings = load_settings(paths, startup_errors)
-    store = _open_store(paths, startup_errors)
+    try:
+        store = _open_store(paths, startup_errors)
+    except SchemaTooNew as e:
+        raise RootUnavailable(RootStatus("newer", str(e))) from e
     repo = BrainRepo(paths.brain)
     app["sockets"], app["tasks"], app["background"] = set(), [], set()
     app["log_error"], app["start_workers"] = None, start_workers
     app["startup_errors"] = startup_errors
+    app["root_status"] = status  # as found at start (setup later turns a fresh root into ok)
+    app["warnings"] = _warnings(paths)
 
     async def broadcast(type_: str, data: dict) -> None:
         extra = [("items.changed", {})] if type_ in ("filing.done", "filing.failed") else []

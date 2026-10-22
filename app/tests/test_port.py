@@ -22,15 +22,19 @@ def test_create_app_defaults_port_to_settings(paths):
 
 def test_run_server_stores_bound_port(tmp_path, monkeypatch):
     seen = {}
+    root = tmp_path / "root"
+    root.mkdir()  # a fresh root: the hub never creates one itself
+    lock = root / "data" / "hub.lock"
 
     def fake_run_app(app, *, host, port, **kw):
-        seen.update(app=app, host=host, port=port)
+        seen.update(app=app, host=host, port=port, locked=lock.exists())
 
     monkeypatch.setattr(main_mod.web, "run_app", fake_run_app)
-    main_mod.run_server(["--root", str(tmp_path / "root"), "--port", "8123"])
+    main_mod.run_server(["--root", str(root), "--port", "8123"])
     assert seen["port"] == 8123 and seen["host"] == "127.0.0.1"
     assert seen["app"]["port"] == 8123
     assert load_settings(seen["app"]["paths"])["port"] != 8123  # the settings port is not what it uses
+    assert seen["locked"] and not lock.exists()  # held while serving, released on the way out
 
 
 def test_second_hub_on_taken_port_exits_before_startup(tmp_path):

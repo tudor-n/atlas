@@ -6,8 +6,9 @@ from pathlib import Path
 
 from aiohttp import web
 
+from . import rootguard
 from .config import Paths, load_settings
-from .server import DEFAULT_HOST, create_app
+from .server import DEFAULT_HOST, RootUnavailable, create_app
 
 
 def run_server(argv: list[str]) -> None:
@@ -22,10 +23,26 @@ def run_server(argv: list[str]) -> None:
     if not port_free(DEFAULT_HOST, port):
         sys.exit(f"BrainHub: port {port} on {DEFAULT_HOST} is already in use (is another hub running?). "
                  "Not starting.")
-    app = create_app(paths)
-    app["port"] = port  # the port it really listens on, not the settings value (--port may differ)
-    print(f"BrainHub on http://{DEFAULT_HOST}:{port}", flush=True)
-    web.run_app(app, host=DEFAULT_HOST, port=port, print=None)
+    # One hub per root, whatever its port: the lock is checked before any startup work too.
+    # A read-only root is only checked (nothing can be written there); missing, foreign and
+    # newer roots are never written, so they take no lock.
+    status = rootguard.check_root(paths)
+    locked = status.state in ("ok", "fresh")
+    if status.state in ("ok", "fresh", "readonly"):
+        refusal = rootguard.acquire_lock(paths, write=locked)
+        if refusal:
+            sys.exit(f"BrainHub: not starting. {refusal}")
+    try:
+        try:
+            app = create_app(paths)
+        except RootUnavailable as e:
+            sys.exit(f"BrainHub: not starting. {e.status.message}")
+        app["port"] = port  # the port it really listens on, not the settings value (--port may differ)
+        print(f"BrainHub on http://{DEFAULT_HOST}:{port}", flush=True)
+        web.run_app(app, host=DEFAULT_HOST, port=port, print=None)
+    finally:
+        if locked:
+            rootguard.release_lock(paths)
 
 
 def port_free(host: str, port: int) -> bool:

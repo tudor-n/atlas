@@ -16,6 +16,7 @@ from aiohttp import web
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from . import claude_integration as ci
 from . import osdirs
+from . import rootguard
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -125,13 +126,19 @@ async def state(request: web.Request) -> web.Response:
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
         "backup": app["backup"].status(), "log_error": app["log_error"],
         "startup_error": list(app["startup_errors"]) or None,
-        "brain_path": str(app["paths"].brain), "os": osdirs.os_name()})
+        "brain_path": str(app["paths"].brain), "os": osdirs.os_name(),
+        "warnings": list(app["warnings"])})
 
 
 async def setup(request: web.Request) -> web.Response:
     app, paths = request.app, request.app["paths"]
     if setup_done(app):
         return err(409, "setup already done")
+    # A brain is only ever created on a fresh root, checked now: the drive may have gone since start.
+    status = await t(rootguard.check_root, paths)
+    if status.state != "fresh":
+        return err(409, status.message or "setup only runs on an empty folder, and this root is "
+                                          "already marked as a brain (data/root.json)")
     body = await body_dict(request)
     m = _map_from(body.get("map"))
     remote = body.get("backup_remote")
@@ -150,6 +157,8 @@ async def setup(request: web.Request) -> web.Response:
     if remote:
         await t(save_settings, paths, {"backup_remote": remote})
     await t(app["on_commit"], sha)
+    # Last, so a marker always means a finished setup (an interrupted one is adopted at next start).
+    await t(rootguard.create_marker, paths)
     return web.json_response({"ok": True})
 
 
