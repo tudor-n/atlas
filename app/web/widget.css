@@ -19,7 +19,7 @@ body.widget { font: 13px/1.35 "Segoe UI", system-ui, sans-serif; color: #f2f2f2;
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #ffb020; flex: none; }
 .dot[hidden] { display: none; }
 .synopsis { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none; }
-.synopsis.offline { color: #ffb020; }
+.synopsis.offline, .synopsis.drive { color: #ffb020; }
 .expand { background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 .expand:hover { border-color: rgba(255, 255, 255, 0.3); }
 
@@ -34,6 +34,8 @@ body.widget { font: 13px/1.35 "Segoe UI", system-ui, sans-serif; color: #f2f2f2;
 .capture::placeholder { color: #b8bcc2; }
 .capture-status { min-height: 18px; font-size: 12px; color: #9fe0a8; }
 .capture-status.err { color: #ff8a8a; }
+.notes { font-size: 11px; color: #b8bcc2; margin-bottom: 6px; overflow-wrap: anywhere; }
+.notes[hidden] { display: none; }
 
 .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .tile {

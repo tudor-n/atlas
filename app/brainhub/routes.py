@@ -15,6 +15,7 @@ from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from . import claude_integration as ci
+from . import holding
 from . import osdirs
 from . import rootguard
 from .claude_runner import ClaudeError
@@ -121,13 +122,14 @@ async def index(request: web.Request) -> web.StreamResponse:
 
 
 async def state(request: web.Request) -> web.Response:
-    app = request.app
+    app, held_problems = request.app, []
+    drive_ = await t(drive, app, held_problems)
     return web.json_response({
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
         "backup": app["backup"].status(), "log_error": app["log_error"],
-        "startup_error": list(app["startup_errors"]) or None,
+        "startup_error": [*app["startup_errors"], *held_problems] or None,
         "brain_path": str(app["paths"].brain), "os": osdirs.os_name(),
-        "warnings": list(app["warnings"])})
+        "warnings": list(app["warnings"]), "drive": drive_})
 
 
 async def setup(request: web.Request) -> web.Response:
@@ -447,7 +449,9 @@ async def get_widget(request: web.Request) -> web.Response:
     app = request.app
     state = await t(_widget_state, app)
     state["arm_reachable"] = await app["arm"].reachable(state["settings"]["arm_url"])
-    return web.json_response(await t(build_widget, state))
+    summary = await t(build_widget, state)
+    summary.update(drive=await t(drive, app), warnings=list(app["warnings"]))
+    return web.json_response(summary)
 
 
 async def widget_page(request: web.Request) -> web.StreamResponse:
@@ -692,6 +696,93 @@ async def post_integration_uninstall(request: web.Request) -> web.Response:
         return web.json_response(await t(_integration_change, request.app, False))
     except ci.IntegrationError as e:
         raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+# -- reduced and read-only modes (dual-boot design §6.5 items 2 and 3) -----------
+def drive(app: web.Application, problems: list | None = None) -> dict | None:
+    """The drive banner: None while the root is fine, else its state, the message and how many
+    captures this OS holds. Held files that can't be read are described in `problems`."""
+    status = app["root_status"]
+    if status.state in ("ok", "fresh"):
+        return None
+    return {"state": status.state, "message": status.message,
+            "held": len(holding.held(osdirs.state_dir(), problems))}
+
+
+async def hold_entry(request: web.Request) -> web.Response:
+    """POST /api/entries while the root isn't writable: the capture goes to this OS's holding
+    inbox, on disk before the answer. It reaches the raw log, with its own id and ts, at the
+    first start on a writable root."""
+    body = await body_dict(request)
+    text, source = body.get("text"), body.get("source")
+    if not isinstance(text, str) or not text.strip():
+        return err(400, "entry text is blank")
+    if source not in CAPTURE_SOURCES:
+        return err(400, f"source must be one of {list(CAPTURE_SOURCES)}")
+    record = await t(holding.hold, osdirs.state_dir(), text, source, datetime.now())
+    return web.json_response({"entry_id": record["id"], "held": True})
+
+
+async def ignored(request: web.Request) -> web.Response:
+    """Hook events and usage while the root isn't usable: accepted and dropped, so the owner's
+    Claude Code hooks stay fast and silent. The JSON rules still apply."""
+    await body_dict(request)
+    return web.Response(status=204)
+
+
+async def unavailable(request: web.Request) -> web.Response:
+    app = request.app
+    return web.json_response({"error": app["root_status"].message, "drive": await t(drive, app)},
+                             status=503)
+
+
+async def reduced_state(request: web.Request) -> web.Response:
+    """GET /api/state in reduced mode: setup_done is null and `drive` is set, so the UI shows the
+    banner and the capture box and never offers setup."""
+    app, held_problems = request.app, []
+    drive_ = await t(drive, app, held_problems)
+    return web.json_response({"setup_done": None, "drive": drive_, "warnings": list(app["warnings"]),
+                              "os": osdirs.os_name(), "log_error": None,
+                              "startup_error": held_problems or None})
+
+
+async def reduced_widget(request: web.Request) -> web.Response:
+    """GET /api/widget in reduced mode: the banner is the synopsis; there are no tiles."""
+    app = request.app
+    return web.json_response({"synopsis": app["root_status"].message, "attention": True, "tiles": [],
+                              "drive": await t(drive, app), "warnings": list(app["warnings"])})
+
+
+# Opening a page writes nothing, so it works in every mode (the widget's "Open in BrainHub").
+_HARMLESS_POSTS = ("/api/open",)
+_IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
+
+
+@web.middleware
+async def readonly_guard(request: web.Request, handler):
+    """Read-only root: reads work (Today, journal, recall); a capture goes to the holding inbox;
+    hook events and usage are ignored; anything else that would write is refused with the
+    reason (503)."""
+    method, path = request.method, request.path
+    if method in ("GET", "HEAD", "OPTIONS") or (method == "POST" and path in _HARMLESS_POSTS):
+        return await handler(request)
+    if method == "POST" and path == "/api/entries":
+        return await hold_entry(request)
+    if method == "POST" and path in _IGNORED_POSTS:
+        return await ignored(request)
+    return await unavailable(request)
+
+
+def add_reduced_routes(app: web.Application) -> None:
+    """The reduced app's routes (no hub.db, no git, nothing written under the root)."""
+    app.add_routes([
+        web.get("/", index), web.get("/widget", widget_page), web.get("/api/state", reduced_state),
+        web.post("/api/entries", hold_entry),
+        web.post("/api/hooks/event", ignored), web.post("/api/usage", ignored),
+        web.get("/api/widget", reduced_widget), web.post("/api/open", post_open),
+        web.get("/ws", ws_handler),
+        web.route("*", "/api/{tail:.*}", unavailable),
+    ])
 
 
 def add_routes(app: web.Application) -> None:

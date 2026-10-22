@@ -142,3 +142,15 @@ def test_append_fsyncs_inside_the_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(rl.os, "fsync", lambda fd: (seen.append(rl._APPEND_LOCK.locked()), real(fd)))
     append_entry(tmp_path, "durable", "pc")
     assert seen == [True]
+
+
+def test_append_keeps_a_given_id(tmp_path):
+    ts = datetime(2026, 10, 20, 23, 59, 30)
+    e = append_entry(tmp_path, "held while D: was away", "widget", ts, entry_id="e-20261020-235930-beef")
+    assert e.id == "e-20261020-235930-beef" and e.ts == ts
+    assert read_log(tmp_path) == [e]
+    for bad in ("e-20261020-235931-beef",  # its timestamp part is not ts
+                "e-20261020-235930-BEEF", "x", "e-20261020-235930-beef\n", 42):
+        with pytest.raises(ValueError):
+            append_entry(tmp_path, "nope", "pc", ts, entry_id=bad)
+    assert read_log(tmp_path) == [e]  # nothing written for a refused id

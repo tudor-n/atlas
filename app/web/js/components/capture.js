@@ -1,4 +1,5 @@
-// The always-visible capture box. Text is cleared only after the server answers 201.
+// The always-visible capture box. Text is cleared only after the server has it: 201 (in the raw log)
+// or, while the drive isn't usable, 200 with `held` (on disk in this OS's holding inbox).
 import * as api from '../api.js';
 import { el } from '../dom.js';
 
@@ -28,9 +29,10 @@ export function mountCapture(root, { onSaved }) {
     status.textContent = 'Saving…';
     try {
       const res = await api.post('/api/entries', { text, source: 'pc' });
-      if (input.value === text) input.value = '';  // 201: the log has it; keep anything typed meanwhile
-      status.textContent = 'Saved · filing…';
-      onSaved(res.entry_id, text);
+      if (input.value === text) input.value = '';  // saved; keep anything typed meanwhile
+      const held = !!(res && res.held);
+      status.textContent = held ? 'Saved · held on this OS until the drive is back' : 'Saved · filing…';
+      onSaved(res.entry_id, text, held);
     } catch (e) {
       status.textContent = '';
       error.textContent = `Not saved: ${e.message}. Your text is still here.`;

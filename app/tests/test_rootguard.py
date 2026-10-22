@@ -438,18 +438,22 @@ def test_pid_alive_windows_system_process():
 # -- run_server ----------------------------------------------------------------
 @pytest.fixture
 def no_server(monkeypatch):
+    """run_server never serves for real here: `served` records the app it would have served."""
     monkeypatch.setattr(main_mod, "port_free", lambda host, port: True)
+    served = []
 
-    def run_app(*a, **kw):
-        raise AssertionError("the server must not start")
-    monkeypatch.setattr(main_mod.web, "run_app", run_app)
+    def serve(app, host, port):
+        served.append(app)
+        return 0
+    monkeypatch.setattr(main_mod, "serve", serve)
+    return served
 
 
-def test_run_server_exits_on_missing_root(tmp_path, no_server):
+def test_run_server_serves_reduced_app_on_missing_root(tmp_path, no_server):
     root = tmp_path / "gone" / "BrainHub"
-    with pytest.raises(SystemExit) as e:
-        main_mod.run_server(["--root", str(root), "--port", "8123"])
-    assert "isn't there" in str(e.value.code) and str(e.value.code).startswith("BrainHub: not starting.")
+    main_mod.run_server(["--root", str(root), "--port", "8123"])  # no exit: the reduced app is served
+    [app] = no_server
+    assert app["root_status"].state == "missing" and "store" not in app and app["port"] == 8123
     assert not (tmp_path / "gone").exists()
 
 
@@ -462,10 +466,12 @@ def test_run_server_refuses_while_another_hub_holds_the_lock(paths, no_server, l
     assert _lock(paths)["started"] == "2026-10-22T09:00:00"  # the other hub's lock is untouched
 
 
-def test_run_server_releases_lock_when_refusing_newer_schema(paths, no_server):
+def test_run_server_serves_reduced_app_on_newer_schema_and_releases_lock(paths, no_server):
     save_map(paths.brain, default_map())
     _db_at_version(paths.db, SCHEMA_VERSION + 1)
-    with pytest.raises(SystemExit) as e:
-        main_mod.run_server(["--root", str(paths.root), "--port", "8123"])
-    assert "newer BrainHub" in str(e.value.code)
+    before = paths.db.read_bytes()
+    main_mod.run_server(["--root", str(paths.root), "--port", "8123"])
+    [app] = no_server
+    assert app["root_status"].state == "newer" and "newer BrainHub" in app["root_status"].message
+    assert "store" not in app and paths.db.read_bytes() == before
     assert not (paths.data / rootguard.LOCK_NAME).exists()

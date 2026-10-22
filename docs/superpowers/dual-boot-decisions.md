@@ -31,5 +31,16 @@ Review found that the boot time rounded to the minute can differ between two pro
 - Leftover worktrees are removed with `worktree remove --force --force`: a power cut during `worktree add` leaves one locked, and a single `--force` (or prune) skips it on every retry.
 - The status-line passthrough runs in its own process group (`process_group=0`) but not a new session, so the owner's command keeps the controlling terminal.
 
+## D8: Reduced mode and read-only root, as built (Task 6)
+- **`run_server` serves the reduced app; `create_app` still raises `RootUnavailable`.** It raises for missing, foreign and newer roots, and for a read-only root whose `hub.db` can't be read read-only (absent, damaged, or at an older schema that would need a migration). A locked or unopenable `hub.db` on a writable root is not damage: the start stops with a message, nothing is moved, and the shell retries.
+- **No re-check while "newer".** Newer data never turns older while this code runs, and with a newer `hub.db` the root itself checks ok, so a watch would restart the hub every 15 s. An update restarts the hub anyway.
+- **The watch is `check_root` as is.** A legacy brain (map, no marker) coming back gets its marker from it: the only write, and only to a root that is about to run in full.
+- **`POST /api/open` works in every mode.** It writes nothing, and the widget's "Open in BrainHub" stays usable.
+- **The read-only view is the last checkpoint.** `immutable=1` doesn't read a `-wal` left by a crash, so the newest index changes can be missing until the next full start. The raw log is untouched either way.
+- **Held captures are marked queued when flushed**, as a fresh capture is, so the cap on never-filed entries at start (`MAX_AUTO_REQUEUE`) doesn't turn them into failures.
+- **`port_free` binds with `SO_REUSEADDR` on POSIX**, as aiohttp does. Without it the restart right after exit 75 was refused for a minute (the old hub's connections in TIME_WAIT).
+- **Manual check** (Kubuntu, temp roots, temp state folder, `claude_path` pointed at a missing command): a missing root showed the banner, held a capture (200), answered Today with 503 and a hook with 204, and was never created. Once a brain appeared there the hub exited 75 after 15 s; the restart put the held capture in its own day's file and queued it. A read-only root (`chmod -R a-w`) served Today and the journal, refused confirm (503), held a capture, and left `hub.db` unchanged with no `-wal`/`-shm`; after `chmod -R u+w` it exited 75 after 15 s and the restart flushed the capture.
+
 ## Residuals
+- The desktop shell still treats exit 75 like any other exit (restart with backoff) until Task 8 wires P8.
 - `app/README.md` still says the integration files live in `data/` (Task 12 fixes the docs).

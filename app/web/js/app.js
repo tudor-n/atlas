@@ -3,20 +3,29 @@ import * as api from './api.js';
 import { el, clear } from './dom.js';
 import { mountCapture } from './components/capture.js';
 import { confirmCard } from './components/confirm-card.js';
+import { driveText } from './drive.js';
 
 // Re-exported so older imports keep working; new code imports from ./dom.js.
 export { el, clear, fmtWhen } from './dom.js';
 
 // -- Shared state ---------------------------------------------------------------------------
-export const state = { setup_done: true, settings: {}, backup: null, log_error: null, startup_error: null };
+export const state = { setup_done: true, settings: {}, backup: null, log_error: null, startup_error: null,
+  drive: null, warnings: [] };
 
+// Reduced mode: the root isn't usable and there is no brain to show (the reduced app sends
+// setup_done null). Only the drive banner and the capture box render; setup is never offered.
+const reduced = () => !!state.drive && !state.setup_done;
+
+// Returns true when the mode changed (the hub came back in full, or went reduced).
 export async function refreshState() {
+  const was = reduced();
   try {
     Object.assign(state, await api.get('/api/state'));
     renderBanner();
   } catch (e) {
     renderBanner(e.message);
   }
+  return was !== reduced();
 }
 
 function renderBanner(connectionError) {
@@ -24,6 +33,9 @@ function renderBanner(connectionError) {
   clear(box);
   if (connectionError) {
     box.appendChild(el('div', { class: 'banner', role: 'alert' }, connectionError));
+  }
+  if (state.drive) {
+    box.appendChild(el('div', { class: 'banner', role: 'status' }, driveText(state.drive)));
   }
   if (state.log_error) {
     box.appendChild(el('div', { class: 'banner', role: 'alert' },
@@ -33,6 +45,9 @@ function renderBanner(connectionError) {
     box.appendChild(el('div', { class: 'banner', role: 'alert' },
       'BrainHub started, but noticed problems. Capture still works.',
       el('ul', {}, state.startup_error.map((m) => el('li', {}, m)))));
+  }
+  for (const w of Array.isArray(state.warnings) ? state.warnings : []) {
+    box.appendChild(el('p', { class: 'quiet-note' }, w));  // quiet: one line, never a popup
   }
 }
 
@@ -73,11 +88,26 @@ function renderNav(name) {
   }
 }
 
+function runCleanup() {
+  if (cleanup) { try { cleanup(); } catch (e) { console.error(e); } cleanup = null; }
+}
+
+// Reduced mode: no nav and no view, so nothing calls an API that can't answer.
+function renderReduced() {
+  runCleanup();
+  clear(document.getElementById('nav'));
+  clear(document.getElementById('view'));
+}
+
 async function route() {
   const token = ++routeToken;
   const { name, params, query } = parseHash();
   await refreshState();
   if (token !== routeToken) return;
+  if (reduced()) {
+    renderReduced();
+    return;
+  }
   if (!state.setup_done && name !== 'setup') {
     location.hash = '#/setup';
     return;
@@ -87,7 +117,7 @@ async function route() {
     location.hash = '#/today';
     return;
   }
-  if (cleanup) { try { cleanup(); } catch (e) { console.error(e); } cleanup = null; }
+  runCleanup();
   renderNav(name);
   const container = clear(document.getElementById('view'));
   try {
@@ -98,7 +128,9 @@ async function route() {
     cleanup = typeof result === 'function' ? result : null;
   } catch (e) {
     console.error(e);
-    clear(container).appendChild(el('p', { class: 'error', role: 'alert' }, `Couldn't load this page: ${e.message}`));
+    clear(container).appendChild(e.drive  // the drive went away: its banner, not an error
+      ? el('p', { class: 'banner', role: 'status' }, driveText(e.drive))
+      : el('p', { class: 'error', role: 'alert' }, `Couldn't load this page: ${e.message}`));
   }
 }
 
@@ -134,10 +166,14 @@ function startTray(capture) {
 // -- Boot -----------------------------------------------------------------------------------
 async function boot() {
   const capture = mountCapture(document.getElementById('capture'), {
-    onSaved: (entryId, text) => { mine.set(entryId, text); },
+    onSaved: (entryId, text, held) => {
+      mine.set(entryId, text);  // a held capture's card comes once it is filed, after the drive is back
+      if (held) refreshState();  // the banner's held count
+    },
   });
   startTray(capture);
-  api.onEvent('ws.open', () => refreshState());
+  // A reconnect may follow a restart (exit 75 once the drive is back): re-route if the mode changed.
+  api.onEvent('ws.open', async () => { if (await refreshState()) route(); });
   window.addEventListener('hashchange', route);
   await route();
 }

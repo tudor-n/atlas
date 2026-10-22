@@ -1,4 +1,7 @@
-// Pure model for the desktop widget (no DOM, no imports): tile summaries and popup rows from GET /api/widget.
+// Pure model for the desktop widget (no DOM; drive.js is pure too): bar text, tile summaries and
+// popup rows from GET /api/widget.
+import { heldText } from './drive.js';
+
 export const TILE_LABEL = {
   today: 'Today', usage: 'Usage', agents: 'Agents', people: 'People',
   deadlines: 'Deadlines', review: 'To review', projects: 'Projects', arm: 'Robot arm',
@@ -12,6 +15,14 @@ export const TILE_VIEW = {
 
 const MAX_ROWS = 6;
 const hhmm = (iso) => String(iso || '').slice(-5);
+
+// The collapsed bar: the drive banner while the root isn't usable, else the server's synopsis. The
+// bar cuts long text short, so the held count goes first there.
+export function synopsisText(w) {
+  if (!w) return '';
+  if (!w.drive) return w.synopsis || '';
+  return [heldText(w.drive.held), w.drive.message].filter(Boolean).join(' · ');
+}
 const hasUsed = (win) => !!win && win.used !== null && win.used !== undefined;
 
 function usageWindow(w) {

@@ -1,6 +1,9 @@
 import argparse
+import asyncio
 import json
+import os
 import socket
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -8,7 +11,7 @@ from aiohttp import web
 
 from . import rootguard
 from .config import Paths, load_settings
-from .server import DEFAULT_HOST, RootUnavailable, create_app
+from .server import DEFAULT_HOST, EXIT_RESTART, RootUnavailable, create_app, create_reduced_app
 
 
 def run_server(argv: list[str]) -> None:
@@ -32,23 +35,69 @@ def run_server(argv: list[str]) -> None:
         refusal = rootguard.acquire_lock(paths, write=locked)
         if refusal:
             sys.exit(f"BrainHub: not starting. {refusal}")
+    code = 0
     try:
-        try:
-            app = create_app(paths)
-        except RootUnavailable as e:
-            sys.exit(f"BrainHub: not starting. {e.status.message}")
+        app = _make_app(paths, status)
         app["port"] = port  # the port it really listens on, not the settings value (--port may differ)
         print(f"BrainHub on http://{DEFAULT_HOST}:{port}", flush=True)
-        web.run_app(app, host=DEFAULT_HOST, port=port, print=None)
+        found = app["root_status"]
+        if found.state not in ("ok", "fresh"):
+            mode = "read-only" if "store" in app else "reduced"
+            print(f"BrainHub: {mode} mode, captures are held on this OS. {found.message}", flush=True)
+        code = serve(app, DEFAULT_HOST, port)
     finally:
         if locked:
             rootguard.release_lock(paths)
+    if code == EXIT_RESTART:
+        print("BrainHub: the data folder is usable again, so it stopped to start again in full "
+              "(the desktop shell restarts it at once; if you started it by hand, start it again).",
+              flush=True)
+    if code:
+        sys.exit(code)
+
+
+def _make_app(paths: Paths, status: rootguard.RootStatus) -> web.Application:
+    """The full app, or the reduced one when the full app can't run on this root (design §6.5)."""
+    try:
+        return create_app(paths, status=status)
+    except RootUnavailable as e:
+        return create_reduced_app(paths, e.status)
+    except sqlite3.Error as e:  # locked, or can't be opened: not damage, so nothing was moved
+        sys.exit(f"BrainHub: not starting. Its index {paths.db} can't be opened ({e}); nothing was "
+                 "moved or changed.")
+
+
+def serve(app: web.Application, host: str, port: int) -> int:
+    """Serve until SIGINT or SIGTERM (POSIX), Ctrl+C, or until the app asks to stop (app["stop"],
+    set by the root watch, P8); return app["exit_code"]. web.run_app can't be stopped from inside
+    the app, so this is its loop with a stop event."""
+    async def main() -> None:
+        runner = web.AppRunner(app, handle_signals=True)  # SIGINT/SIGTERM: a graceful stop (POSIX)
+        await runner.setup()
+        try:
+            await web.TCPSite(runner, host, port).start()
+            await app["stop"].wait()
+        finally:
+            await runner.cleanup()
+
+    try:
+        asyncio.run(main())
+    except (web.GracefulExit, KeyboardInterrupt):
+        pass
+    return app["exit_code"]
 
 
 def port_free(host: str, port: int) -> bool:
-    """Can we bind host:port right now? (Bound, then closed again at once.)"""
+    """Can we bind host:port right now? (Bound, then closed again at once.)
+
+    On POSIX it binds as aiohttp does, with SO_REUSEADDR: connections the previous hub closed sit in
+    TIME_WAIT for a minute, and without it a hub restarted at once (exit 75, P8) would be refused.
+    A port someone listens on is still refused. Windows' SO_REUSEADDR would let us bind over a
+    listener, so it isn't set there (asyncio doesn't set it there either)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        if os.name == "posix":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((host, port))
         return True
     except OSError:

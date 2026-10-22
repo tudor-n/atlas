@@ -26,15 +26,44 @@ def test_run_server_stores_bound_port(tmp_path, monkeypatch):
     root.mkdir()  # a fresh root: the hub never creates one itself
     lock = root / "data" / "hub.lock"
 
-    def fake_run_app(app, *, host, port, **kw):
+    def fake_serve(app, host, port):
         seen.update(app=app, host=host, port=port, locked=lock.exists())
+        return 0
 
-    monkeypatch.setattr(main_mod.web, "run_app", fake_run_app)
+    monkeypatch.setattr(main_mod, "serve", fake_serve)
     main_mod.run_server(["--root", str(root), "--port", "8123"])
     assert seen["port"] == 8123 and seen["host"] == "127.0.0.1"
     assert seen["app"]["port"] == 8123
     assert load_settings(seen["app"]["paths"])["port"] != 8123  # the settings port is not what it uses
     assert seen["locked"] and not lock.exists()  # held while serving, released on the way out
+
+
+def test_port_with_a_listener_is_not_free():
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    held.listen()
+    try:
+        assert not main_mod.port_free("127.0.0.1", held.getsockname()[1])
+    finally:
+        held.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX TIME_WAIT rules")
+def test_port_free_after_previous_hub_closed_connections():
+    """A hub restarted at once (exit 75) finds its port free although the old hub's closed
+    connections are still in TIME_WAIT."""
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as aiohttp binds
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    client = socket.create_connection(("127.0.0.1", port))
+    conn, _ = listener.accept()
+    conn.close()  # the server closes first: its side of the connection goes to TIME_WAIT
+    client.recv(1)
+    client.close()
+    listener.close()
+    assert main_mod.port_free("127.0.0.1", port)
 
 
 def test_second_hub_on_taken_port_exits_before_startup(tmp_path):
