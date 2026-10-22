@@ -460,22 +460,22 @@
 - Modify: `app/brainhub/__main__.py` (`runtime init|status`), `app/brainhub/desktop_config.py` (runtime mode), `app/desktop/src-tauri/src/config.rs`, `supervisor.rs` (run the update step before each start), `app/web/js/views/settings.js` (+ `/api/state` field) for "update pending (reason)"
 
 **Interfaces:**
-- `update_step.py`: stdlib only, run as a file, `python -I -S update_step.py --live <dir> --state <dir> [--timeout 60]`. It prints one JSON line `{"pulled", "slot", "commit", "pending": <reason or null>}` and always exits 0, except on a usage error. Writes `<state>/update.json` with the same plus a timestamp.
+- `update_step.py`: stdlib only, run as a file, `python -I -S update_step.py --live <dir> --state <dir> [--timeout 20] [--budget 75]` (per network call; the whole step, ruling D9). It prints one JSON line `{"pulled", "slot", "commit", "pending": <reason or null>}` and always exits 0, except on a usage error. Writes `<state>/update.json` with the same plus a timestamp, `shell_source` and the `stderr` tail of the last failed call. One step at a time per state folder (`runtime/update.lock`, D9).
   1. **Pull** (P9), only if all hold, otherwise `pending = <reason>`, quietly:
      - the live dir exists and is a git repo;
-     - `git status --porcelain` is empty;
+     - `git status --porcelain --untracked-files=normal` is empty;
      - the branch is `master`;
      - `git fetch origin master` succeeds within the timeout;
      - `HEAD` is an ancestor of `origin/master`;
-     - the CI gate is green for `origin/master`'s sha.
-     - Then `git merge --ff-only origin/master`. **Never** merge, reset, stash, checkout or clean.
-     - The CI gate shells out to `gh api` with the repo slug parsed from `git remote get-url origin`; an unreadable status means "not green".
-  2. **Refresh:** if `current.json`'s commit ≠ the live HEAD (or there is no slot), build the inactive slot:
+     - the CI gate is green for `origin/master`'s sha: every check run completed, none failed, both `test (…)` jobs succeeded (D9).
+     - Then `git merge --ff-only --no-autostash --no-overwrite-ignore <that sha>` (an ignored file the commit tracks makes it fail, D9). **Never** merge, reset, stash, checkout or clean.
+     - The CI gate shells out to `gh api` with the repo slug parsed from `git config --get remote.origin.url` (not `get-url`, D9); an unreadable status means "not green".
+  2. **Refresh:** if `current.json`'s commit ≠ the live HEAD (or there is no slot whose `slot.json` names that commit), and the HEAD is on `master` at or behind the local `origin/master` (the provenance guard, D9; `runtime init` refuses otherwise), build the inactive slot:
      - empty its `app/`, then `git archive HEAD app | tar -x` (Python `tarfile` from the archive bytes, no `tar` binary) into the slot;
-     - the venv: if the inactive slot's `deps` hash (sha256 of `app/pyproject.toml` + `app/uv.lock`) matches, keep its venv; otherwise run `uv sync --frozen --no-install-project` with `UV_PROJECT_ENVIRONMENT=<slot>/venv`, cwd = `<slot>/app`.
+     - the venv: if the inactive slot's `deps` hash (sha256 of `app/pyproject.toml` + `app/uv.lock` + `app/.python-version` when present) matches, keep its venv; otherwise run `uv sync --frozen --no-install-project` with `UV_PROJECT_ENVIRONMENT=<slot>/venv`, cwd = `<slot>/app`.
      - Only when both succeed, rewrite `current.json` atomically (tmp + replace), then copy `hook_client.py` to `<state>/hook/hook_client.py` (P4).
      - On any failure the old slot stays current and `pending` says why.
-  3. Every git call passes `-c safe.directory=<live>`; subprocesses get `GIT_TERMINAL_PROMPT=0` and stdin closed.
+  3. Every git call passes `-c safe.directory=<live>`; subprocesses get `GIT_TERMINAL_PROMPT=0` and stdin closed, and each gets at most the budget left; a fast-forward or venv sync that might not fit is put off (D9).
 - `runtime.py` + CLI:
   - `python -m brainhub runtime init --live <dir>` (creates the first slot from the live HEAD without the pull part);
   - `python -m brainhub runtime status` (prints `current.json` + `update.json`).
@@ -484,7 +484,7 @@
   - re-reads `current.json`;
   - spawns `<slot>/venv/<bin|Scripts>/python -m brainhub --root <root> --port <port>` with cwd `<slot>/app`.
   - Legacy mode (`python` + `app_dir`) still works for dev.
-- **Shell freshness:** the update step also writes `shell_source` (sha256 of `app/desktop/src-tauri/src/**` + `Cargo.toml`/`Cargo.lock` from the live copy) to `update.json`. The shell compares it with the hash baked in at build time (`build.rs` env var) and shows "widget update available" in the tray tooltip and Settings. Rebuilding stays a manual, documented command (design §5.3, builder's choice).
+- **Shell freshness:** the update step also writes `shell_source` (sha256 of `app/desktop/src-tauri/src/**`, `capabilities/**`, `Cargo.toml`, `Cargo.lock`, `build.rs` and `tauri.conf.json` from the live copy; the algorithm is in `shell_source`'s docstring) to `update.json`. The shell compares it with the hash baked in at build time (`build.rs` env var) and shows "widget update available" in the tray tooltip and Settings. Rebuilding stays a manual, documented command (design §5.3, builder's choice).
 - **Settings:** a "Runtime" line shows the current commit, the last check, and "update pending (reason)" when set (via `/api/state.runtime`, read from `<state>/update.json` and `current.json`).
 
 - [ ] **Step 1: Write failing tests** (`test_update_step.py`, real git: a temp "origin" bare repo, a "live" clone, a fake `gh` and a fake `uv` as executables on a temp PATH, via the Task 1 fake-CLI helper pattern):

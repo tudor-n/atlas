@@ -170,7 +170,12 @@ def run_runtime(argv: list[str]) -> None:
     args = ap.parse_args(argv)
     state = osdirs.state_dir()
     if args.action == "init":
-        result = runtime.init(args.live.resolve(), state.resolve())
+        try:
+            result = runtime.init(args.live.resolve(), state.resolve())
+        except runtime.InitRefused as e:
+            print(f"error: {e}: runtime init builds only a commit on branch master that origin/master "
+                  "has (at origin/master or behind it)", file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(result, indent=2))
         if result["pending"]:
             print(f"error: {result['pending']}", file=sys.stderr)
