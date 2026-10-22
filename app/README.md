@@ -237,6 +237,32 @@ With stdin left open, `claude -p` first waits 3 s for it ("no stdin data receive
 | `desktop-config` re-run, shell restarted | hub started with `--port 8098`, widget on `127.0.0.1:8098/widget` |
 | A second hub by hand on the taken port | exited in 0.26 s with `port 8098 on 127.0.0.1 is already in use`, no startup work |
 
+### Phase dual-boot (Linux)
+Real end-to-end run on 2026-10-22 on Kubuntu with Claude Code 2.1.308 (plan Task 10), on a scratch root (`/tmp/bh-e2e-t10/root`, port 8099, a scratch `BRAINHUB_STATE_DIR`, all deleted afterwards). Setup mapped project `robotarm` to the Linux folder `<scratch>/robotarm` (`os_folders.linux`; not a git repo, so no branch). The scratch state folder was put in runtime mode by hand (a `runtime/current.json` and the stable `hook/hook_client.py`), so `integration install --settings <scratch>/claude/settings.json` wrote the runtime paths: the base interpreter `~/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14` (uv's minor-version link) and `<state>/hook/hook_client.py`, in exec form, and the status line as one `sh`-quoted command. The hub's `/api/integration` showed it installed, port matching.
+
+**Login.** A scratch `CLAUDE_CONFIG_DIR` has no login: `claude -p` there still fired SessionStart, UserPromptSubmit and SessionEnd through the installed hooks, then printed `Not logged in · Please run /login` and exited 1 after 0.8 s. The runs below used the real config folder with only `--settings <scratch file>` (no credentials copied). The real `~/.claude/settings.json` hashed `e9f21709…81de2b71` before and after, mtime unchanged. Even with `--no-session-persistence`, Claude Code created an empty `~/.claude/projects/-tmp-bh-e2e-t10-robotarm/memory/`, which was removed.
+
+**Forced entrypoint**, as in phase 2. The unmodified installed hooks, pointed at a stdlib sink, delivered SessionStart, UserPromptSubmit, Stop and SessionEnd, each with `entrypoint: sdk-cli` and only the allow-listed fields. For the Agents run, a copy of the installed settings wrapped each hook as `{"command": "env", "args": ["CLAUDE_CODE_ENTRYPOINT=cli", <python>, "-I", "-S", <hook_client.py>, "event", "--port", "8099"]}` (same timeouts and async flags).
+
+`claude -p --model haiku --settings <forced copy> --no-session-persistence "Reply with just: ok"` in `<scratch>/robotarm`, without `ANTHROPIC_API_KEY`, stdin closed; `/api/agents` polled every 0.25 s:
+
+| Time after launch | Agents panel |
+|---|---|
+| 0.5 s | new row: project `robotarm` (mapped by its Linux folder, "Robot arm"), where `terminal`, status idle |
+| 0.8 s | running |
+| 2.6 s | finished |
+| 2.8 s | ended (SessionEnd); `claude` printed `ok` and exited at 3.6 s |
+| 62.6 s | row gone (`agents_end_linger_s` = 60) |
+
+| Check | Result |
+|---|---|
+| Status line under `claude -p` | doesn't run: no usage POST reached the sink or the hub in either run |
+| A realistic status line JSON piped into the installed `statusLine.command` through `sh -c` | 0.03 s; printed `Sonnet · 5h 62% ↻18:46 · 7d 31%`. `/api/usage` then had five_hour 62.4 % and seven_day 31 %; the widget synopsis read `5h 62% (resets 18:46)` |
+| Status line with the hub down | 0.03 s, same line printed |
+| Hook event with the hub down | 0.04 s, exit 0, no output |
+| An `sdk-cli` event posted to the hub | 204, no row |
+| Uninstall on the scratch file | our entries removed (the file became `{}`), with a backup written first; the update step's `hook/hook_client.py` kept |
+
 ## Not in phase 2
 - **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests.
 - **Phase 4:** voice, and the tray's "pause notifications" with it.

@@ -59,6 +59,25 @@ async def test_integration_install_adopts_legacy_on_windows_only(client, paths, 
     assert (paths.data / ci.STATE_FILE).exists() is not moved
 
 
+async def test_integration_install_in_runtime_mode_uses_stable_paths(client, tmp_path):
+    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    (state / "runtime").mkdir(parents=True)
+    (state / "runtime" / "current.json").write_text('{"slot": "a", "commit": "c", "deps": "d"}')
+    stable = ci.stable_hook(state)
+    stable.parent.mkdir()
+    stable.write_bytes(ci.hook_script().read_bytes())
+    r = await client.post("/api/integration/install", json={})
+    assert r.status == 200 and (await r.json())["hooks_installed"] is True
+    settings = json.loads((tmp_path / "s" / "settings.json").read_text("utf-8"))
+    hook = settings["hooks"]["SessionStart"][0]["hooks"][0]
+    assert hook["command"] == str(ci.base_python()) and hook["args"][2] == str(stable)
+    view = await (await client.get("/api/integration")).json()
+    assert view["hooks_installed"] and view["statusline_installed"] and view["port_matches"]
+    r = await client.post("/api/integration/uninstall", json={})
+    assert (await r.json())["hooks_installed"] is False
+    assert json.loads((tmp_path / "s" / "settings.json").read_text("utf-8")) == {}
+
+
 async def test_integration_invalid_json_is_400(client, tmp_path):
     f = tmp_path / "s" / "settings.json"
     f.parent.mkdir()

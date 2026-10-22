@@ -6,7 +6,6 @@ import contextlib
 import json
 import logging
 import re
-import sys
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -684,8 +683,8 @@ async def get_integration(request: web.Request) -> web.Response:
 def _integration_change(app: web.Application, install: bool) -> dict:
     paths, target, state = app["paths"], app["claude_settings_path"], osdirs.state_dir()
     if install:
-        ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                   port=app["port"], state_dir=state, data_dir=paths.data)
+        python, script = ci.hook_paths(state)
+        ci.install(target, python=python, script=script, port=app["port"], state_dir=state, data_dir=paths.data)
     else:
         ci.uninstall(target, state_dir=state, data_dir=paths.data)
     return _integration_view(app)

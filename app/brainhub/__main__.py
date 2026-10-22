@@ -123,8 +123,8 @@ def run_integration(argv: list[str]) -> None:
     state = osdirs.state_dir()
     try:
         if args.action == "install":
-            ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                       port=port, state_dir=state, data_dir=paths.data)
+            python, script = ci.hook_paths(state)
+            ci.install(target, python=python, script=script, port=port, state_dir=state, data_dir=paths.data)
         elif args.action == "uninstall":
             ci.uninstall(target, state_dir=state, data_dir=paths.data)
         print(json.dumps(ci.status(target, port=port), indent=2))

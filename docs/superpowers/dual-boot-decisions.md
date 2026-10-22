@@ -84,7 +84,21 @@ Review found that the boot time rounded to the minute can differ between two pro
 - Also: `update.json` gains `stderr`, the last failed call's stderr tail (≤ 500 characters, URL credentials masked), when something is pending. `deps` covers `app/.python-version`. uv is also looked for in `~/.local/bin` (as P6 does for claude). `shell_source` adds `build.rs`, `tauri.conf.json` and `capabilities/**` (the algorithm is in its docstring, and `test_shell_source_algorithm` pins a digest for the Rust side).
 - Every git call on the live copy passes `-c gc.auto=0 -c maintenance.auto=false`: a background gc started by fetch or merge detaches itself, outlives the budget's kill and would keep writing to the shared drive.
 
+## D10: Claude Code integration on Linux and across runtime slots (Task 10)
+- **Runtime mode needs both files.** `hook_paths()` uses the stable paths only when `<state>/runtime/current.json` *and* `<state>/hook/hook_client.py` exist, so it never writes a script path that isn't there yet; otherwise the dev paths, as before.
+- **The base interpreter is never resolved.** It is `sys._base_executable` through `console_python`. With uv on Linux that is `~/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14`: uv's minor-version link, which a patch upgrade re-points, while resolving it would pin a patch folder that an upgrade can remove. A missing base falls back to `sys.executable`. A Python minor bump (`.python-version`) re-syncs the slot venv, and the hooks keep the old interpreter, still installed, until the next install.
+- **The Linux status line is `shlex.join`** of its words (`sh` runs it), with no slash conversion: a backslash is part of a POSIX name. Windows keeps the phase 2 form.
+- **Ours = whole path components.** A hook or status line is ours when it names `…/brainhub/hook_client.py` (the package's copy), `…/brainhub/hook/hook_client.py` (a default state folder's stable copy, any case, either OS), or exactly the stable copy of the state folder in use (any name, e.g. under `BRAINHUB_STATE_DIR`; bare, double-quoted or `sh`-quoted). `status()` takes that state folder (default: this OS's). Before, any text containing `brainhub/hook_client.py` counted, `notbrainhub/hook_client.py` included.
+- **Measured on Kubuntu with Claude Code 2.1.308** (`app/README.md` → Measured → Phase dual-boot):
+  - exec-form hooks (`command` + `args`) work on Linux, with the base interpreter and the stable copy;
+  - `CLAUDE_CODE_ENTRYPOINT` is `sdk-cli` under `claude -p`, as on Windows;
+  - hooks fire even when not logged in (SessionStart, UserPromptSubmit, SessionEnd);
+  - the status line doesn't run under `-p`.
+- **`WHERE_BY_ENTRYPOINT` is unchanged.** The terminal and VS Code values weren't measured. An interactive session can't run against a scratch `CLAUDE_CONFIG_DIR` (no login), and with the real one it would write `~/.claude/projects/**`. The owner checks them at rollout (plan Task 10, "Linux entrypoints"); `cli` is expected for the terminal.
+- **An e2e on the real login leaves a folder behind:** even with `--no-session-persistence`, `claude -p` creates an empty `~/.claude/projects/<key of the cwd>/memory/`. Remove it afterwards.
+
 ## Residuals
+- An integration installed before `runtime init` keeps the dev paths (the dev venv and the dev copy's `hook_client.py`). Status still shows it as installed; reinstall after `runtime init` (the rollout installs it after).
 - `app/README.md` still says the integration files live in `data/` (Task 12 fixes the docs).
 - `map.json` load/change/save isn't serialised across `PUT /api/map`, the Reviewer's `add_node` and the Agents link: two edits at the same moment could lose one (the first two already raced before the dual boot).
 - `//server/share` counts as a Linux path (P7 to the letter), so the map editor on Windows calls it a Linux folder; UNC paths in the `\\server\share` form are fine.
