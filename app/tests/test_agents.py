@@ -65,7 +65,7 @@ def test_read_branch_variants(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows path rules")
-def test_project_from_map_is_case_and_separator_insensitive():
+def test_project_from_map_is_case_and_separator_insensitive_windows():
     m = BrainMap(projects=[
         {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["D:/RobotArmControl/"]},
         {"slug": "work", "name": "Work", "is_company": False, "folders": ["D:/Work"]},

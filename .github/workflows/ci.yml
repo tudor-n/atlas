@@ -30,10 +30,12 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: app/uv.lock
+      # --locked: a stale uv.lock fails here instead of being re-locked; the runtime slots
+      # install exactly the lock (uv sync --frozen). Python comes from app/.python-version.
       - name: Python dependencies
-        run: uv sync --frozen --extra test
+        run: uv sync --locked --extra test
       - name: pytest
-        run: uv run python -m pytest -q
+        run: uv run --no-sync python -m pytest -q
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -43,6 +45,9 @@ jobs:
 
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
     steps:
@@ -58,7 +63,7 @@ jobs:
   desktop:
     name: desktop (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.desktop == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.desktop == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

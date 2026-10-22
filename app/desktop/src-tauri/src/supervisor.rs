@@ -263,9 +263,9 @@ mod tests {
     fn spawns_logs_and_stops_own_child_unix() {
         let root = std::env::temp_dir().join(format!("bh-sup-spawn-unix-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        // /bin/sh stands in for python: it starts, and may exit at once on its null stdin.
+        // /bin/true stands in for python: it ignores the hub arguments and exits at once.
         let mut c = cfg(free_port(), &root);
-        c.python = Some(PathBuf::from("/bin/sh"));
+        c.python = Some(PathBuf::from("/bin/true"));
         let mut s = Supervisor::new(c);
         s.tick();
         assert!(root.join("data").join("hub.log").exists());
