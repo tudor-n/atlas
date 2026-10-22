@@ -4,6 +4,8 @@ import pytest
 
 from brainhub.claude_runner import ClaudeError, ClaudeRunner, build_args, child_env
 
+from tests.fakes import fake_cli
+
 
 def test_child_env_strips_api_key(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
@@ -35,11 +37,7 @@ import sys
 
 
 def _fake_cli(tmp_path, body):
-    script = tmp_path / "fake_claude.py"
-    script.write_text(body, encoding="utf-8")
-    bat = tmp_path / "fake_claude.bat"
-    bat.write_text('@"%s" "%s" %%*\r\n' % (sys.executable, script), encoding="utf-8")
-    return str(bat)
+    return fake_cli(tmp_path, body)
 
 
 _KW = dict(model="haiku", allowed_tools=[], max_turns=1)

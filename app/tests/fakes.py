@@ -46,3 +46,22 @@ class Clock:
 
     def __call__(self) -> float:
         return self.t
+
+
+def fake_cli(folder, body: str, name: str = "fake_claude") -> str:
+    """A stand-in CLI that runs `body` as a Python script with the test's interpreter.
+    Windows gets a .bat wrapper, POSIX an executable shell script. Returns its path."""
+    import os
+    import sys
+    from pathlib import Path
+    folder = Path(folder)
+    script = folder / f"{name}.py"
+    script.write_text(body, encoding="utf-8")
+    if sys.platform == "win32":
+        wrapper = folder / f"{name}.bat"
+        wrapper.write_text('@"%s" "%s" %%*\r\n' % (sys.executable, script), encoding="utf-8")
+    else:
+        wrapper = folder / name
+        wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script), encoding="utf-8")
+        os.chmod(wrapper, 0o755)
+    return str(wrapper)

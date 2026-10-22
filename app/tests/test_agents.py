@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -63,6 +64,7 @@ def test_read_branch_variants(tmp_path):
     assert read_branch(str(plain)) is None
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path rules")
 def test_project_from_map_is_case_and_separator_insensitive():
     m = BrainMap(projects=[
         {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["D:/RobotArmControl/"]},
@@ -72,6 +74,19 @@ def test_project_from_map_is_case_and_separator_insensitive():
     assert resolve_project(r"D:\RobotArmControlOld", m)[2] is False
     assert resolve_project(r"D:\work\robot\x", m) == ("robot", "Robot", True)
     assert resolve_project(r"D:\work\other", m) == ("work", "Work", True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX path rules")
+def test_project_from_map_is_exact_on_posix():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["/home/u/dev/RobotArmControl/"]},
+        {"slug": "work", "name": "Work", "is_company": False, "folders": ["/home/u/Work"]},
+        {"slug": "robot", "name": "Robot", "is_company": False, "folders": ["/home/u/Work/robot"]}])
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m) == ("robotarm", "RobotArm", True)
+    assert resolve_project("/home/u/dev/robotarmcontrol/src", m)[2] is False
+    assert resolve_project("/home/u/dev/RobotArmControlOld", m)[2] is False
+    assert resolve_project("/home/u/Work/robot/x", m) == ("robot", "Robot", True)
+    assert resolve_project("/home/u/Work/other", m) == ("work", "Work", True)
 
 
 def test_project_fallback_git_top_then_basename(tmp_path):

@@ -180,7 +180,9 @@ def test_statusline_passthrough(hub, tmp_path):
 
 def test_statusline_passthrough_hang_is_bounded(hub, tmp_path):
     f = tmp_path / "pt.txt"
-    f.write_text("ping -n 10 127.0.0.1 >nul & echo late", encoding="utf-8")
+    # Per-OS shell syntax; never `>nul` on POSIX (it would create a file named nul).
+    hang = "ping -n 10 127.0.0.1 >nul & echo late" if sys.platform == "win32" else "sleep 10; echo late"
+    f.write_text(hang, encoding="utf-8")
     base = baseline()
     p, dt = run("statusline", hub.port, b'{"model": {"display_name": "X"}}',
                 "--passthrough-file", str(f))

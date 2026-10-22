@@ -258,6 +258,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn spawns_logs_and_stops_own_child_unix() {
+        let root = std::env::temp_dir().join(format!("bh-sup-spawn-unix-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // /bin/sh stands in for python: it starts, and may exit at once on its null stdin.
+        let mut c = cfg(free_port(), &root);
+        c.python = Some(PathBuf::from("/bin/sh"));
+        let mut s = Supervisor::new(c);
+        s.tick();
+        assert!(root.join("data").join("hub.log").exists());
+        let log = std::fs::read_to_string(root.join("data").join("hub.log")).unwrap();
+        assert!(log.contains("-m brainhub --root"), "{log}");
+        assert!(log.contains(&format!("--port {}", s.cfg.port)), "{log}");
+        s.stop();
+        assert!(!s.owns_child());
+        s.tick(); // stopped: never starts again
+        assert!(!s.owns_child());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn failed_start_backs_off() {
         let root = std::env::temp_dir().join(format!("bh-sup-fail-{}", std::process::id()));
