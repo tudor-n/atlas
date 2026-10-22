@@ -12,7 +12,7 @@ import pytest
 
 from tests.fakes import kill_pid_file, pid_gone
 
-HOOK =Path(__file__).resolve().parent.parent / "brainhub" / "hook_client.py"
+HOOK = Path(__file__).resolve().parent.parent / "brainhub" / "hook_client.py"
 
 
 def _load():

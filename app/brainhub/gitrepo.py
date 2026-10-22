@@ -38,16 +38,19 @@ def _lock_for(path: Path) -> threading.Lock:
 
 
 class BrainRepo:
-    def __init__(self, path: Path, *, case_sensitive: bool = False):
+    def __init__(self, path: Path):
         self.path = Path(path)
         self._lock = _lock_for(self.path)
         # Every git call names this repo as safe: files the other OS created may have another
         # owner, and git would refuse them as "dubious ownership" (dual-boot design §5.4). git
         # wants / separators here on Windows too. A worktree is checked as its own path.
         self._safe = "safe.directory=" + str(self.path.resolve()).replace("\\", "/")
-        self._config = ["-c", self._safe]
-        if case_sensitive:  # see worktree_add
-            self._config += ["-c", "core.ignorecase=false"]
+        # Names are case-sensitive on POSIX and not on Windows, whatever the shared .git/config
+        # says. A brain made on Windows has core.ignorecase=true: git on Linux would then not see
+        # an agent's robot.md next to Robot.md (the filing would drop it quietly instead of failing
+        # on the clash), and a case-only rename made on Windows would be committed as a deletion.
+        # A brain made on Linux has no core.ignorecase, and Windows git would compare case on NTFS.
+        self._config = ["-c", self._safe, "-c", f"core.ignorecase={str(sys.platform == 'win32').lower()}"]
 
     # -- plumbing ----------------------------------------------------------
     def _run(self, *args: str) -> subprocess.CompletedProcess:
@@ -243,14 +246,11 @@ class BrainRepo:
 
     # -- worktrees / cherry-pick ------------------------------------------
     def worktree_add(self, path: Path) -> "BrainRepo":
-        """A detached worktree at HEAD. On POSIX its git calls treat names as case-sensitive,
-        whatever the shared config says: a brain made on Windows has core.ignorecase=true, and
-        git on Linux would then not even see an agent's robot.md next to Robot.md. The filing
-        would drop it quietly instead of failing visibly on the case clash (design §6.3)."""
+        """A detached worktree at HEAD (its git calls use this OS's case rule, see __init__)."""
         path = Path(path).resolve()
         r = self._git("worktree", "add", "--detach", str(path), "HEAD")
         self._check(r, "worktree add")
-        return BrainRepo(path, case_sensitive=sys.platform != "win32")
+        return BrainRepo(path)
 
     def worktree_remove(self, path: Path) -> None:
         path = Path(path).resolve()
@@ -264,7 +264,9 @@ class BrainRepo:
                 line.startswith("worktree ") and Path(line[9:]).resolve() == path for line in listing
             )
             if registered:
-                self._run("worktree", "remove", "--force", str(path))
+                # --force twice: a power cut during `worktree add` leaves it locked
+                # ("initializing"), and a single --force (or prune) skips locked worktrees.
+                self._run("worktree", "remove", "--force", "--force", str(path))
                 if path.exists():  # Windows may leave residue after git removed the registration
                     shutil.rmtree(path, ignore_errors=True)
             self._run("worktree", "prune")

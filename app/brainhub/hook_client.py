@@ -55,10 +55,11 @@ def _run_passthrough(cmd, raw):
 
     win = sys.platform == "win32"
     flags = 0x08000000 if win else 0
-    # POSIX: its own process group, so a timeout also kills the shell's children.
+    # POSIX: its own process group, so a timeout also kills the shell's children. Not a new
+    # session: the owner's status line command keeps the controlling terminal.
     proc = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=flags, start_new_session=not win)
+                            creationflags=flags, process_group=None if win else 0)
     try:
         out, _ = proc.communicate(raw, timeout=PASSTHROUGH_TIMEOUT_S)
     except BaseException:

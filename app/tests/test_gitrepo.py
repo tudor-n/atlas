@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -241,14 +242,17 @@ def test_git_calls_pass_safe_directory(tmp_path, monkeypatch):
 
 
 def test_worktree_names_are_case_sensitive_on_posix(tmp_path):
-    """A brain made on Windows has core.ignorecase=true; a filing worktree on Linux overrides it
-    (or git wouldn't see robot.md next to Robot.md), Windows keeps it."""
+    """A brain made on Windows has core.ignorecase=true; every git call on Linux (main and filing
+    worktrees) overrides it (or git wouldn't see robot.md next to Robot.md), Windows keeps it. The
+    shared config file itself is never changed."""
     r = _repo_with_commit(tmp_path / "b")
     r._run("config", "core.ignorecase", "true")
     wt = r.worktree_add(tmp_path / "wt")
     expected = "true" if __import__("sys").platform == "win32" else "false"
     assert wt._run("config", "--get", "core.ignorecase").stdout.strip() == expected
-    assert r._run("config", "--get", "core.ignorecase").stdout.strip() == "true"  # main unchanged
+    assert r._run("config", "--get", "core.ignorecase").stdout.strip() == expected
+    shared = r._run("config", "--file", ".git/config", "--get", "core.ignorecase").stdout.strip()
+    assert shared == "true"  # the file Windows reads is untouched
     r.worktree_remove(tmp_path / "wt")
 
 
@@ -288,3 +292,18 @@ def test_new_paths_lists_added_and_renamed(tmp_path):
     sha = r.commit_all("agent")
     assert sorted(r.new_paths(sha)) == ["renamed-here.md", "sub/rețetă.md"]
     assert sorted(r.tracked_paths()) == ["keep.md", "renamed-here.md", "sub/rețetă.md"]
+
+
+@pytest.mark.skipif(sys.platform in ("win32", "darwin"), reason="needs a case-sensitive POSIX file system")
+def test_main_repo_case_rule_ignores_shared_ignorecase(tmp_path):
+    """A brain made on Windows carries core.ignorecase=true. A case-only rename Windows left on
+    disk is committed as a rename on Linux, never as a deletion."""
+    r = BrainRepo(tmp_path)
+    r.init()
+    subprocess.run(["git", "config", "core.ignorecase", "true"], cwd=tmp_path, check=True)
+    (tmp_path / "Robot.md").write_text("wrist", encoding="utf-8")
+    r.commit_all("base")
+    (tmp_path / "Robot.md").rename(tmp_path / "robot.md")
+    r.commit_all("owner edits")
+    files = subprocess.run(["git", "ls-files"], cwd=tmp_path, capture_output=True, text=True).stdout.split()
+    assert files == ["robot.md"]

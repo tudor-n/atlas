@@ -23,5 +23,13 @@ Review found that the boot time rounded to the minute can differ between two pro
 ## D6: Time zone check compares real UTC offsets (amends P5)
 `time.altzone` is always `timezone - 3600` on Windows' CPython, even for zones without summer time, so comparing `timezone`/`altzone` across OSes could warn falsely. The marker stores the UTC offsets at noon on 15 January and 15 July (`tm_gmtoff`), and each start compares its own.
 
+## D7: Brain git on two OSes: case rule per OS, filing path guard details (Task 7)
+- **Every brain git call sets `core.ignorecase` for the OS running it** (`false` on POSIX, `true` on Windows) with `-c`, whatever the shared `.git/config` says, which is never edited. With Windows' `true`, Linux git didn't see an agent's `robot.md` next to `Robot.md` (the filing dropped it quietly), and the owner-edits sweep committed a case-only rename made on Windows as a deletion (which the backup then pushed). A brain first made on Linux has no `ignorecase`, so Windows git would compare case on NTFS.
+- The case-clash check also compares folder names, and folds case as NTFS does (per-character uppercase), not `str.lower()`.
+- Reserved names: CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-9, LPT0-9 and COM/LPT with a superscript digit, with any extension, in any case.
+- Agent rows refresh `os` and `boot` on every event, so a session resumed after a hub restart in the same boot isn't ended as a ghost.
+- Leftover worktrees are removed with `worktree remove --force --force`: a power cut during `worktree add` leaves one locked, and a single `--force` (or prune) skips it on every retry.
+- The status-line passthrough runs in its own process group (`process_group=0`) but not a new session, so the owner's command keeps the controlling terminal.
+
 ## Residuals
 - `app/README.md` still says the integration files live in `data/` (Task 12 fixes the docs).

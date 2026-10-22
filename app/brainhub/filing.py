@@ -42,11 +42,18 @@ _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _DATETIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}")
 _ENTRY_ID = re.compile(r"e-[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
 # Names Windows can't hold (dual-boot design §6.3). Device names count with any extension and in
-# any case; Windows also reserves COM and LPT with a superscript digit.
+# any case; Windows also reserves COM and LPT with 0 or a superscript digit, and git for Windows
+# refuses CONIN$ and CONOUT$.
 _WIN_BAD_CHARS = frozenset('<>:"|?*\\')
-_WIN_DEVICES = frozenset({"con", "prn", "aux", "nul",
-                          *(f"{p}{d}" for p in ("com", "lpt") for d in "123456789¹²³")})
+_WIN_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$",
+                          *(f"{p}{d}" for p in ("com", "lpt") for d in "0123456789¹²³")})
 INVALID_ON_WINDOWS = "filed paths not valid on Windows: "
+
+
+def _case_key(name: str) -> str:
+    """NTFS compares names by uppercasing each character on its own (so ı, ſ and ς match I, S
+    and Σ there), unlike str.lower()."""
+    return "".join(c.upper() if len(c.upper()) == 1 else c for c in name)
 
 
 # -- prompt ------------------------------------------------------------------
@@ -212,13 +219,13 @@ def invalid_windows_paths(changed: list[str], existing: list[str]) -> list[str]:
     known = {q for p in existing for q in prefixes(p)}
     by_key: dict[str, set[str]] = {}
     for q in known | {q for p in changed for q in prefixes(p)}:
-        by_key.setdefault(q.lower(), set()).add(q)
+        by_key.setdefault(_case_key(q), set()).add(q)
     bad = []
     for p in changed:
         why = next((w for w in map(_windows_name_problem, p.split("/")) if w), None)
         if why is None:
             for q in prefixes(p):
-                others = by_key[q.lower()] - {q}
+                others = by_key[_case_key(q)] - {q}
                 if others and q not in known:
                     why = f"same name as {min(others)} in another case"
                     break

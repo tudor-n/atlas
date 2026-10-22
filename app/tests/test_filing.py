@@ -359,11 +359,13 @@ posix_names = pytest.mark.skipif(sys.platform in ("win32", "darwin"),
 def test_invalid_windows_paths_rules():
     bad = invalid_windows_paths(
         ["general/a:b.md", "general/q?.md", "general/tab\there.md", "general/dot.", "general/space /x.md",
-         "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md"],
+         "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md",
+         "notes/conin$.md", "notes/CONOUT$", "notes/com0.txt"],
         [])
     assert [b.split(" (")[0] for b in bad] == [
         "general/a:b.md", "general/q?.md", "general/tab\there.md", "general/dot.", "general/space /x.md",
-        "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md"]
+        "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md",
+        "notes/conin$.md", "notes/CONOUT$", "notes/com0.txt"]
     fine = ["general/console.md", "general/com10.md", "general/nul-notes.md", "personal/rețete.md",
             "projects/robotarm/wrist-servo-2.md", "general/.hidden-ok.md"]
     assert invalid_windows_paths(fine, []) == []
@@ -451,3 +453,8 @@ def test_leftover_worktree_from_the_other_os_is_removed(env):
     assert not (env.paths.brain / ".git" / "worktrees" / wid).exists()
     listing = env.repo._run("worktree", "list", "--porcelain").stdout
     assert wid not in listing and not (env.paths.brain / "general" / "half.md").exists()
+
+
+def test_case_clash_uses_ntfs_folding():
+    """NTFS uppercases per character: a dotless ı matches i there, which str.lower() misses."""
+    assert invalid_windows_paths(["general/ınfo.md"], ["general/info.md"])
