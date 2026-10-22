@@ -423,7 +423,7 @@
 **Interfaces:**
 - `config.rs`:
   - `default_path()` honours `BRAINHUB_CONFIG_DIR` first; on Windows it stays `%LOCALAPPDATA%\BrainHub\desktop.json`; on unix it is `${XDG_CONFIG_HOME:-$HOME/.config}/brainhub/desktop.json`.
-  - New `state_dir()`, mirroring P10 (`BRAINHUB_STATE_DIR`, XDG data home, `%LOCALAPPDATA%\BrainHub`).
+  - New `state_dir()`, mirroring P10 (`BRAINHUB_STATE_DIR`, XDG data home, `%LOCALAPPDATA%\BrainHub`). Like `osdirs`, an empty or relative XDG value falls back to the default.
 - `supervisor.rs`:
   - `hub.log` moves to `<state>/hub.log` (no longer under the root), so a missing drive can still be diagnosed;
   - stop = SIGTERM (unix, via `libc::kill`), wait up to 5 s with `try_wait`, then `kill()`. Windows keeps `kill()`; the hub's own children are handled by the hub.
