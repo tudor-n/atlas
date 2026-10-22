@@ -9,17 +9,24 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+WIDGET_TILES: tuple[str, ...] = ("today", "usage", "agents", "people", "deadlines", "review", "projects", "arm")
+
 DEFAULT_SETTINGS: dict = {
     "port": 8090, "claude_path": "claude", "filing_model": "sonnet", "recall_model": "haiku",
     "deeper_model": "sonnet", "filing_timeout_s": 300, "recall_timeout_s": 90, "deeper_timeout_s": 300,
     "recall_top_n": 12, "default_lead_days": 2, "nudge_days": 3,
     "backup_remote": None, "backup_debounce_s": 300, "quiet_hours": ["23:00", "08:00"],
+    "usage_warn_pct": 80, "fable_usage_url": "https://claude.ai/settings/usage",
+    "agents_end_linger_s": 60, "agents_stale_h": 12, "arm_url": "http://127.0.0.1:8080",
+    "widget_tiles": list(WIDGET_TILES),
 }
 
 # Code locations come from the installed package, never from the data root (--root may be any folder).
 _PKG = Path(__file__).resolve().parent
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_FABLE_URL = re.compile(r"^https://\S+$")
+_ARM_URL = re.compile(r"^https?://[\w.-]+(:\d{1,5})?(/\S*)?$")
 _REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
 # Inclusive bounds for the numeric settings.
 RANGES: dict[str, tuple[int, int]] = {
@@ -27,6 +34,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "filing_timeout_s": (10, 3600), "recall_timeout_s": (10, 3600), "deeper_timeout_s": (10, 3600),
     "recall_top_n": (1, 50), "default_lead_days": (0, 60), "nudge_days": (1, 60),
     "backup_debounce_s": (0, 86400),
+    "usage_warn_pct": (1, 100), "agents_end_linger_s": (0, 3600), "agents_stale_h": (1, 168),
 }
 
 
@@ -79,6 +87,17 @@ def validate_setting(key: str, value) -> None:
               and all(isinstance(v, str) and _HHMM.match(v) for v in value))
         if not ok:
             raise ValueError("quiet_hours must be a list of two 'HH:MM' strings")
+        return
+    if key == "widget_tiles":
+        ok = (isinstance(value, list) and len(value) >= 1 and len(set(map(str, value))) == len(value)
+              and all(isinstance(v, str) and v in WIDGET_TILES for v in value))
+        if not ok:
+            raise ValueError("widget_tiles must be a non-empty list of distinct tile names")
+        return
+    if key in ("fable_usage_url", "arm_url"):
+        rx = _FABLE_URL if key == "fable_usage_url" else _ARM_URL
+        if not isinstance(value, str) or not rx.match(value):
+            raise ValueError(f"{key} must be a valid {'https' if key == 'fable_usage_url' else 'http(s)'} URL")
         return
     if default is None:
         if value is not None and not isinstance(value, str):

@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from pathlib import Path
 GITATTRIBUTES = "* -text\n"
 _SHA = re.compile(r"[0-9a-f]{7,64}")
 PUSH_TIMEOUT_S = 120
+# No console window for git (or the credential helper it starts): under the desktop shell the hub
+# has a hidden console that git inherits; without this flag a console-less parent would make git
+# pop up a visible one (Ruling 13).
+_NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 def redact(text: str) -> str:
@@ -38,7 +43,7 @@ class BrainRepo:
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         """Run git without taking the lock (caller must hold it)."""
         return subprocess.run(
-            ["git", *args], cwd=self.path, capture_output=True, text=True, encoding="utf-8"
+            ["git", *args], cwd=self.path, capture_output=True, text=True, encoding="utf-8", **_NO_WINDOW
         )
 
     def _git(self, *args: str) -> subprocess.CompletedProcess:
@@ -200,7 +205,7 @@ class BrainRepo:
                 ["git", "-c", "credential.interactive=never", "push", "--end-of-options",
                  remote_url, "HEAD:refs/heads/main"],
                 cwd=self.path, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                env=env, stdin=subprocess.DEVNULL, timeout=timeout)
+                env=env, stdin=subprocess.DEVNULL, timeout=timeout, **_NO_WINDOW)
         except subprocess.TimeoutExpired:
             return False, f"push timed out after {timeout:g}s"
         return r.returncode == 0, redact(r.stderr.strip())[-500:]

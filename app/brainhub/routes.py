@@ -5,6 +5,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
+import sys
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
+from . import claude_integration as ci
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -19,6 +22,7 @@ from .rawlog import append_entry
 from .recall import deeper_answer, quick_answer, search_hits
 from .store import Store
 from .today import compute_today
+from .widget import build_widget
 
 log = logging.getLogger(__name__)
 
@@ -414,6 +418,58 @@ async def get_today(request: web.Request) -> web.Response:
     return web.json_response(await t(_today, request.app))
 
 
+# -- handlers: widget ---------------------------------------------------------
+_VIEW_RX = re.compile(r"[a-z]+(/[a-z0-9-]+)?")
+_HTTP_RX = re.compile(r"https?://\S+")
+_HTTPS_RX = re.compile(r"https://\S+")
+
+
+def _widget_state(app) -> dict:
+    store, paths = app["store"], app["paths"]
+    settings = load_settings(paths)
+    return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(store.list_proposals()),
+            "failed": len(store.list_filings("failed")), "map": load_map(paths.brain),
+            "usage": app["usage"].view(settings["usage_warn_pct"], settings["fable_usage_url"]),
+            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now()}
+
+
+async def get_widget(request: web.Request) -> web.Response:
+    app = request.app
+    state = await t(_widget_state, app)
+    state["arm_reachable"] = await app["arm"].reachable(state["settings"]["arm_url"])
+    return web.json_response(await t(build_widget, state))
+
+
+async def widget_page(request: web.Request) -> web.StreamResponse:
+    f = request.app["paths"].web / "widget.html"
+    if not f.is_file():
+        raise web.HTTPNotFound()
+    return web.FileResponse(f)
+
+
+async def post_open(request: web.Request) -> web.Response:
+    app = request.app
+    body = await body_dict(request)
+    target, view = body.get("target"), body.get("view")
+    settings = load_settings(app["paths"])
+    if target == "app":
+        if view is not None and not (isinstance(view, str) and _VIEW_RX.fullmatch(view)):
+            raise web.HTTPBadRequest(reason="bad view")
+        url = f"http://127.0.0.1:{app['port']}/" + (f"#/{view}" if view else "")
+    elif target == "arm":
+        url = settings["arm_url"]
+        if not _HTTP_RX.fullmatch(url):
+            raise web.HTTPBadRequest(reason="arm_url is not an http(s) URL")
+    elif target == "fable_usage":
+        url = settings["fable_usage_url"]
+        if not _HTTPS_RX.fullmatch(url):
+            raise web.HTTPBadRequest(reason="fable_usage_url is not an https URL")
+    else:
+        raise web.HTTPBadRequest(reason="unknown target")
+    await t(app["opener"], url)
+    return web.json_response({"ok": True, "url": url})
+
+
 # -- handlers: SSE and WebSocket ---------------------------------------------
 async def _event(resp: web.StreamResponse, name: str, data) -> None:
     await resp.write(f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
@@ -521,6 +577,86 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _usage_view(app: web.Application) -> dict:
+    s = load_settings(app["paths"])
+    return app["usage"].view(s["usage_warn_pct"], s["fable_usage_url"])
+
+
+async def post_usage(request: web.Request) -> web.Response:
+    app = request.app
+    if await t(app["usage"].update, await body_dict(request)):
+        await app["broadcast"]("usage.changed", await t(_usage_view, app))
+    return web.Response(status=204)
+
+
+async def get_usage(request: web.Request) -> web.Response:
+    return web.json_response(await t(_usage_view, request.app))
+
+
+async def post_hook_event(request: web.Request) -> web.Response:
+    app = request.app
+    if await t(app["agents"].handle, await body_dict(request)):
+        await app["broadcast"]("agents.changed", {})
+    return web.Response(status=204)
+
+
+async def get_agents(request: web.Request) -> web.Response:
+    return web.json_response(await t(request.app["agents"].rows))
+
+
+async def patch_agent(request: web.Request) -> web.Response:
+    app = request.app
+    try:
+        row = await t(app["agents"].edit, request.match_info["session_id"], await body_dict(request))
+    except KeyError:
+        raise web.HTTPNotFound(reason="unknown session") from None
+    await app["broadcast"]("agents.changed", {})
+    return web.json_response(row)
+
+
+async def delete_agent(request: web.Request) -> web.Response:
+    app = request.app
+    await t(app["agents"].remove, request.match_info["session_id"])
+    await app["broadcast"]("agents.changed", {})
+    return web.Response(status=204)
+
+
+def _integration_view(app: web.Application) -> dict:
+    view = ci.status(app["claude_settings_path"], port=app["port"])
+    return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
+
+
+async def get_integration(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_view, request.app))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+def _integration_change(app: web.Application, install: bool) -> dict:
+    paths, target = app["paths"], app["claude_settings_path"]
+    if install:
+        ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
+                   port=app["port"], data_dir=paths.data)
+    else:
+        ci.uninstall(target, data_dir=paths.data)
+    return _integration_view(app)
+
+
+async def post_integration_install(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_change, request.app, True))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
+async def post_integration_uninstall(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await t(_integration_change, request.app, False))
+    except ci.IntegrationError as e:
+        raise web.HTTPBadRequest(reason=str(e)) from None
+
+
 def add_routes(app: web.Application) -> None:
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
@@ -539,5 +675,14 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/today", get_today),
         web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
+        web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
+        web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
+        web.patch("/api/agents/{session_id}", patch_agent),
+        web.delete("/api/agents/{session_id}", delete_agent),
+        web.get("/api/integration", get_integration),
+        web.post("/api/integration/install", post_integration_install),
+        web.post("/api/integration/uninstall", post_integration_uninstall),
+        web.get("/api/widget", get_widget), web.get("/widget", widget_page),
+        web.post("/api/open", post_open),
         web.get("/ws", ws_handler),
     ])

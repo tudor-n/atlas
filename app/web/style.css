@@ -120,3 +120,22 @@ button.linkish { border: 0; background: none; padding: 0 var(--space-1); color: 
 .tree summary { cursor: pointer; min-height: 28px; }
 .tree .leaf { padding-left: var(--space-4); }
 code { font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-s); overflow-wrap: anywhere; }
+
+/* Usage and Agents (phase 2) */
+.meter-block { margin: var(--space-3) 0; }
+.meter-block.warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
+.big-pct { font-size: 2rem; font-weight: 700; }
+meter { width: 100%; height: 14px; }
+meter::-webkit-meter-bar { background: var(--line); border: 0; }
+.agents-table { width: 100%; border-collapse: collapse; }
+.agents-table th { text-align: left; font-size: var(--fs-s); color: var(--muted); font-weight: 600; }
+.agents-table th, .agents-table td { padding: var(--space-2); border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.badge.warn { background: var(--warn-bg); color: var(--warn-ink); margin-top: 0; padding: 1px 8px; }
+.agents-table tr.ended { color: var(--muted); }
+button.link { border: 0; background: none; padding: 0; min-height: 0; min-width: 0; text-align: left; text-decoration: underline dotted; cursor: text; }
+@media (max-width: 760px) {
+  .agents-table, .agents-table thead, .agents-table tbody, .agents-table tr, .agents-table td { display: block; }
+  .agents-table thead { display: none; }
+  .agents-table tr { border-top: 1px solid var(--line); padding: var(--space-2) 0; }
+  .agents-table td { border: 0; padding: 2px 0; }
+}

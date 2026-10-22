@@ -29,6 +29,7 @@ export const get = (path) => request('GET', path);
 export const post = (path, body) => request('POST', path, body);
 export const patch = (path, body) => request('PATCH', path, body);
 export const put = (path, body) => request('PUT', path, body);
+export const del = (path) => request('DELETE', path);
 
 // -- WebSocket: one shared, auto-reconnecting socket ----------------------------------------
 // Listeners receive the whole message {type, data}. 'ws.open' fires on every reconnect (not the

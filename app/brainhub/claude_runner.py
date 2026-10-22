@@ -35,6 +35,8 @@ from pathlib import Path
 _WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 _STDERR_TAIL = 2000
 _STREAM_LIMIT = 16 * 1024 * 1024
+# claude and taskkill never open a console window, whatever console the hub has (Ruling 13).
+_NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
 
 
 class ClaudeError(Exception):
@@ -84,7 +86,7 @@ class ClaudeRunner:
         proc = await asyncio.create_subprocess_exec(
             self.claude_path, *args, cwd=str(cwd), env=child_env(),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT)
+            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT, **_NO_WINDOW)
         try:
             proc.stdin.write(prompt.encode("utf-8"))
             await proc.stdin.drain()
@@ -101,7 +103,7 @@ class ClaudeRunner:
                 try:
                     killer = await asyncio.create_subprocess_exec(
                         "taskkill", "/T", "/F", "/PID", str(proc.pid),
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, **_NO_WINDOW)
                     await killer.wait()
                 except OSError:
                     pass

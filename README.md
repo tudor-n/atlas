@@ -6,8 +6,12 @@ A personal, local second brain for one owner. Free-text entries are written verb
 - Recall gives instant full-text hits plus a cited answer, or `Nothing on that.`
 - `brain/` is its own git repo, with optional push to a private GitHub backup.
 - Phase 1 is the capture, filing, review, Today and recall core.
+- Phase 2 adds a Claude usage meter, an Agents panel fed by Claude Code hooks, a desktop widget, and a Tauri desktop shell (tray, start at login, hub self-healing).
+
+Next session: read [NEXT-SESSION.md](NEXT-SESSION.md) first.
 
 Docs:
-- [Run and install instructions](app/README.md)
-- [Design spec](docs/superpowers/specs/2026-10-20-brainhub-design.md)
-- [Phase 1 plan](docs/superpowers/plans/2026-10-20-brainhub-phase1.md)
+- [Run and install instructions](app/README.md) (phase 2 included); [desktop shell](app/desktop/README.md)
+- [Design spec](docs/superpowers/specs/2026-10-20-brainhub-design.md), the authority for all phases
+- Phase 1: [plan](docs/superpowers/plans/2026-10-20-brainhub-phase1.md), [build decisions](docs/superpowers/phase1-decisions.md)
+- Phase 2: [design](docs/superpowers/specs/2026-10-21-brainhub-phase2-design.md), [plan](docs/superpowers/plans/2026-10-21-brainhub-phase2.md), [build decisions](docs/superpowers/phase2-decisions.md)

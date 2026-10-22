@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
+import sys
+import webbrowser
 from datetime import datetime
+from pathlib import Path
 
 from aiohttp import web
 
+from .agents import AgentTracker
 from .backup import BackupPusher
+from .claude_integration import default_settings_path
 from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
@@ -17,6 +23,8 @@ from .rawlog import read_log
 from .review import Reviewer
 from .routes import add_routes, errors, local_only, setup_done
 from .store import Store, commit_hook
+from .usage import UsageStore
+from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
 
@@ -104,12 +112,23 @@ def _startup_sync(app: web.Application) -> list[str]:
     return step("filing queue", app["worker"].requeue_unfinished, default=[])
 
 
+async def _prune_agents(app: web.Application) -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            if await t(app["agents"].prune):
+                await app["broadcast"]("agents.changed", {})
+        except Exception:
+            logging.getLogger(__name__).exception("agent prune failed")
+
+
 async def on_startup(app: web.Application) -> None:
     for entry_id in await t(_startup_sync, app):
         app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
     if app["start_workers"]:
         app["tasks"] = [asyncio.create_task(app["worker"].run_forever()),
-                        asyncio.create_task(app["backup"].run_forever())]
+                        asyncio.create_task(app["backup"].run_forever()),
+                        asyncio.create_task(_prune_agents(app))]
 
 
 async def on_shutdown(app: web.Application) -> None:
@@ -146,7 +165,16 @@ def _open_store(paths: Paths, problems: list[str]) -> Store:
         return Store(paths.db)
 
 
-def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.Application:
+def _default_opener(url: str) -> None:
+    """Open a validated http(s) URL in the default browser."""
+    if sys.platform == "win32":
+        os.startfile(url)
+    else:
+        webbrowser.open(url)
+
+
+def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
+               claude_settings_path: Path | None = None) -> web.Application:
     app = web.Application(middlewares=[local_only, errors])
     paths.data.mkdir(parents=True, exist_ok=True)
     startup_errors: list[str] = []
@@ -174,6 +202,14 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True) -> web.
     app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
+    app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
+    app["usage"] = UsageStore(paths.data / "usage.json")
+    app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
+
+    app["arm"] = ArmProbe()
+    # The port the hub listens on: run_server sets the bound one; default to the settings port.
+    app["port"] = settings["port"]
+    app["opener"] = _default_opener
 
     add_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root

@@ -17,3 +17,10 @@ def store(paths):
     s = Store(paths.db)
     s.init_schema()
     return s
+
+
+@pytest.fixture(autouse=True)
+def _isolate_claude_dirs(tmp_path, monkeypatch):
+    """Keep tests away from the owner's real Claude config and local app data."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))

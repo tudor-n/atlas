@@ -4,15 +4,21 @@ import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
+const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const HINTS = {
-  port: 'Takes effect after BrainHub restarts.',
+  port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
   claude_path: 'Command or full path of the claude CLI. Takes effect after BrainHub restarts.',
   quiet_hours: 'Stored now; used when reminders arrive.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',
   default_lead_days: 'Default days of notice for deadlines.',
   recall_top_n: 'How many notes recall looks at.',
+  usage_warn_pct: 'Usage at or above this % shows as a warning.',
+  agents_end_linger_s: 'Seconds a closed session stays listed.',
+  agents_stale_h: 'Hours without any event before a session is dropped.',
+  arm_url: 'Robot arm server address (opened from the widget).',
+  widget_tiles: 'Tiles shown in the expanded widget.',
 };
 const label = (key) => key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
@@ -49,6 +55,18 @@ function buildField(key, value) {
       read() {
         if (!a.value || !b.value) throw new Error('Pick both quiet-hours times.');
         return [a.value, b.value];
+      },
+    };
+  }
+  if (key === 'widget_tiles' && Array.isArray(value)) {
+    const boxes = WIDGET_TILES.map((t) => ({ t, box: el('input', { type: 'checkbox', checked: value.includes(t) }) }));
+    return {
+      node: el('div', { class: 'pref' }, el('fieldset', {}, el('legend', {}, label(key)),
+        boxes.map(({ t, box }) => el('label', { class: 'field' }, box, ' ', label(t)))), hint),
+      read() {
+        const on = new Set(boxes.filter((b) => b.box.checked).map((b) => b.t));
+        if (!on.size) throw new Error('Pick at least one widget tile.');
+        return [...value.filter((t) => on.has(t)), ...WIDGET_TILES.filter((t) => on.has(t) && !value.includes(t))];
       },
     };
   }
@@ -267,6 +285,52 @@ export async function render(container) {
   } catch (e) {
     prefBox.appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't load the preferences: ${e.message}`));
   }
+
+  // ---- Claude Code integration
+  const intBox = el('div', {});
+  const intMsg = el('div', { role: 'alert' });
+  container.appendChild(el('h2', {}, 'Claude Code integration'));
+  container.appendChild(intBox);
+
+  const whenText = (iso) => (iso ? new Date(iso).toLocaleString() : 'never');
+  function drawIntegration(s) {
+    clear(intBox);
+    const ev = (s.events || []).length ? ` (${s.events.join(', ')})` : '';
+    const port = s.port_matches ? 'yes' : (s.hooks_installed ? 'no. Install again so Claude Code reports to the right port.' : 'no');
+    const run = (path, verb) => async (ev2) => {
+      const btn = ev2.currentTarget;
+      btn.disabled = true;
+      say(intMsg, '');
+      try {
+        const next = await api.post(path, {});
+        if (!dead) { drawIntegration(next); say(intMsg, verb, true); }
+      } catch (e) {
+        if (!dead) { btn.disabled = false; say(intMsg, e.message); }
+      }
+    };
+    intBox.appendChild(el('div', {},
+      el('p', { class: 'muted' }, "Adds BrainHub's hooks and status line to your Claude Code user settings. A backup of the file is made first."),
+      el('dl', { class: 'review-list' },
+        el('dt', {}, 'Hooks'), el('dd', {}, s.hooks_installed ? `installed${ev}` : 'not installed'),
+        el('dt', {}, 'Status line'), el('dd', {}, s.statusline_installed ? 'installed' : 'not installed'),
+        el('dt', {}, 'Port matches'), el('dd', {}, port),
+        el('dt', {}, 'Last hook event'), el('dd', {}, whenText(s.last_hook_at)),
+        el('dt', {}, 'Last usage update'), el('dd', {}, whenText(s.last_usage_at)),
+        el('dt', {}, 'Settings file'), el('dd', {}, el('code', {}, s.settings_path || ''))),
+      el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'primary', onclick: run('/api/integration/install', 'Installed.') }, 'Install'),
+        el('button', { type: 'button', onclick: run('/api/integration/uninstall', 'Removed.') }, 'Remove')),
+      intMsg));
+  }
+  async function loadIntegration() {
+    try {
+      const s = await api.get('/api/integration');
+      if (!dead) drawIntegration(s);
+    } catch (e) {
+      if (!dead) clear(intBox).appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't read the integration status: ${e.message}`));
+    }
+  }
+  await loadIntegration();
 
   subs.push(api.onEvent('map.changed', () => loadTree()));
   subs.push(api.onEvent('items.changed', () => loadTree()));

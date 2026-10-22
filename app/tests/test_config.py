@@ -95,3 +95,32 @@ def test_out_of_range_stored_value_falls_back_to_default(paths):
     paths.settings_file.write_text(json.dumps({"port": 80}), encoding="utf-8")
     problems = []
     assert load_settings(paths, problems)["port"] == 8090 and "port" in problems[0]
+
+
+def test_phase2_defaults(paths):
+    s = load_settings(paths)
+    assert s["usage_warn_pct"] == 80
+    assert s["fable_usage_url"] == "https://claude.ai/settings/usage"
+    assert s["agents_end_linger_s"] == 60
+    assert s["agents_stale_h"] == 12
+    assert s["arm_url"] == "http://127.0.0.1:8080"
+    assert s["widget_tiles"] == ["today", "usage", "agents", "people", "deadlines", "review", "projects", "arm"]
+
+
+def test_widget_tiles_validation(paths):
+    assert save_settings(paths, {"widget_tiles": ["usage", "today"]})["widget_tiles"] == ["usage", "today"]
+    for bad in ([], ["today", "today"], ["bogus"], "today", [1]):
+        with pytest.raises(ValueError):
+            save_settings(paths, {"widget_tiles": bad})
+
+
+def test_url_settings_validation(paths):
+    assert save_settings(paths, {"arm_url": "http://192.168.1.5:8080"})["arm_url"] == "http://192.168.1.5:8080"
+    for bad in ("ftp://x", "javascript:alert(1)"):
+        with pytest.raises(ValueError):
+            save_settings(paths, {"arm_url": bad})
+    with pytest.raises(ValueError):
+        save_settings(paths, {"fable_usage_url": "http://claude.ai"})
+    for bad in (0, 101):
+        with pytest.raises(ValueError):
+            save_settings(paths, {"usage_warn_pct": bad})
