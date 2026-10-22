@@ -57,7 +57,7 @@ class UsageStore:
         out = dict(data)
         if updated is not None:
             out["updated_at"] = datetime.fromtimestamp(updated).isoformat(timespec="seconds")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(exist_ok=True)  # data/ only, never the root (it may be gone)
         tmp = self.path.with_name(self.path.name + ".tmp")
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(out, indent=2))

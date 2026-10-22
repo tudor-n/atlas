@@ -162,7 +162,7 @@ def save_settings(paths: Paths, patch: dict) -> dict:
     settings = load_settings(paths)
     settings.update(patch)
     target = paths.settings_file
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(exist_ok=True)  # data/ only, never the root (it may be gone)
     tmp = target.with_name(target.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(settings, indent=2))

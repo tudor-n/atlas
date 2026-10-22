@@ -120,7 +120,7 @@ async def test_fresh_root_allows_setup_and_writes_marker(aiohttp_client, tmp_pat
     assert (await c.post("/api/setup", json={"map": MAP, "backup_remote": None})).status == 200
     marker = _marker(paths)
     assert re.fullmatch(r"[0-9a-f]{32}", marker["id"]) and marker["brain_format"] == 1
-    assert marker["tz"] == {"timezone": time.timezone, "altzone": time.altzone}
+    assert marker["tz"] == rootguard.utc_offsets() and set(marker["tz"]) == {"jan", "jul"}
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", marker["created"])
     raw = (paths.data / rootguard.MARKER_NAME).read_bytes()
     assert b"\r\n" not in raw and str(root).encode() not in raw  # LF, no absolute paths
@@ -137,16 +137,30 @@ async def test_setup_refused_on_non_fresh_root(aiohttp_client, paths, tmp_path):
     r = await c.post("/api/setup", json={"map": MAP})
     assert r.status == 409 and "doesn't look like a BrainHub brain" in (await r.json())["error"]
     assert not (paths.brain / "map.json").exists() and not (paths.data / rootguard.MARKER_NAME).exists()
-    # A marked root without map.json is not empty either: setup never makes a second brain there.
+    # A marked root without map.json is a brain that went missing, never a fresh folder: no app
+    # (Task 6 serves the banner and holds captures), no setup, and the marker is never replaced.
     other = Paths(tmp_path / "other")
     other.brain.mkdir(parents=True)
     rootguard.create_marker(other)
-    c2 = await aiohttp_client(_app(other))
-    r = await c2.post("/api/setup", json={"map": MAP})
-    assert r.status == 409 and "already marked" in (await r.json())["error"]
+    status = rootguard.check_root(other)
+    assert status.state == "foreign" and "map.json is missing" in status.message
+    with pytest.raises(RootUnavailable):
+        _app(other)
     assert not (other.brain / "map.json").exists()
     with pytest.raises(FileExistsError):
         rootguard.create_marker(other)
+
+
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="POSIX permissions, not as root")
+def test_unreadable_root_is_missing_never_fresh(paths):
+    save_map(paths.brain, default_map())
+    assert rootguard.check_root(paths).state == "ok"
+    paths.root.chmod(0o600)  # no search permission: stat of anything inside fails
+    try:
+        status = rootguard.check_root(paths)
+    finally:
+        paths.root.chmod(0o755)
+    assert status.state == "missing" and "can't be read" in status.message
 
 
 def test_foreign_root(paths):
@@ -272,7 +286,8 @@ async def test_tz_mismatch_warning(aiohttp_client, paths, monkeypatch):
     marker = _marker(paths)
     assert rootguard.tz_mismatch(marker) is None
     assert rootguard.tz_mismatch({"id": "x", "brain_format": 1}) is None  # nothing to compare with
-    monkeypatch.setattr(time, "timezone", time.timezone + 3600)
+    here = rootguard.utc_offsets()
+    monkeypatch.setattr(rootguard, "utc_offsets", lambda: {"jan": here["jan"] + 3600, "jul": here["jul"]})
     assert rootguard.tz_mismatch(marker) == rootguard.TZ_WARNING
     c = await aiohttp_client(_app(paths))
     assert (await (await c.get("/api/state")).json())["warnings"] == [rootguard.TZ_WARNING]
@@ -295,6 +310,17 @@ def _ours(lock):
 
 
 @pytest.fixture
+def live_child():
+    """A running process that isn't this one: a lock naming it belongs to another live hub."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        yield child
+    finally:
+        child.kill()
+        child.wait()
+
+
+@pytest.fixture
 def finished():
     """A child that has exited. The Popen object lives as long as the test, so on Windows its
     handle keeps the pid from being reused (and pid_alive reads its exit code)."""
@@ -307,7 +333,7 @@ def test_lock_from_other_os_is_taken_over(paths):
     _write_lock(paths, os="windows" if osdirs.os_name() == "linux" else "linux")
     assert rootguard.acquire_lock(paths) is None
     lock = _lock(paths)
-    assert _ours(lock) and set(lock) == {"os", "boot", "pid", "started"}
+    assert _ours(lock) and set(lock) == {"os", "boot", "pid", "pid_start", "started"}
     raw = (paths.data / rootguard.LOCK_NAME).read_bytes()
     assert b"\r\n" not in raw and str(paths.root).encode() not in raw
     assert [p.name for p in paths.data.iterdir()] == [rootguard.LOCK_NAME]  # no tmp left behind
@@ -324,13 +350,28 @@ def test_lock_dead_pid_is_taken_over(paths, finished):
     assert rootguard.acquire_lock(paths) is None and _ours(_lock(paths))
 
 
-def test_lock_live_same_boot_refuses(paths):
-    _write_lock(paths)  # this OS, this boot, a live pid (the test's own)
+def test_lock_live_same_boot_refuses(paths, live_child):
+    # this OS, this boot, a live pid with the start time it really has
+    _write_lock(paths, pid=live_child.pid, pid_start=rootguard.process_start(live_child.pid))
     before = (paths.data / rootguard.LOCK_NAME).read_bytes()
     refusal = rootguard.acquire_lock(paths)
-    assert refusal and f"pid {os.getpid()}" in refusal and "already running" in refusal
+    assert refusal and f"pid {live_child.pid}" in refusal and "already running" in refusal
     assert rootguard.acquire_lock(paths, write=False) == refusal
     assert (paths.data / rootguard.LOCK_NAME).read_bytes() == before
+
+
+def test_lock_with_our_own_pid_is_stale(paths):
+    """The hub that wrote it was killed and this process got its pid: we are that pid now."""
+    _write_lock(paths)
+    assert rootguard.acquire_lock(paths) is None and _ours(_lock(paths))
+
+
+def test_lock_with_reused_pid_is_taken_over(paths, live_child):
+    """A live pid whose start time differs from the lock's was reused after the hub died."""
+    if rootguard.process_start(live_child.pid) is None:
+        pytest.skip("process start times can't be read here")
+    _write_lock(paths, pid=live_child.pid, pid_start="proc-1" if sys.platform != "win32" else "ft-1")
+    assert rootguard.acquire_lock(paths) is None and _ours(_lock(paths))
 
 
 def test_unreadable_lock_is_taken_over(paths):
@@ -412,8 +453,8 @@ def test_run_server_exits_on_missing_root(tmp_path, no_server):
     assert not (tmp_path / "gone").exists()
 
 
-def test_run_server_refuses_while_another_hub_holds_the_lock(paths, no_server):
-    _write_lock(paths)
+def test_run_server_refuses_while_another_hub_holds_the_lock(paths, no_server, live_child):
+    _write_lock(paths, pid=live_child.pid, pid_start=rootguard.process_start(live_child.pid))
     with pytest.raises(SystemExit) as e:
         main_mod.run_server(["--root", str(paths.root), "--port", "8123"])
     assert "Another BrainHub" in str(e.value.code)
