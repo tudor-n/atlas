@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -200,3 +201,90 @@ def test_git_runs_without_console_window(tmp_path, monkeypatch):
     ok, _ = r.push(str(tmp_path / "no-such-remote"), timeout=20)
     assert not ok and calls
     assert all(f & subprocess.CREATE_NO_WINDOW for f in calls), calls
+
+
+def _git_options(args: list[str]) -> list[str]:
+    """The `-c name=value` settings given before the git subcommand."""
+    out, i = [], 1
+    while i + 1 < len(args) and args[i] == "-c":
+        out.append(args[i + 1])
+        i += 2
+    return out
+
+
+def test_git_calls_pass_safe_directory(tmp_path, monkeypatch):
+    """Every git call names its repo as safe, so git never refuses files the other OS created
+    as "dubious ownership" (dual-boot design §5.4). A worktree is checked as its own path."""
+    import brainhub.gitrepo as gr
+    calls = []
+    real = subprocess.run
+
+    def spy(args, **kw):
+        calls.append((list(args), str(Path(kw["cwd"]).resolve())))
+        return real(args, **kw)
+
+    monkeypatch.setattr(gr.subprocess, "run", spy)
+    main, work = tmp_path / "b", tmp_path / "wt"
+    r = BrainRepo(main); r.init()
+    (main / "a.md").write_text("x", encoding="utf-8"); sha = r.commit_all("first")
+    r.changed_files(sha)
+    wt = r.worktree_add(work)
+    (work / "n.md").write_text("agent", encoding="utf-8"); wt.commit_all("agent")
+    r.cherry_pick(wt.head())
+    r.worktree_remove(work)
+    r.push(str(tmp_path / "no-such-remote"), timeout=20)
+    seen = {cwd for _, cwd in calls}
+    assert seen == {str(main.resolve()), str(work.resolve())}
+    for args, cwd in calls:
+        assert args[0] == "git"
+        assert f"safe.directory={cwd.replace(chr(92), '/')}" in _git_options(args), args
+
+
+def test_worktree_names_are_case_sensitive_on_posix(tmp_path):
+    """A brain made on Windows has core.ignorecase=true; a filing worktree on Linux overrides it
+    (or git wouldn't see robot.md next to Robot.md), Windows keeps it."""
+    r = _repo_with_commit(tmp_path / "b")
+    r._run("config", "core.ignorecase", "true")
+    wt = r.worktree_add(tmp_path / "wt")
+    expected = "true" if __import__("sys").platform == "win32" else "false"
+    assert wt._run("config", "--get", "core.ignorecase").stdout.strip() == expected
+    assert r._run("config", "--get", "core.ignorecase").stdout.strip() == "true"  # main unchanged
+    r.worktree_remove(tmp_path / "wt")
+
+
+def test_init_sets_filemode_false(tmp_path):
+    """ntfs3 reports execute bits: a repo made on Linux must not see every file as changed."""
+    r = BrainRepo(tmp_path); r.init()
+    assert r._run("config", "--get", "core.filemode").stdout.strip() == "false"
+
+
+def test_clear_stale_locks_removes_ref_locks(tmp_path):
+    r = _repo_with_commit(tmp_path)
+    git = tmp_path / ".git"
+    (git / "refs" / "heads" / "main.lock").write_text("", encoding="utf-8")
+    (tmp_path / "b.md").write_text("y", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        r.commit_all("blocked by a power cut's leftover")
+    names = ["index.lock", "HEAD.lock", "config.lock", "packed-refs.lock", "refs/tags/v1.lock"]
+    for name in names:
+        (git / name).parent.mkdir(parents=True, exist_ok=True)
+        (git / name).write_text("", encoding="utf-8")
+    removed = r.clear_stale_locks()
+    assert sorted(removed) == sorted(f".git/{n}" for n in [*names, "refs/heads/main.lock"])
+    assert (git / "refs" / "heads" / "main").is_file() and (git / "HEAD").is_file()
+    assert r.commit_all("works again")
+    assert r.clear_stale_locks() == []
+
+
+def test_new_paths_lists_added_and_renamed(tmp_path):
+    r = BrainRepo(tmp_path); r.init()
+    for name in ("keep.md", "old.md", "gone.md"):
+        (tmp_path / name).write_text(f"{name} body text", encoding="utf-8")
+    r.commit_all("base")
+    (tmp_path / "keep.md").write_text("changed", encoding="utf-8")
+    (tmp_path / "old.md").rename(tmp_path / "renamed-here.md")
+    (tmp_path / "gone.md").unlink()
+    (tmp_path / "sub").mkdir(); (tmp_path / "sub" / "rețetă.md").write_text("new", encoding="utf-8")
+    sha = r.commit_all("agent")
+    assert sorted(r.new_paths(sha)) == ["renamed-here.md", "sub/rețetă.md"]
+    assert sorted(r.tracked_paths()) == ["keep.md", "renamed-here.md", "sub/rețetă.md"]

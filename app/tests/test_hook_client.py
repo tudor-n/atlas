@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parent.parent / "brainhub" / "hook_client.py"
+from tests.fakes import kill_pid_file, pid_gone
+
+HOOK =Path(__file__).resolve().parent.parent / "brainhub" / "hook_client.py"
 
 
 def _load():
@@ -189,6 +191,21 @@ def test_statusline_passthrough_hang_is_bounded(hub, tmp_path):
     print(f"passthrough-hang wall={dt:.3f}s baseline={base:.3f}s")
     assert p.returncode == 0 and p.stdout == b"X\n"
     assert dt < base + 3.5
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups (Windows kills the tree with taskkill /T)")
+def test_passthrough_child_killed_on_timeout(hub, tmp_path):
+    """A hung passthrough's own children die with it, and the client stays silent."""
+    pid_file = tmp_path / "child.pid"
+    f = tmp_path / "pt.txt"
+    f.write_text(f"sleep 30 & echo $! > '{pid_file}'; wait; echo late", encoding="utf-8")
+    try:
+        p, _ = run("statusline", hub.port, b'{"model": {"display_name": "X"}}',
+                   "--passthrough-file", str(f))
+        assert p.returncode == 0 and p.stdout == b"X\n" and p.stderr == b""
+        assert pid_gone(int(pid_file.read_text()), timeout=3)
+    finally:
+        kill_pid_file(pid_file)
 
 
 @pytest.mark.parametrize("ra", [10**15, -5, 10**30])

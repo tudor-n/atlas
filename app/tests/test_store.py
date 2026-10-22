@@ -203,23 +203,24 @@ def test_schema_migrates_older_version_in_order(paths, monkeypatch):
     s = Store(paths.db)
     s.init_schema()
     s.close()
+    v = store_mod.SCHEMA_VERSION
     ran = []
 
-    def add_os(con):
-        ran.append(2)
-        con.execute("ALTER TABLE agents ADD COLUMN os TEXT")
+    def add_x(con):
+        ran.append(v + 1)
+        con.execute("ALTER TABLE agents ADD COLUMN x TEXT")
 
-    def add_boot(con):
-        ran.append(3)
-        con.execute("ALTER TABLE agents ADD COLUMN boot TEXT")
+    def add_y(con):
+        ran.append(v + 2)
+        con.execute("ALTER TABLE agents ADD COLUMN y TEXT")
 
-    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", 3)
-    monkeypatch.setattr(store_mod, "MIGRATIONS", {2: add_os, 3: add_boot})
+    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", v + 2)
+    monkeypatch.setattr(store_mod, "MIGRATIONS", {v + 1: add_x, v + 2: add_y})
     s = Store(paths.db)
     s.init_schema()
-    assert ran == [2, 3] and s.schema_version() == 3
+    assert ran == [v + 1, v + 2] and s.schema_version() == v + 2
     s.init_schema()  # up to date: nothing runs again
-    assert ran == [2, 3]
+    assert ran == [v + 1, v + 2]
     s.close()
 
 
@@ -228,18 +229,19 @@ def test_failed_migration_leaves_the_old_version(paths, monkeypatch):
     s = Store(paths.db)
     s.init_schema()
     s.close()
+    v = store_mod.SCHEMA_VERSION
 
-    def add_os(con):
-        con.execute("ALTER TABLE agents ADD COLUMN os TEXT")
+    def add_x(con):
+        con.execute("ALTER TABLE agents ADD COLUMN x TEXT")
 
     def broken(con):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", 3)
-    monkeypatch.setattr(store_mod, "MIGRATIONS", {2: add_os, 3: broken})
+    monkeypatch.setattr(store_mod, "SCHEMA_VERSION", v + 2)
+    monkeypatch.setattr(store_mod, "MIGRATIONS", {v + 1: add_x, v + 2: broken})
     s = Store(paths.db)
     with pytest.raises(RuntimeError):
         s.init_schema()
-    assert s.schema_version() == 1  # all or nothing
-    assert "os" not in [r[1] for r in s._db.execute("PRAGMA table_info(agents)")]
+    assert s.schema_version() == v  # all or nothing
+    assert "x" not in [r[1] for r in s._db.execute("PRAGMA table_info(agents)")]
     s.close()

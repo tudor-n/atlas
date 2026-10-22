@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 from datetime import datetime, timedelta
 
@@ -7,6 +8,7 @@ from brainhub import osdirs
 from brainhub.agents import (AgentTracker, find_git_dir, read_branch, resolve_project,
                              simplify_branch, suggest_link)
 from brainhub.brainmap import BrainMap, save_map
+from brainhub.store import SCHEMA_VERSION, Store
 
 T0 = datetime(2026, 10, 21, 12, 0, 0)
 
@@ -331,3 +333,62 @@ def test_ended_session_is_marked_ended_and_sorted_last(tracker, now):
                                                                         ("a", "running", True)]
     tracker.handle(ev("SessionStart", sid="a", source="resume"))
     assert {r["session_id"]: r["ended"] for r in tracker.rows()} == {"a": False, "b": False}
+
+
+# -- OS and boot (dual-boot design §6.6) ---------------------------------------
+def test_rows_record_os_and_boot(tracker, store):
+    tracker.handle(ev("SessionStart"))
+    row = store.get_agent("s1")
+    assert (row["os"], row["boot"]) == (osdirs.os_name(), osdirs.boot_id())
+    assert tracker.rows()[0]["os"] == osdirs.os_name()
+
+
+def test_end_previous_boot(tracker, store, now):
+    for sid in ("here", "old", "legacy", "closed"):
+        tracker.handle(ev("UserPromptSubmit", sid=sid))
+    for sid, boot in (("old", "old-boot"), ("legacy", None), ("closed", "old-boot")):
+        row = store.get_agent(sid)
+        row["boot"] = boot
+        store.upsert_agent(row)
+    tracker.handle(ev("SessionEnd", sid="closed"))
+    closed_at = store.get_agent("closed")["ended_at"]
+    now.advance(seconds=5)
+    assert tracker.end_previous_boot() == 2
+    rows = {r["session_id"]: r for r in tracker.rows()}
+    assert rows["old"]["ended"] and rows["legacy"]["ended"] and not rows["here"]["ended"]
+    assert rows["old"]["ended_at"] == now().isoformat() and rows["closed"]["ended_at"] == closed_at
+    assert tracker.end_previous_boot() == 0
+    now.advance(seconds=61)  # the normal linger removes them
+    assert [r["session_id"] for r in tracker.rows()] == ["here"]
+
+
+_V1_AGENTS = """CREATE TABLE agents(
+    session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL, project_name TEXT NOT NULL,
+    mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
+    where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
+    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT)"""
+
+
+@pytest.mark.parametrize("version,agents_table", [(1, True), (0, True), (0, False)],
+                         ids=["v1", "before-versioning", "before-agents"])
+def test_migration_2_adds_columns(paths, version, agents_table):
+    """A version 1 hub.db (or one made before versioning, or before phase 2's agents table)
+    gains the agents os and boot columns; its rows are kept."""
+    con = sqlite3.connect(paths.db)
+    con.execute("CREATE TABLE entries(id TEXT PRIMARY KEY, ts TEXT NOT NULL, source TEXT NOT NULL, "
+                "text TEXT NOT NULL)")
+    if agents_table:
+        con.execute(_V1_AGENTS)
+        con.execute("INSERT INTO agents VALUES('s1','/w','w','w',0,NULL,NULL,NULL,'cli',NULL,'running',"
+                    "NULL,'2026-10-21T12:00:00','2026-10-21T12:00:00','2026-10-21T12:00:00',NULL)")
+    con.execute(f"PRAGMA user_version={version}")
+    con.commit()
+    con.close()
+    s = Store(paths.db)
+    s.init_schema()
+    assert s.schema_version() == SCHEMA_VERSION >= 2
+    assert [r[1] for r in s._db.execute("PRAGMA table_info(agents)")][-2:] == ["os", "boot"]
+    if agents_table:
+        row = s.get_agent("s1")
+        assert row["status"] == "running" and row["os"] is None and row["boot"] is None
+    s.close()

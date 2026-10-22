@@ -19,6 +19,7 @@ CONNECT_TIMEOUT_S = 0.25
 EVENT_TIMEOUT_S = 1.0
 USAGE_TIMEOUT_S = 0.5
 PASSTHROUGH_TIMEOUT_S = 2.0
+KILL_GRACE_S = 0.5  # short: the status line must stay quick
 
 
 def filter_event(d, env):
@@ -34,22 +35,41 @@ def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _kill_group(proc):
+    # POSIX: SIGTERM the passthrough's process group, a short grace, then SIGKILL what is left.
+    import signal
+
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=KILL_GRACE_S)
+    except Exception:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+
+
 def _run_passthrough(cmd, raw):
     import subprocess
 
-    flags = 0x08000000 if sys.platform == "win32" else 0
+    win = sys.platform == "win32"
+    flags = 0x08000000 if win else 0
+    # POSIX: its own process group, so a timeout also kills the shell's children.
     proc = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=flags)
+                            creationflags=flags, start_new_session=not win)
     try:
         out, _ = proc.communicate(raw, timeout=PASSTHROUGH_TIMEOUT_S)
     except BaseException:
         try:
-            if sys.platform == "win32":
+            if win:
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                creationflags=flags, timeout=2)
-            proc.kill()
+                proc.kill()
+            else:
+                _kill_group(proc)
         except Exception:
             pass
         for pipe in (proc.stdin, proc.stdout, proc.stderr):

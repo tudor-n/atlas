@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+import sys
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -7,7 +8,7 @@ import pytest
 
 from brainhub.brainmap import add_node, default_map, ensure_folders, save_map
 from brainhub.claude_runner import ClaudeError
-from brainhub.filing import FilingWorker, build_filing_prompt, parse_filing_result
+from brainhub.filing import FilingWorker, build_filing_prompt, invalid_windows_paths, parse_filing_result
 from brainhub.gitrepo import BrainRepo
 from brainhub.models import Entry, Filing
 from brainhub.rawlog import append_entry, read_log
@@ -346,3 +347,104 @@ async def test_failed_correction_setup_does_not_leave_the_filing_queued(env, mon
         await w.correct(env.entry.id, "x", queued=True)
     f = env.store.get_filing(env.entry.id)
     assert f.status == "failed" and "git exploded" in f.error
+
+
+# -- names Windows can't hold (dual-boot design §6.3) ---------------------------
+# Such a file would look deleted to Windows git, and the next "owner edits" commit there would
+# record the deletion. The names below can only be created on a case-sensitive POSIX file system.
+posix_names = pytest.mark.skipif(sys.platform in ("win32", "darwin"),
+                                 reason="needs a case-sensitive POSIX file system")
+
+
+def test_invalid_windows_paths_rules():
+    bad = invalid_windows_paths(
+        ["general/a:b.md", "general/q?.md", "general/tab\there.md", "general/dot.", "general/space /x.md",
+         "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md"],
+        [])
+    assert [b.split(" (")[0] for b in bad] == [
+        "general/a:b.md", "general/q?.md", "general/tab\there.md", "general/dot.", "general/space /x.md",
+        "notes/con.md", "notes/Con", "notes/LPT9.tar.gz", "notes/com1", "nul/x.md", "notes/aux .md"]
+    fine = ["general/console.md", "general/com10.md", "general/nul-notes.md", "personal/rețete.md",
+            "projects/robotarm/wrist-servo-2.md", "general/.hidden-ok.md"]
+    assert invalid_windows_paths(fine, []) == []
+
+
+def test_invalid_windows_paths_case_clashes():
+    existing = ["projects/Robot.md", "projects/robotarm/notes.md", "general/a.md", "Mixed/x.md", "mixed/y.md"]
+    assert invalid_windows_paths(["projects/robot.md"], existing) == [
+        "projects/robot.md (same name as projects/Robot.md in another case)"]
+    assert [b.split(" (")[0] for b in invalid_windows_paths(
+        ["Projects/robotarm/new.md", "projects/RobotArm", "general/n.md", "general/N.md"], existing)] == [
+        "Projects/robotarm/new.md", "projects/RobotArm", "general/n.md", "general/N.md"]
+    # Exact names already there are fine, even inside a folder that exists in two cases.
+    assert invalid_windows_paths(["projects/robotarm/new.md", "mixed/z.md", "Mixed/w.md"], existing) == []
+
+
+@posix_names
+async def test_filing_rejects_windows_invalid_paths(env):
+    names = ["projects/a:b.md", "notes/con.md", "x/trailing. /f.md"]
+
+    def edit(cwd):
+        for rel in names:
+            (cwd / rel).parent.mkdir(parents=True, exist_ok=True)
+            (cwd / rel).write_text("agent text (from e-1)", encoding="utf-8")
+        (cwd / "general" / "fine.md").write_text("fine (from e-1)", encoding="utf-8")
+    head = env.repo.head()
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "failed" and "filed paths not valid on Windows" in f.error
+    assert all(rel in f.error for rel in names), f.error
+    assert env.repo.head() == head and f.commit is None  # nothing cherry-picked
+    b = env.paths.brain
+    assert not (b / "projects" / "a:b.md").exists() and not (b / "notes").exists() and not (b / "x").exists()
+    assert not (b / "general" / "fine.md").exists() and only_proposals_pending(env.repo)
+    assert env.store.list_proposals(entry_id=env.entry.id) == []
+    assert not (env.paths.data / "worktrees" / env.entry.id).exists()
+
+
+@posix_names
+@pytest.mark.parametrize("made_on_windows", [False, True], ids=["made-on-linux", "made-on-windows"])
+async def test_filing_rejects_case_clash(env, made_on_windows):
+    if made_on_windows:  # Windows git init sets this in the brain's shared .git/config
+        env.repo._run("config", "core.ignorecase", "true")
+    robot = env.paths.brain / "projects" / "Robot.md"
+    robot.write_text("the owner's note", encoding="utf-8"); env.repo.commit_all("owner")
+    head = env.repo.head()
+
+    def edit(cwd): (cwd / "projects" / "robot.md").write_text("agent (from e-1)", encoding="utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "failed" and "projects/robot.md" in f.error and "projects/Robot.md" in f.error
+    assert env.repo.head() == head and not (env.paths.brain / "projects" / "robot.md").exists()
+    assert robot.read_text(encoding="utf-8") == "the owner's note"
+
+
+async def test_valid_paths_still_file(env):
+    def edit(cwd):
+        (cwd / "projects" / "robotarm" / "wrist-servo-2.md").write_text("servo (from e-1)", encoding="utf-8")
+        (cwd / "personal" / "rețete.md").write_text("sarmale (from e-1)", encoding="utf-8")
+    await env.worker(FakeRunner(json_result=GOOD_RESULT, on_run=edit)).file_entry(env.entry.id)
+    f = env.store.get_filing(env.entry.id)
+    assert f.status == "done" and f.commit == env.repo.head()
+    assert (env.paths.brain / "projects" / "robotarm" / "wrist-servo-2.md").exists()
+    assert (env.paths.brain / "personal" / "rețete.md").exists()
+
+
+def test_leftover_worktree_from_the_other_os_is_removed(env):
+    """A filing cut off on the other OS leaves a worktree whose links name that OS's absolute
+    paths (D:/... seen from Linux, /mnt/data/... seen from Windows): it is still removed and
+    unregistered at startup (dual-boot design §6.6)."""
+    wid = "e-20261020-000000-dead"
+    wt_path = env.paths.data / "worktrees" / wid
+    env.repo.worktree_add(wt_path)
+    other = "/mnt/data/BrainHub" if sys.platform == "win32" else "D:/BrainHub"
+    (wt_path / ".git").write_text(f"gitdir: {other}/brain/.git/worktrees/{wid}\n", encoding="utf-8")
+    (env.paths.brain / ".git" / "worktrees" / wid / "gitdir").write_text(
+        f"{other}/data/worktrees/{wid}/.git\n", encoding="utf-8")
+    (wt_path / "general" / "half.md").parent.mkdir(parents=True, exist_ok=True)
+    (wt_path / "general" / "half.md").write_text("cut off mid-run", encoding="utf-8")
+    env.worker(FakeRunner()).requeue_unfinished()
+    assert not wt_path.exists()
+    assert not (env.paths.brain / ".git" / "worktrees" / wid).exists()
+    listing = env.repo._run("worktree", "list", "--porcelain").stdout
+    assert wid not in listing and not (env.paths.brain / "general" / "half.md").exists()

@@ -31,10 +31,20 @@ def is_note_path(rel: str) -> bool:
     return (rel.lower().endswith(".md") and parts[0].lower() not in _SKIP_DIRS
             and not any(p.startswith(".") for p in parts))
 
+
+def _migrate_2(db: sqlite3.Connection) -> None:
+    """Agents rows record the OS and the boot they were seen in (dual-boot design §6.6). A db
+    made before the agents table existed gets it, with both columns, from _SCHEMA."""
+    cols = {r[1] for r in db.execute("PRAGMA table_info(agents)")}
+    for col in ("os", "boot"):
+        if cols and col not in cols:
+            db.execute(f"ALTER TABLE agents ADD COLUMN {col} TEXT")
+
+
 # The schema version lives in PRAGMA user_version (dual-boot design §5.2). _SCHEMA is always the
 # latest schema; MIGRATIONS[n] moves a version n-1 database to version n.
-SCHEMA_VERSION = 1
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+SCHEMA_VERSION = 2
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_2}
 
 
 class SchemaTooNew(Exception):
@@ -66,7 +76,7 @@ CREATE TABLE IF NOT EXISTS agents(
     session_id TEXT PRIMARY KEY, cwd TEXT NOT NULL, project TEXT NOT NULL, project_name TEXT NOT NULL,
     mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
     where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
-    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT);
+    status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT, os TEXT, boot TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     kind UNINDEXED, ref UNINDEXED, date UNINDEXED, body,
     tokenize='unicode61 remove_diacritics 2');
@@ -333,7 +343,7 @@ class Store:
     # agents (live Claude Code sessions, fed by hook events)
     _AGENT_COLS = ("session_id", "cwd", "project", "project_name", "mapped", "branch", "title",
                    "part_override", "entrypoint", "where_override", "status", "note",
-                   "started_at", "status_since", "last_event_at", "ended_at")
+                   "started_at", "status_since", "last_event_at", "ended_at", "os", "boot")
 
     @staticmethod
     def _agent(r) -> dict:
@@ -361,6 +371,14 @@ class Store:
     def delete_agents(self, ids: list[str]) -> None:
         with self._lock, self._db:
             self._db.executemany("DELETE FROM agents WHERE session_id=?", [(i,) for i in ids])
+
+    def end_agents_not_of_boot(self, boot: str, stamp: str) -> int:
+        """Set ended_at=stamp on every open row seen in another boot (or before rows recorded
+        one); the number of rows ended."""
+        with self._lock, self._db:
+            return self._db.execute(
+                "UPDATE agents SET ended_at=? WHERE ended_at IS NULL AND (boot IS NULL OR boot<>?)",
+                (stamp, boot)).rowcount
 
     # fts
     def index_entry(self, e: Entry) -> None:

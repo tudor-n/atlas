@@ -27,6 +27,7 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -37,6 +38,10 @@ _STDERR_TAIL = 2000
 _STREAM_LIMIT = 16 * 1024 * 1024
 # claude and taskkill never open a console window, whatever console the hub has (Ruling 13).
 _NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # CREATE_NO_WINDOW
+# POSIX: each run leads its own process group, so stopping it stops its tool children too
+# (dual-boot design §6.5 item 6). Windows kills the tree with taskkill /T instead.
+_NEW_GROUP = {} if sys.platform == "win32" else {"start_new_session": True}
+KILL_GRACE_S = 2.0
 
 
 class ClaudeError(Exception):
@@ -96,7 +101,7 @@ class ClaudeRunner:
         proc = await asyncio.create_subprocess_exec(
             self.claude_path, *args, cwd=str(cwd), env=child_env(),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT, **_NO_WINDOW)
+            stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT, **_NO_WINDOW, **_NEW_GROUP)
         try:
             proc.stdin.write(prompt.encode("utf-8"))
             await proc.stdin.drain()
@@ -117,13 +122,32 @@ class ClaudeRunner:
                     await killer.wait()
                 except OSError:
                     pass
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            else:
+                await ClaudeRunner._kill_group(proc)
         try:
             await proc.wait()
         except Exception:
+            pass
+
+    @staticmethod
+    async def _kill_group(proc: asyncio.subprocess.Process) -> None:
+        """POSIX: SIGTERM the run's process group (claude and its tool children), give it
+        KILL_GRACE_S to exit, then SIGKILL whatever is left of the group."""
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return  # the group is already gone
+        try:
+            await asyncio.wait_for(proc.wait(), KILL_GRACE_S)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
             pass
 
     @staticmethod

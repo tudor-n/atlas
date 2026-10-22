@@ -4,7 +4,7 @@ import pytest
 
 from brainhub.claude_runner import ClaudeError, ClaudeRunner, build_args, child_env
 
-from tests.fakes import fake_cli
+from tests.fakes import fake_cli, kill_pid_file, pid_gone
 
 
 def test_child_env_strips_api_key(monkeypatch):
@@ -195,3 +195,22 @@ async def test_children_get_no_console_window(tmp_path, monkeypatch):
                          json_schema={}, timeout_s=1, **_KW)
     assert [Path(c[0]).name.lower() for c in calls] == ["fake_claude.bat", "taskkill"]
     assert all(flags & subprocess.CREATE_NO_WINDOW for _, flags in calls), calls
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups (Windows kills the tree with taskkill /T)")
+async def test_timeout_kills_process_group(tmp_path):
+    """A run cut off by its timeout takes its tool children with it (dual-boot design §6.5)."""
+    pid_file = tmp_path / "child.pid"
+    body = ("import subprocess, time\n"
+            "child = subprocess.Popen(['sleep', '30'])\n"
+            f"with open({str(pid_file)!r}, 'w') as f:\n"
+            "    f.write(str(child.pid))\n"
+            "time.sleep(60)\n")
+    r = ClaudeRunner(_fake_cli(tmp_path, body))
+    try:
+        with pytest.raises(ClaudeError, match="timed out"):
+            await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                             json_schema={}, timeout_s=2, **_KW)
+        assert pid_gone(int(pid_file.read_text()), timeout=3)
+    finally:
+        kill_pid_file(pid_file)

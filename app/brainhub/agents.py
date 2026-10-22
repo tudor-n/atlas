@@ -216,6 +216,9 @@ class AgentTracker:
                 row["status_since"] = stamp
             row["note"] = note[:NOTE_MAX] if note else None
         row["last_event_at"] = stamp
+        # Where and in which boot the session was last seen alive: a session resumed within the
+        # linger keeps its row, which must then survive a hub restart in this boot.
+        row["os"], row["boot"] = osdirs.os_name(), osdirs.boot_id()
         st.upsert_agent(row)
         return before is None or before != self._visible(row)
 
@@ -246,6 +249,7 @@ class AgentTracker:
 
     def _public(self, row: dict, next_time: dict[str, int], m: BrainMap | None) -> dict:
         out = dict(row)
+        out.pop("boot", None)  # internal; `os` stays (the row's tooltip names it)
         out["part"] = (row["part_override"] or row["title"] or simplify_branch(row["branch"]) or "—")
         out["where"] = row["where_override"] or WHERE_BY_ENTRYPOINT.get(row["entrypoint"] or "", "unknown")
         # Closed (SessionEnd) but still lingering: its stored status is whatever it was at the end,
@@ -272,6 +276,14 @@ class AgentTracker:
                  else len(STATUS_ORDER))
         out.sort(key=lambda r: r["ended"])  # ended sessions last (stable: the order above holds)
         return out
+
+    def end_previous_boot(self) -> int:
+        """Mark ended every open row seen in an earlier boot of either OS (or before rows recorded
+        a boot): those sessions can't be alive now, and would otherwise linger as ghost "running"
+        rows until agents_stale_h. The normal linger then removes them (dual-boot design §6.6).
+        Called once at startup; returns the number of rows ended."""
+        with self._lock:
+            return self._store.end_agents_not_of_boot(osdirs.boot_id(), self._stamp())
 
     def prune(self) -> bool:
         s = self._settings()

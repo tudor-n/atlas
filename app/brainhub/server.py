@@ -46,14 +46,13 @@ class RootUnavailable(Exception):
 # -- startup -----------------------------------------------------------------
 # Every step is wrapped: a failure is logged and listed in /api/state as `startup_error`, and
 # the hub keeps serving. Capture only needs the raw log to be writable.
-def _clear_stale_git_lock(app: web.Application) -> None:
-    """No hub git process runs before startup finishes, so an index.lock is a crash leftover."""
-    lock = app["paths"].brain / ".git" / "index.lock"
-    if lock.is_file():
-        lock.unlink()
-        log.warning("removed a stale %s left by a crash", lock)
+def _clear_stale_git_locks(app: web.Application) -> None:
+    """No hub git process runs before startup finishes, so a git lock is a crash leftover."""
+    removed = ", ".join(f"brain/{p}" for p in app["repo"].clear_stale_locks())
+    if removed:
+        log.warning("removed stale %s left by a crash", removed)
         app["startup_errors"].append(
-            "removed a stale brain/.git/index.lock left by a crash (nothing else was changed)")
+            f"removed stale {removed} left by a crash (nothing else was changed)")
 
 
 def _commit_owner_edits(app: web.Application) -> None:
@@ -111,7 +110,8 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("database", store.init_schema)
     if not setup_done(app):
         return []
-    step("git lock", _clear_stale_git_lock, app)
+    step("git lock", _clear_stale_git_locks, app)
+    step("agents", app["agents"].end_previous_boot)
     step("git setup", repo.init)
     step("owner edits", _commit_owner_edits, app)
     step("git attributes", _ensure_gitattributes, app)

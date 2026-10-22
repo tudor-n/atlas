@@ -36,6 +36,12 @@ export function linkText(row) {
   return !row.mapped && row.suggest ? `link to ${row.suggest.name}` : null;
 }
 
+// The row's tooltip names the OS the session ran on (dual-boot design §6.6).
+const OS_LABEL = { windows: 'Windows', linux: 'Linux' };
+export function osText(row) {
+  return Object.hasOwn(OS_LABEL, row.os) ? `on ${OS_LABEL[row.os]}` : null;
+}
+
 export function resetText(w, now) {
   const at = new Date(w.resets_at);
   let clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;

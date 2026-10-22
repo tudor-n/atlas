@@ -1,7 +1,7 @@
 // Run with: node --test web/js/views/agents-model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { STATUS_LABEL, statusText, sinceText, nextTimeText, resetText, linkText } from './agents-model.js';
+import { STATUS_LABEL, statusText, sinceText, nextTimeText, resetText, linkText, osText } from './agents-model.js';
 
 const now = new Date(2026, 9, 21, 12, 0, 0);
 
@@ -36,6 +36,14 @@ test('resetText: future and passed', () => {
   assert.equal(resetText({ resets_at: '2026-10-21T14:05', reset_passed: false }, now), 'resets 14:05 (in 2 h 5 min)');
   assert.equal(resetText({ resets_at: '2026-10-21T14:20', reset_passed: true }, now), 'reset at 14:20 · no data since');
   assert.equal(resetText({ resets_at: '2026-10-22T10:30', reset_passed: false }, now), 'resets 10-22 10:30 (in 22 h 30 min)');
+});
+
+test('osText: the OS a session ran on, for the row tooltip', () => {
+  assert.equal(osText({ os: 'windows' }), 'on Windows');
+  assert.equal(osText({ os: 'linux' }), 'on Linux');
+  assert.equal(osText({ os: null }), null);
+  assert.equal(osText({}), null);
+  assert.equal(osText({ os: 'toString' }), null);
 });
 
 test('statusText: an ended session shows as ended whatever its last status', () => {

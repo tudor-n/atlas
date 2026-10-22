@@ -1,7 +1,7 @@
 // Agents: Claude Code sessions seen through the hooks.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { statusText, sinceText, nextTimeText, linkText } from './agents-model.js';
+import { statusText, sinceText, nextTimeText, linkText, osText } from './agents-model.js';
 
 const WHERE = ['terminal', 'IDE', 'desktop app', 'unknown'];
 
@@ -104,7 +104,7 @@ export async function render(container) {
     const head = el('tr', {}, ['Project', 'Part', 'Where', 'Status', 'Since', 'Note', 'Next time', ''].map((h) => el('th', {}, h)));
     const body = rows.map((row) => {
       const nt = nextTimeText(row);
-      return el('tr', row.ended ? { class: 'ended' } : {},
+      return el('tr', { class: row.ended ? 'ended' : null, title: osText(row) },
         el('td', {}, row.project_name, row.mapped ? el('span', { class: 'badge' }, 'mapped') : null, linkButton(row)),
         el('td', {}, partCell(row)),
         el('td', {}, whereCell(row)),

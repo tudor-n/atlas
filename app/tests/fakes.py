@@ -65,3 +65,36 @@ def fake_cli(folder, body: str, name: str = "fake_claude") -> str:
         wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script), encoding="utf-8")
         os.chmod(wrapper, 0o755)
     return str(wrapper)
+
+
+def pid_gone(pid: int, timeout: float = 5.0) -> bool:
+    """POSIX: True once `pid` no longer runs (gone, or a zombie its new parent has yet to reap),
+    polling for up to `timeout` seconds."""
+    import os
+    import time
+    from pathlib import Path
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            if Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                return True
+        except (OSError, IndexError):
+            pass
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def kill_pid_file(pid_file) -> None:
+    """Test clean-up: SIGKILL the process whose pid is in `pid_file`, if it is still there."""
+    import os
+    import signal
+    from pathlib import Path
+    try:
+        os.kill(int(Path(pid_file).read_text().strip()), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
