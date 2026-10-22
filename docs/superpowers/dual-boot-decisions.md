@@ -25,8 +25,11 @@ Kubuntu 26.04, Plasma on Wayland, two screens (laptop 1536x864 logical at 125 %,
 - `WEBKIT_DISABLE_DMABUF_RENDERER` wasn't needed (no blank window).
 - The tray library warns that `libayatana-appindicator` is deprecated; harmless for now.
 
-## D2: Claude Code memory spike (Task 11)
-Pending.
+## D2: Claude Code memory spike (Task 11): Linux half done
+Claude Code 2.1.308 on Kubuntu, a scratch project (`/tmp/bh-mem-spike`, key `-tmp-bh-mem-spike`: every non-alphanumeric character becomes `-`, case kept, a `.` too) and a scratch shared folder.
+- **Option 1, a symlinked memory folder, fails on Linux.** Claude Code resolves `~/.claude/projects/<key>/memory` to its target, finds it outside the folders it may edit, and refuses to write *and* to read `MEMORY.md` ("blocked … outside the directories I'm allowed to edit"). (The design recorded an NTFS junction working on Windows with 2.1.306.)
+- **Option 2, per-project `autoMemoryDirectory` in the project's `.claude/settings.local.json`, works:** the value is the memory folder itself (not a parent). The note and `MEMORY.md` were written there, and a fresh session answered from it.
+- **Still open:** the home-session equivalent. A user-level `autoMemoryDirectory` would also apply to every project without its own override (personal memory leaking into new projects). Candidate: `~/.claude/settings.local.json`, read as the home folder's own project-local settings when a session starts in `~`. Testing it touches the real `~/.claude`, so it waits for the owner's OK. Then the Windows half (needs a reboot).
 
 ## D3: Legacy integration files are adopted only by install/uninstall (Task 3)
 The plan had the integration view (`GET /api/integration`) adopt the legacy Windows files from `data/` too. But moving `statusline_passthrough.txt` on a GET cuts an installed status line off from it: `settings.json` still names `D:/BrainHub/data/statusline_passthrough.txt` until a reinstall, so the owner's own line would quietly stop showing. Only install and uninstall adopt, and both rewrite the status line in the same step. The rollout reinstalls the integration on Windows anyway.
