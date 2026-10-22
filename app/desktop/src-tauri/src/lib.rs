@@ -59,20 +59,31 @@ fn quit_on_signals(app: AppHandle) -> std::io::Result<()> {
     const SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
     static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
     extern "C" fn on_signal(_: libc::c_int) {
-        // Async-signal-safe only: one write(2) to a non-blocking pipe.
+        // Async-signal-safe only: one write(2) to a non-blocking pipe, with errno kept for the
+        // code the signal interrupted.
+        #[cfg(target_os = "linux")]
+        let saved = unsafe { *libc::__errno_location() };
         let _ = unsafe { libc::write(WAKE_FD.load(Ordering::Relaxed), b"q".as_ptr().cast(), 1) };
+        #[cfg(target_os = "linux")]
+        unsafe {
+            *libc::__errno_location() = saved
+        };
     }
 
+    // Close-on-exec from the start, so the hub and xdg-open never inherit the pipe. Only the write
+    // end is non-blocking, so the handler never blocks; the reader thread blocks on the read end.
     let mut fds: [libc::c_int; 2] = [-1; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+    #[cfg(target_os = "linux")]
+    let piped = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } == 0;
+    #[cfg(not(target_os = "linux"))]
+    let piped = unsafe {
+        libc::pipe(fds.as_mut_ptr()) == 0
+            && libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC) != -1
+            && libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC) != -1
+    };
+    let made = piped && unsafe { libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK) } != -1;
+    if !made {
         return Err(std::io::Error::last_os_error());
-    }
-    // Close-on-exec, so the hub and xdg-open don't inherit the pipe; a non-blocking write end, so
-    // the handler never blocks.
-    unsafe {
-        libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC);
-        libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC);
-        libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK);
     }
     WAKE_FD.store(fds[1], Ordering::Relaxed);
     let mut wake = unsafe { std::fs::File::from_raw_fd(fds[0]) };

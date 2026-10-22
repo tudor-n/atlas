@@ -72,7 +72,10 @@ def serve(app: web.Application, host: str, port: int) -> int:
     set by the root watch, P8); return app["exit_code"]. web.run_app can't be stopped from inside
     the app, so this is its loop with a stop event."""
     async def main() -> None:
-        runner = web.AppRunner(app, handle_signals=True)  # SIGINT/SIGTERM: a graceful stop (POSIX)
+        # SIGINT/SIGTERM: a graceful stop (POSIX). Requests still running (an ask stream) get 2 s, not
+        # aiohttp's 60: the shell kills the hub after its own grace, and cleanup must still reach
+        # on_cleanup, which stops the filing and ask runs' process groups.
+        runner = web.AppRunner(app, handle_signals=True, shutdown_timeout=2.0)
         await runner.setup()
         try:
             await web.TCPSite(runner, host, port).start()

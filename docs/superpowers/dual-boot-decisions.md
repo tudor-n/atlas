@@ -24,6 +24,8 @@ Kubuntu 26.04, Plasma on Wayland, two screens (laptop 1536x864 logical at 125 %,
 - quit cleanly on SIGTERM/SIGINT (logout sends SIGTERM): call `app.exit(0)`, so the window-state plugin saves the position and the supervisor stops the hub. Today a killed shell saves nothing.
 - `WEBKIT_DISABLE_DMABUF_RENDERER` wasn't needed (no blank window).
 - The tray library warns that `libayatana-appindicator` is deprecated; harmless for now.
+- **As built (Task 8):** the Utility type hint alone keeps the widget out of Alt+Tab (KWin only lists windows that want tab focus: normal windows and dialogs). KWin still reports `skipSwitcher` false, and that's expected. The owner confirmed it's no longer in Alt+Tab, so the KWin-rule fallback wasn't built. SIGTERM and SIGINT quit the shell cleanly and save the position (checked live). The hub runs in its own process group and shuts down within 2 s of SIGTERM (`shutdown_timeout`); the shell waits up to 10 s before killing it.
+- **Still to check on the real desktop:** a real logout writes the SIGTERM line to `hub.log` (if XWayland dies first, GDK may exit without the clean path); the widget stays visible while another app is focused; on Windows, the widget built hidden and then shown behaves as before.
 
 ## D2: Claude Code memory spike (Task 11): Linux half done
 Claude Code 2.1.308 on Kubuntu, a scratch project (`/tmp/bh-mem-spike`, key `-tmp-bh-mem-spike`: every non-alphanumeric character becomes `-`, case kept, a `.` too) and a scratch shared folder.

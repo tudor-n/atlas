@@ -16,7 +16,9 @@ pub const HEALTHY_UPTIME: Duration = Duration::from_secs(300);
 /// The hub's exit code when its data folder is usable again (P8): start it again at once.
 pub const EXIT_RESTART: i32 = 75;
 /// How long a hub gets to exit after SIGTERM before it is killed (unix).
-pub const STOP_GRACE: Duration = Duration::from_secs(5);
+/// Enough for the hub's own shutdown: 2 s for running requests, then up to 2 s each to stop an
+/// ask stream's and the filing worker's claude process groups.
+pub const STOP_GRACE: Duration = Duration::from_secs(10);
 
 /// Delay before restart attempt `attempt`: 1, 2, 4, 8, 16, 32 s, then 60 s.
 pub fn backoff(attempt: u32) -> Duration {
@@ -132,12 +134,12 @@ impl Supervisor {
         if let Some(status) = self.terminate(c) {
             return format!("SIGTERM, then {status}");
         }
-        let _ = c.kill();
+        let killed = c.kill();
         let _ = c.wait();
-        if cfg!(unix) {
-            format!("killed: no exit within {:?} of SIGTERM", self.stop_grace)
-        } else {
-            "killed".into()
+        match killed {
+            Err(e) => format!("could not kill the hub: {e}"),
+            Ok(()) if cfg!(unix) => format!("killed: no exit within {:?} of SIGTERM", self.stop_grace),
+            Ok(()) => "killed".into(),
         }
     }
 
@@ -232,6 +234,13 @@ impl Supervisor {
             .stdout(out)
             .stderr(err);
         crate::child_env(&mut cmd);
+        // Its own process group: a Ctrl+C in the shell's terminal doesn't reach the hub as well, so
+        // the supervisor's SIGTERM is the only stop signal it gets.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
         // python.exe (not pythonw) with CREATE_NO_WINDOW: the hub gets a hidden console, which the
         // git, claude and taskkill processes it starts inherit, so none of them flashes a window
         // (Ruling 13).
@@ -466,6 +475,7 @@ mod tests {
         f
     }
 
+    #[cfg(unix)]
     fn wait_for(path: &Path) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !path.exists() {
@@ -475,6 +485,7 @@ mod tests {
     }
 
     /// Wait until our child has exited (and was reaped).
+    #[cfg(unix)]
     fn wait_exit(s: &mut Supervisor) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while s.owns_child() {
