@@ -146,6 +146,7 @@ Measured with Claude Code 2.1.308: with the runner's isolation flags (`--setting
   - Rebuilt from the live copy with `cargo build --locked`: the live copy stayed clean. The rebuilt shell showed no notice line, `shell_update: false`, and wrote its new digest to `shell.json`. A second launch of the other build while it ran exited 0 at once and left `shell.json` as it was (content and mtime).
   - Quit: the hub stopped (SIGTERM, exit 0), no process left. Deleted afterwards: the temp folders, `~/.local/share/dev.brainhub.desktop`, `~/.config/dev.brainhub.desktop`, `/run/user/1000/tray-icon`.
   - Not exercised live: a step killed at its 90 s limit (the Rust and Python tests cover it), the 10-minute cadence (unit tests), Windows.
+- Found while writing the docs (Task 12) and fixed: the update step's live-copy git calls also pass this OS's `core.ignorecase` (as D7 does for the brain), and the brain's backup push sets `GIT_SSH_COMMAND=ssh -oBatchMode=yes` unless the owner set one (design §6.3).
 
 ## Residuals
 Known gaps; none of them loses data. Newest facts as of Task 12.
@@ -158,8 +159,6 @@ Known gaps; none of them loses data. Newest facts as of Task 12.
 
 **Gaps:**
 - An integration installed before `runtime init` keeps the dev paths (the dev venv and the dev copy's `hook_client.py`) until it is reinstalled; Settings says so (`paths_current`), and the rollout installs it after `runtime init`.
-- The update step's live-copy git calls pass `safe.directory` but not this OS's `core.ignorecase` (D7 covers the brain and the Claude store). The live copy's `.git/config`, made by Windows git, has `core.ignorecase=true` (and already `core.filemode=false`; read-only check on 2026-10-22), so on Linux a fast-forward with a case-only rename may leave the working tree out of step. The slots are built with `git archive` from the commit, so the hub is unaffected; the shell is built from the working tree.
-- The brain's backup push sets no `BatchMode=yes` for SSH remotes (design §6.3; claude-sync's push does): an SSH remote with a passphrase-protected key could bring up Plasma's askpass dialog. The setup uses HTTPS through `gh auth setup-git` on Kubuntu, which avoids it.
 - claude-sync: a project folder on `D:` that sessions on both OSes start in has one `.claude/settings.local.json`. Windows points it (its projects root is `D:\`); Linux never points a folder on the shared drive outside `~/dev` and never overwrites a Windows path, so a Kubuntu session started in `/mnt/data/<X>` reads a Windows `autoMemoryDirectory`. Kubuntu sessions work in `~/dev/<X>` (its own file), so it doesn't arise in the intended setup. The live copy is pointed by neither OS (D2 addendum).
 - claude-sync: not built, and not in the plan's Task 11 list: design §7.2's `CLAUDE.md` in the store (a user-level `CLAUDE.md` linked or copied to each OS), and §7.4's notes on plugins or MCP servers that need per-OS setup (the check doesn't list them).
 - `map.json` load/change/save isn't serialised across `PUT /api/map`, the Reviewer's `add_node` and the Agents link: two edits at the same moment could lose one (the first two already raced before the dual boot).

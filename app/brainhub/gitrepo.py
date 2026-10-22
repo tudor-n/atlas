@@ -234,6 +234,8 @@ class BrainRepo:
         The error text has credentials redacted before it is shortened."""
         self._ensure_repo()
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        # SSH remotes: never a passphrase prompt or askpass dialog (design §6.3).
+        env.setdefault("GIT_SSH_COMMAND", "ssh -oBatchMode=yes")
         try:
             r = subprocess.run(
                 ["git", "-c", "credential.interactive=never", "-c", self._safe, "push",

@@ -187,6 +187,10 @@ class Runner:
 # No background gc or maintenance on the live copy: fetch and merge may start one that detaches
 # itself, outlives the budget's kill, and keeps writing to the shared drive while the hub starts.
 NO_BACKGROUND = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
+# This OS's case rule, whatever the shared .git/config says (D7): the live copy was cloned by
+# Windows git (core.ignorecase=true), and on Linux a fast-forward with a case-only rename would
+# otherwise leave the working tree, which the shell is built from, out of step.
+CASE_RULE = ("-c", "core.ignorecase=" + ("true" if sys.platform == "win32" else "false"))
 
 
 class Live:
@@ -200,8 +204,8 @@ class Live:
 
     def git(self, *args, what="git", network=False):
         cap = self.runner.timeout if network else LOCAL_TIMEOUT_S
-        return self.runner.run(["git", "-c", self.safe, *NO_BACKGROUND, *args], cwd=self.path, what=what,
-                               cap=cap)
+        return self.runner.run(["git", "-c", self.safe, *NO_BACKGROUND, *CASE_RULE, *args], cwd=self.path,
+                               what=what, cap=cap)
 
     def rev(self, ref):
         code, out = self.git("rev-parse", "--verify", "-q", ref)

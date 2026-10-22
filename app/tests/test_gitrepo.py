@@ -168,9 +168,11 @@ def test_push_is_non_interactive_and_times_out(tmp_path, monkeypatch):
         raise subprocess.TimeoutExpired(args, kw["timeout"])
 
     monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
     ok, err = r.push("https://example.com/r.git")
     assert not ok and "timed out after 120s" in err
     assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and seen["env"]["GCM_INTERACTIVE"] == "never"
+    assert seen["env"]["GIT_SSH_COMMAND"] == "ssh -oBatchMode=yes"  # no SSH passphrase prompt
     assert seen["args"][:3] == ["git", "-c", "credential.interactive=never"]
     assert seen["stdin"] is subprocess.DEVNULL and seen["timeout"] == 120
 

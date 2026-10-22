@@ -452,9 +452,9 @@ def test_never_runs_destructive_git(w):
     safe = "safe.directory=" + os.path.realpath(w.live).replace("\\", "/")
     seen = set()
     for argv in calls:
-        assert argv[:6] == ["-c", safe, *us.NO_BACKGROUND], argv
-        assert git_allowed(argv[6:]), argv
-        seen.add(argv[6])
+        assert argv[:8] == ["-c", safe, *us.NO_BACKGROUND, *us.CASE_RULE], argv
+        assert git_allowed(argv[8:]), argv
+        seen.add(argv[8])
     assert {"merge", "fetch", "archive", "merge-base", "config"} <= seen
 
 
