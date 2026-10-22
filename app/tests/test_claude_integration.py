@@ -379,15 +379,76 @@ def test_runtime_mode_hooks_use_stable_paths(tmp_path, monkeypatch):
     # A slot flip moves neither path.
     _runtime_state(state, slot="b")
     assert ci.hook_paths() == (str(base), str(stable))
-    # A pythonw base (Windows' windowed launcher) gives its console sibling; a missing base falls
-    # back to this python rather than a path that can't run.
+    # A pythonw base (Windows' windowed launcher) gives its console sibling.
     pythonw = base.with_name("pythonw")
     pythonw.write_text("")
     base.with_name("python").write_text("")
     monkeypatch.setattr(sys, "_base_executable", str(pythonw))
     assert ci.hook_paths()[0] == str(base.with_name("python"))
+
+
+def test_missing_base_python_refuses_in_runtime_mode(tmp_path, monkeypatch):
+    """Task 10 review: a runtime whose base interpreter is gone never falls back to the slot venv's
+    python (the next slot flip removes it). Install refuses with what to do; status still answers."""
+    state = tmp_path / "state"
+    _runtime_state(state)
+    f = tmp_path / "settings.json"
+    python, script = ci.hook_paths()
+    ci.install(f, python=python, script=script, port=8090, state_dir=state)
     monkeypatch.setattr(sys, "_base_executable", str(tmp_path / "gone" / "python3"))
-    assert ci.hook_paths()[0] == str(ci.console_python(Path(sys.executable)))
+    with pytest.raises(IntegrationError, match=r"base Python of this runtime is missing.*runtime init"):
+        ci.hook_paths()
+    st = ci.status(f, port=8090)
+    assert st["hooks_installed"] and st["paths_current"] is False
+    r = subprocess.run([sys.executable, "-c", "import sys; sys._base_executable = sys.argv[1]; "
+                        "sys.argv[1:] = ['integration', 'install', '--root', sys.argv[2], '--settings', sys.argv[3]]; "
+                        "import runpy; runpy.run_module('brainhub', run_name='__main__')",
+                        str(tmp_path / "gone" / "python3"), str(tmp_path), str(f)],
+                       cwd=APP_DIR, capture_output=True, text=True)
+    assert r.returncode == 1 and "runtime init" in r.stderr
+
+
+def test_status_paths_current(tmp_path, monkeypatch):
+    """paths_current: every hook of ours and our status line run hook_paths()'s python and script,
+    and both exist. A dev install seen after `runtime init`, a moved interpreter, an old status
+    line or a missing file all say "reinstall"."""
+    state = tmp_path / "state"
+    f = tmp_path / "settings.json"
+    assert ci.status(f, port=8090)["paths_current"] is False  # nothing installed
+    python, script = ci.hook_paths()  # dev mode
+    ci.install(f, python=python, script=script, port=8090, state_dir=state)
+    assert ci.status(f, port=8090)["paths_current"] is True
+    stable = _runtime_state(state)  # runtime init since: the dev paths are old now
+    assert ci.status(f, port=8090)["paths_current"] is False
+    python, script = ci.hook_paths()
+    assert script == str(stable)
+    ci.install(f, python=python, script=script, port=8090, state_dir=state)
+    st = ci.status(f, port=8090)
+    assert st["paths_current"] is True and st["port_matches"] is True
+    ci.install(f, python=python, script=script, port=8091, state_dir=state)  # only the port differs
+    st = ci.status(f, port=8090)
+    assert st["paths_current"] is True and st["port_matches"] is False
+    stable.unlink()  # the stable copy is gone (hook_paths falls back to the dev paths)
+    assert ci.status(f, port=8091)["paths_current"] is False
+    _runtime_state(state)
+    original = sys._base_executable
+    other = tmp_path / "uv" / "python3.15"  # a new base interpreter (a Python version bump)
+    other.parent.mkdir()
+    other.write_text("")
+    monkeypatch.setattr(sys, "_base_executable", str(other))
+    assert ci.status(f, port=8091)["paths_current"] is False
+    monkeypatch.setattr(sys, "_base_executable", original)
+    assert ci.status(f, port=8091)["paths_current"] is True
+    # Our status line alone still naming an old script: not current.
+    s = json.loads(f.read_text("utf-8"))
+    s["statusLine"]["command"] = ci.statusline_command(python, str(ci.hook_script()), 8091, None)
+    f.write_text(json.dumps(s), "utf-8")
+    st = ci.status(f, port=8091)
+    assert st["statusline_installed"] and st["paths_current"] is False
+    del s["hooks"]
+    s["statusLine"]["command"] = ci.statusline_command(python, script, 8091, None)
+    f.write_text(json.dumps(s), "utf-8")
+    assert ci.status(f, port=8091)["paths_current"] is True  # the status line alone, current
 
 
 def test_runtime_hook_runs_with_the_base_interpreter(tmp_path):

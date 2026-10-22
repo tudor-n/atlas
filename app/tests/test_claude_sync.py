@@ -8,6 +8,7 @@ folders. Nothing here reads or writes the real ~/.claude, ~/dev or /mnt/data. Wi
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -100,7 +101,10 @@ class World:
 
 @pytest.fixture
 def shared(tmp_path) -> Path:
-    return cs.init_store(tmp_path / "ClaudeShared")
+    """The store, alone on its "drive" (its parent folder), as D:\\ClaudeShared and
+    /mnt/data/ClaudeShared are: a project folder beside it is on the shared drive."""
+    (tmp_path / "drive").mkdir()
+    return cs.init_store(tmp_path / "drive" / "ClaudeShared")
 
 
 @pytest.fixture
@@ -180,8 +184,11 @@ def test_points_home_and_paired_projects(a, shared, tmp_path):
     s = a.sync()
 
     assert s["memory"]["pairs"] == ["home", "Arm", "Robot"]
-    assert json.loads((a.claude / "settings.local.json").read_text("utf-8")) == {
+    # The home session's project settings: <home>/.claude, not the Claude config folder (which is
+    # elsewhere here, as under CLAUDE_CONFIG_DIR).
+    assert json.loads((a.home / ".claude" / "settings.local.json").read_text("utf-8")) == {
         "autoMemoryDirectory": str(shared / "memory" / "home")}
+    assert not (a.claude / "settings.local.json").exists()
     assert a.local_settings(robot) == {"permissions": {"allow": ["Bash(ls:*)"]},
                                        "autoMemoryDirectory": str(shared / "memory" / "projects" / "Robot")}
     assert a.local_settings(arm) == {"autoMemoryDirectory": str(shared / "memory" / "projects" / "Arm")}
@@ -207,6 +214,60 @@ def test_bad_settings_local_left_alone(a, shared):
     assert any("not valid JSON" in p for p in s["problems"]["memory"])
 
 
+@pytest.mark.parametrize("os_name, theirs", [
+    ("linux", "D:\\ClaudeShared\\memory\\projects\\Robot"),
+    ("linux", "\\\\nas\\share\\Robot"),
+    ("windows", "/mnt/data/ClaudeShared/memory/projects/Robot"),
+])
+def test_other_os_memory_path_left_alone(tmp_path, shared, os_name, theirs):
+    """A settings.local.json whose autoMemoryDirectory has the other OS's path shape belongs to a
+    folder both OSes start sessions in, and that OS's sessions use it: logged, never rewritten. The
+    folder's notes still merge."""
+    w = World(tmp_path / "w", shared, os_name)
+    robot = w.project("Robot")
+    w.memory(robot, {"arm.md": "servo"})
+    (robot / ".claude").mkdir()
+    f = robot / ".claude" / "settings.local.json"
+    f.write_text(json.dumps({"autoMemoryDirectory": theirs, "x": 1}), "utf-8")
+    before = f.read_bytes()
+    s = w.sync()
+    assert f.read_bytes() == before
+    assert s["memory"]["pairs"] == ["Robot"] and s["memory"]["pointed"] == []
+    assert (shared / "memory" / "projects" / "Robot" / "arm.md").read_text("utf-8") == "servo"
+    assert "a path of the other OS" in (w.state / cs.LOG_FILE).read_text("utf-8")
+    assert not s["problems"]
+
+
+def test_live_copy_and_shared_drive_never_pointed(a, shared):
+    """Design §5.1: the live copy is never a workspace, and sessions on both OSes would read the one
+    settings.local.json of a folder on the shared drive. Such folders are never pointed (nor their
+    git exclude touched); their old notes still merge."""
+    live = a.project("BrainHub")  # a BrainHub root in the projects root, as D:\BrainHub is on Windows
+    (live / "data").mkdir()
+    (live / "data" / "root.json").write_text("{}", "utf-8")
+    git(live, "init", "-q")
+    exclude_before = (live / ".git" / "info" / "exclude").read_bytes()
+    legacy = a.project("OldHub")  # a legacy root: brain/map.json, no marker yet
+    (legacy / "brain").mkdir()
+    (legacy / "brain" / "map.json").write_text("{}", "utf-8")
+    on_drive = shared.parent / "Robot"  # beside the store, outside this OS's projects root
+    on_drive.mkdir()
+    (shared / cs.PAIRS_FILE).write_text(json.dumps({"Robot": {a.os: str(on_drive)}}), "utf-8")
+    folders = {"BrainHub": live, "OldHub": legacy, "Robot": on_drive}
+    for name, folder in folders.items():
+        a.memory(folder, {f"{name}.md": f"note of {name}"})
+    s = a.sync()
+    assert s["memory"]["pairs"] == ["BrainHub", "OldHub", "Robot"] and s["memory"]["pointed"] == []
+    for name, folder in folders.items():
+        assert not (folder / ".claude").exists()
+        assert (shared / "memory" / "projects" / name / f"{name}.md").read_text("utf-8") == f"note of {name}"
+    assert (live / ".git" / "info" / "exclude").read_bytes() == exclude_before
+    log = (a.state / cs.LOG_FILE).read_text("utf-8")
+    assert "holds a BrainHub root (data/root.json)" in log and "holds a BrainHub root (brain/map.json)" in log
+    assert f"is on the shared drive ({shared.parent})" in log
+    assert not s["problems"]
+
+
 def test_pairs_json_exception(a, shared, tmp_path):
     renamed = a.project("robot-arm")  # in the root, but pairs.json files it under RobotArm
     far = tmp_path / "elsewhere" / "FarAway"
@@ -226,6 +287,33 @@ def test_pairs_json_exception(a, shared, tmp_path):
     assert a.local_settings(renamed)["autoMemoryDirectory"] == str(projects / "RobotArm")
     assert a.local_settings(far)["autoMemoryDirectory"] == str(projects / "Far")
     assert any("bad/name" in p for p in s["problems"]["memory"])
+
+
+def test_pairs_json_folder_never_flips(a, shared, tmp_path):
+    """pairs.json files ~/dev/B under A, and the store also has a B folder (from before the entry,
+    or from the other OS's own B). ~/dev/B is pointed at A only, at every sync: never at A and
+    then at B, which rewrote (and backed up) its settings.local.json twice per login."""
+    b_dir = a.project("B")
+    projects = shared / "memory" / "projects"
+    for name in ("A", "B"):
+        (projects / name).mkdir()
+        (projects / name / f"{name.lower()}.md").write_text(f"note {name}", "utf-8")
+    c_dir, far_c = a.project("C"), tmp_path / "os-a" / "far" / "Cee"  # pairs.json names another folder for C
+    far_c.mkdir(parents=True)
+    (shared / cs.PAIRS_FILE).write_text(json.dumps({"A": {a.os: str(b_dir)}, "C": {a.os: str(far_c)}}), "utf-8")
+    a.memory(b_dir, {"local.md": "from here"})
+    a.memory(c_dir, {"c.md": "the root folder named C"})
+    a.memory(far_c, {"c.md": "the real C"})
+    for _ in range(3):
+        s = a.sync()
+        assert s["memory"]["pairs"] == ["A", "C"]
+        assert a.local_settings(b_dir) == {"autoMemoryDirectory": str(projects / "A")}
+        assert a.local_settings(far_c) == {"autoMemoryDirectory": str(projects / "C")}
+    assert s["memory"]["pointed"] == []
+    assert not (c_dir / ".claude").exists()
+    assert (projects / "A" / "local.md").read_text("utf-8") == "from here" and not (projects / "B" / "local.md").exists()
+    assert (projects / "C" / "c.md").read_text("utf-8") == "the real C" and len(list((projects / "C").iterdir())) == 1
+    assert not list((a.state / cs.BACKUPS / "settings").glob("*.settings.local.json-*"))  # never rewritten
 
 
 def test_hub_filing_worktree_keys_never_paired(a, shared):
@@ -318,6 +406,88 @@ def test_header_line_kept_once(a, shared):
     first = tree(shared / "memory")
     a.sync()
     assert tree(shared / "memory") == first  # never duplicated, nothing rewritten
+
+
+def test_non_utf8_index_merged_once(a, shared):
+    """A MEMORY.md saved in another encoding still merges, its bytes kept as they are, and its
+    hashes are recorded: no new full backup at every login."""
+    local = a.memory(a.home, {"me.md": "owner"})
+    raw = "- [Me](me.md) — caf".encode() + b"\xe9 (latin-1)\n"
+    (local / cs.INDEX).write_bytes(raw)
+    s = a.sync()
+    assert not s["problems"]
+    index = shared / "memory" / "home" / cs.INDEX
+    assert index.read_bytes() == cs.HEADER.encode() + b"\n" + raw
+    a.sync()
+    assert len([p for p in (a.state / cs.BACKUPS).iterdir() if p.name != "settings"]) == 1
+    (local / cs.INDEX).write_bytes(raw + b"- [New](new.md) \xfc\n")
+    s = a.sync()
+    assert not s["problems"]
+    assert index.read_bytes() == cs.HEADER.encode() + b"\n" + raw + b"- [New](new.md) \xfc\n"
+
+
+def test_deleted_index_lines_stay_deleted(a, shared):
+    """Only lines new since the last merged local index are added: a line the owner deleted from
+    the store's MEMORY.md isn't brought back when the local index changes later."""
+    local = a.memory(a.home, {cs.INDEX: "- [A](a.md) — a\n- [B](b.md) — b\n", "a.md": "a", "b.md": "b"})
+    a.sync()
+    index = shared / "memory" / "home" / cs.INDEX
+    assert index.read_text("utf-8").splitlines() == [cs.HEADER, "- [A](a.md) — a", "- [B](b.md) — b"]
+    index.write_text(f"{cs.HEADER}\n- [A](a.md) — a\n", "utf-8")  # the owner drops B in the store
+    (local / cs.INDEX).write_text("- [A](a.md) — a\n- [B](b.md) — b\n- [C](c.md) — c\n", "utf-8")
+    a.sync()
+    assert index.read_text("utf-8").splitlines() == [cs.HEADER, "- [A](a.md) — a", "- [C](c.md) — c"]
+    index.unlink()  # even with the whole store index gone, only the new line arrives
+    (local / cs.INDEX).write_text("- [A](a.md) — a\n- [B](b.md) — b\n- [C](c.md) — c\n- [D](d.md) — d\n", "utf-8")
+    a.sync()
+    assert index.read_text("utf-8").splitlines() == [cs.HEADER, "- [D](d.md) — d"]
+
+
+def test_damaged_state_file_merges_only_new_content(a, shared):
+    """A claude-sync-last.json that can't be read is reported and backed up, and counts as unknown:
+    only notes whose content the store has never held are merged. Stale local copies of notes since
+    edited or removed in the store don't come back, as <stem>.<os>.md or at all."""
+    local = a.memory(a.home, {cs.INDEX: "- [A](a.md) — a\n", "a.md": "v1", "b.md": "removed later"})
+    a.sync()
+    home = shared / "memory" / "home"
+    (home / "a.md").write_text("v2, edited in the store", "utf-8")
+    (home / "b.md").unlink()
+    (home / "same.md").write_text("one text", "utf-8")
+    a.sync()  # commits the store's changes
+    (a.state / cs.LAST_FILE).write_text("{broken", "utf-8")
+    (local / "new.md").write_text("written here meanwhile", "utf-8")
+    (local / "copy.md").write_text("one text", "utf-8")  # already in the store, as same.md
+    s = a.sync()
+    assert sorted(p.name for p in home.iterdir()) == [".gitkeep", cs.INDEX, "a.md", "new.md", "same.md"]
+    assert (home / "a.md").read_text("utf-8") == "v2, edited in the store"
+    (merged,) = s["memory"]["merged"]
+    assert merged["copied"] == ["new.md"] and merged["kept_both"] == []
+    assert any("backed up" in p and "claude-sync-last.json" in p for p in s["problems"]["memory"])
+    (kept,) = (a.state / cs.BACKUPS).glob(f"{cs.LAST_FILE}-*")
+    assert kept.read_text("utf-8") == "{broken"
+    backups = len([p for p in (a.state / cs.BACKUPS).iterdir() if p.is_dir() and p.name != "settings"])
+    s = a.sync()  # back to normal: nothing new, no new backup, no problem
+    assert s["memory"]["merged"] == [] and not s["problems"]
+    assert len([p for p in (a.state / cs.BACKUPS).iterdir() if p.is_dir() and p.name != "settings"]) == backups
+
+
+def test_note_copy_is_atomic(a, shared, monkeypatch):
+    """A note is copied into a temp file and renamed into place: a copy that fails halfway leaves
+    neither half a note nor the temp file in the store."""
+    a.memory(a.home, {"a.md": "x" * 100})
+    real = shutil.copyfileobj
+
+    def half(src, dst, *args, **kwargs):
+        dst.write(src.read(10))
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(shutil, "copyfileobj", half)
+    s = a.sync()
+    home = shared / "memory" / "home"
+    assert any("No space left" in p for p in s["problems"]["memory"])
+    assert sorted(p.name for p in home.iterdir()) == [".gitkeep"]
+    monkeypatch.setattr(shutil, "copyfileobj", real)
+    a.sync()
+    assert (home / "a.md").read_text("utf-8") == "x" * 100
 
 
 def test_never_deletes_notes(a, shared):
@@ -453,6 +623,20 @@ def test_removal_propagates(a, b, shared):
     assert b.settings() == {"enabledPlugins": {"x@m": True}}
 
 
+@pytest.mark.parametrize("b_value", [None, "tool"])
+def test_removed_path_key_never_shared(a, b, shared, b_value):
+    """A key whose value held a path here was never shared from here, so removing it here isn't
+    shared either: the store gets no entry, and the other OS keeps its own value."""
+    mine_b = {"model": "opus", **({"someTool": b_value} if b_value else {})}
+    _baseline(a, b, {"model": "opus", "someTool": "/home/tudor/bin/tool"}, mine_b)
+    a.write_settings({"model": "opus"}, T0 + 100)  # someTool removed on A
+    a.sync()
+    entry = store(shared)["settings"].get("someTool")
+    assert entry is None if b_value is None else entry["deleted"] is False
+    b.sync()
+    assert b.settings() == mine_b
+
+
 def test_per_os_keys_never_shared(a, b, shared, tmp_path):
     hooks_a = {"Stop": [{"hooks": [{"type": "command", "command": "/home/tudor/x.sh"}]}]}
     status_a = {"type": "command", "command": "python3 /home/tudor/statusline.py"}
@@ -483,9 +667,32 @@ def test_abs_path_detection():
     for value in ("/home/tudor/x", "python3 /usr/bin/x", "C:\\Tools\\x.exe", "D:/BrainHub", "\\\\server\\share",
                   {"cmd": ["run", "--file=/etc/x"]}, {"/abs/key": True}, '"C:\\x"'):
         assert cs.holds_abs_path(value), value
-    for value in ("opus", "https://github.com/a/b", "anthropics/claude-plugins", "~/notes", "a/b",
-                  {"x@m": True}, ["Bash(git:*)"], 3, None, True, "10/22"):
+    for value in ("opus", "https://github.com/a/b", "anthropics/claude-plugins", "a/b", "git@github.com:a/b.git",
+                  {"x@m": True}, ["Bash(git:*)"], 3, None, True, "10/22", "10:22", "100%", "file: notes",
+                  {"$schema": "https://json.schemastore.org/claude-code-settings.json"}, "ws://localhost:8090/x"):
         assert not cs.holds_abs_path(value), value
+
+
+@pytest.mark.parametrize("value", [
+    "file:///home/tudor/notes.md", "FILE://server/share/x", "see file:/C:/x",  # file URLs
+    "/usr/bin:/bin", "node_modules/.bin:/usr/local/bin", ".:/opt/tools",  # PATH-style lists
+    "C:\\x;D:\\y", ".;D:\\tools", "%PATH%;C:\\bin",
+    "$HOME/bin/tool", "${HOME}/x", "run $XDG_DATA_HOME/brainhub", "~/notes", "~\\notes", "cd ~/dev && x",
+    "%USERPROFILE%\\x", "%LOCALAPPDATA%/BrainHub", "%ProgramFiles(x86)%\\Tool",
+    {"a": [{"b": {"c": ["fine", "~/deep"]}}]}, [[["opus", {"k": ["file:///x"]}]]],  # at any depth
+    {"outer": {"/etc/key": 1}},
+])
+def test_abs_path_detection_catches_machine_bound_forms(value):
+    assert cs.holds_abs_path(value), value
+
+
+def test_other_os_path_shapes():
+    for value in ("D:\\ClaudeShared\\memory\\home", "c:/x", "\\\\nas\\share"):
+        assert cs.other_os_path(value, "linux") and not cs.other_os_path(value, "windows"), value
+    for value in ("/mnt/data/ClaudeShared/memory/home", "/home/tudor"):
+        assert cs.other_os_path(value, "windows") and not cs.other_os_path(value, "linux"), value
+    for value in ("~/memory", "memory/home", None, 3):
+        assert not cs.other_os_path(value, "linux") and not cs.other_os_path(value, "windows"), value
 
 
 def test_settings_written_atomically_with_backup(a, b, shared):
@@ -591,6 +798,31 @@ def test_project_settings_local_excluded_from_git(a, shared):
     assert git(robot, "status", "--porcelain", "--untracked-files=all") == ""
 
 
+def test_project_settings_local_excluded_in_a_worktree(a, shared):
+    """A worktree's .git is a file: the exclude file is the one git names (the main repo's
+    info/exclude, which every worktree reads). A folder whose .git isn't a repo is skipped quietly."""
+    main = a.project("Robot")
+    git(main, "init", "-q")
+    (main / "x.txt").write_text("x", "utf-8")
+    git(main, "add", "-A")
+    git(main, "-c", "user.name=t", "-c", "user.email=t@localhost", "commit", "-q", "-m", "x")
+    wt = a.root / "Robot-wt"
+    git(main, "worktree", "add", "-q", "-b", "wt", str(wt))
+    assert (wt / ".git").is_file()
+    a.memory(wt, {"arm.md": "servo"})
+    bogus = a.project("Bogus")
+    (bogus / ".git").write_text("gitdir: /nowhere/at/all\n", "utf-8")
+    a.memory(bogus, {"b.md": "b"})
+    s = a.sync()
+    a.sync()
+    assert a.local_settings(wt)["autoMemoryDirectory"] == str(shared / "memory" / "projects" / "Robot-wt")
+    lines = (main / ".git" / "info" / "exclude").read_text("utf-8").splitlines()
+    assert lines.count("/.claude/settings.local.json") == 1
+    assert git(wt, "status", "--porcelain", "--untracked-files=all") == ""
+    assert "Bogus" in s["memory"]["pointed"] and not s["problems"]
+    assert (bogus / ".git").read_text("utf-8") == "gitdir: /nowhere/at/all\n"
+
+
 # -- the store and its git backup ----------------------------------------------------------------
 
 def test_init_creates_store_and_is_idempotent(tmp_path):
@@ -628,6 +860,52 @@ def test_commit_and_quiet_push_failure(a, shared, tmp_path, capsys):
     assert git(remote, "log", "-1", "--format=%s", "main").startswith("claude-sync ")
     s = cs.run(shared, a.claude, tmp_path / "state", home=a.home, projects_root=a.root)
     assert s["git"]["pushed"] is None  # nothing new, nothing pending: no network call
+
+
+def test_push_never_waits_on_a_prompt(a, shared, tmp_path, monkeypatch):
+    """The push runs in a session of its own on POSIX (no terminal to prompt on), with every
+    no-prompt switch; other git calls don't detach. An ssh command the owner set is kept."""
+    calls = []
+    real = subprocess.Popen
+
+    def spy(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs))
+        return real(cmd, *args, **kwargs)
+    git(shared, "remote", "add", "origin", str(tmp_path / "missing.git"))
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    a.memory(a.home, {"a.md": "mine"})
+    s = a.sync()
+    assert s["git"]["pushed"] is False
+    (push_cmd, push_kw), = [(c, k) for c, k in calls if "push" in c]
+    assert push_kw["start_new_session"] is (not WIN)
+    assert "credential.interactive=never" in push_cmd
+    env = push_kw["env"]
+    assert (env["GIT_TERMINAL_PROMPT"], env["GCM_INTERACTIVE"]) == ("0", "never")
+    assert env["GIT_SSH_COMMAND"] == "ssh -oBatchMode=yes"
+    others = [k for c, k in calls if c[0] == "git" and "push" not in c]
+    assert others and not any(k["start_new_session"] for k in others)
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i ~/.ssh/backup")
+    assert cs._child_env()["GIT_SSH_COMMAND"] == "ssh -i ~/.ssh/backup"
+    monkeypatch.delenv("GIT_SSH_COMMAND")
+    monkeypatch.setenv("GIT_SSH", "plink")
+    assert "GIT_SSH_COMMAND" not in cs._child_env()
+
+
+@posix_only
+def test_store_git_sees_case_variant_notes(a, shared):
+    """Ruling D7 for the store: a .git/config made on Windows says core.ignorecase=true, and Linux
+    git must still see (and commit) a note.md next to Note.md."""
+    git(shared, "config", "core.ignorecase", "true")
+    home = shared / "memory" / "home"
+    (home / "Note.md").write_text("upper", "utf-8")
+    a.sync()
+    (home / "note.md").write_text("lower", "utf-8")
+    s = a.sync()
+    assert s["git"]["committed"]
+    assert {"memory/home/Note.md", "memory/home/note.md"} <= set(git(shared, "ls-files").splitlines())
+    assert git(shared, "-c", "core.ignorecase=false", "status", "--porcelain") == ""
 
 
 def test_store_without_git_is_still_synced(tmp_path):

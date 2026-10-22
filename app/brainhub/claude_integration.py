@@ -67,9 +67,15 @@ def base_python() -> Path:
     link, which a patch upgrade of Python moves to the new patch. Each slot's venv is made from the
     same interpreter, so a slot flip never changes it; only a Python version bump does (a new
     `.python-version`), and then the update step re-syncs the venv while the old interpreter stays
-    installed, so the installed hooks keep working until the next install."""
+    installed, so the installed hooks keep working until the next install.
+
+    Only runtime mode uses it. IntegrationError when that interpreter is gone: falling back to the
+    slot venv's python would write a path the next slot flip removes."""
     base = Path(getattr(sys, "_base_executable", None) or sys.executable)
-    return console_python(base if base.is_file() else Path(sys.executable))
+    if not base.is_file():
+        raise IntegrationError(f"the base Python of this runtime is missing ({base}); "
+                               "run `python -m brainhub runtime init` again")
+    return console_python(base)
 
 
 def hook_paths(state_dir: Path | None = None) -> tuple[str, str]:
@@ -79,7 +85,8 @@ def hook_paths(state_dir: Path | None = None) -> tuple[str, str]:
     interpreter and `<state>/hook/hook_client.py`, which no slot flip moves, while the venv
     python and the package's own copy live inside a slot that the next update replaces. The hook
     client is stdlib only and runs with `-I -S`, so it needs no venv. Otherwise (dev): this venv's
-    python and the package's hook_client.py, as before."""
+    python and the package's hook_client.py, as before. IntegrationError (from base_python) when
+    the runtime's base interpreter is gone."""
     state = Path(state_dir) if state_dir is not None else osdirs.state_dir()
     script = stable_hook(state)
     if (state / "runtime" / "current.json").is_file() and script.is_file():
@@ -103,18 +110,21 @@ def _fwd(p) -> str:
     return str(p).replace("\\", "/")
 
 
+def _statusline_head(python: str, script: str) -> str:
+    """The status line command up to the script: `<python> -I -S <script>`, in this OS's form."""
+    if osdirs.os_name() != "windows":
+        return shlex.join([python, "-I", "-S", script])
+    return f"{_q(_fwd(python))} -I -S {_q(_fwd(script))}"
+
+
 def statusline_command(python: str, script: str, port: int, passthrough: Path | None) -> str:
     """Claude Code runs the status line through a shell. On Linux that is `sh`, so each word is
     quoted for it. On Windows (Git Bash, else PowerShell) the phase 2 form stays: forward slashes,
     double quotes only around a path with a space."""
-    if osdirs.os_name() != "windows":
-        words = [python, "-I", "-S", script, "statusline", "--port", str(port)]
-        if passthrough is not None:
-            words += ["--passthrough-file", str(passthrough)]
-        return shlex.join(words)
-    cmd = f"{_q(_fwd(python))} -I -S {_q(_fwd(script))} statusline --port {port}"
+    cmd = f"{_statusline_head(python, script)} statusline --port {port}"
     if passthrough is not None:
-        cmd += f" --passthrough-file {_q(_fwd(passthrough))}"
+        quoted = shlex.quote(str(passthrough)) if osdirs.os_name() != "windows" else _q(_fwd(passthrough))
+        cmd += f" --passthrough-file {quoted}"
     return cmd
 
 
@@ -319,25 +329,44 @@ def uninstall(settings_path: Path, *, state_dir: Path, data_dir: Path | None = N
 
 
 def status(settings_path: Path, *, port: int, state_dir: Path | None = None) -> dict:
-    """`state_dir` (default: this OS's) names the stable hook copy that counts as ours."""
+    """`state_dir` (default: this OS's) names the stable hook copy that counts as ours.
+
+    `paths_current`: something of ours is installed, every hook of ours (and our status line) runs
+    exactly the `(python, script)` that hook_paths() gives now, and both files exist. False after
+    `runtime init` on a dev install, or when the interpreter or script it names is gone: a
+    reinstall puts it right."""
     settings_path = Path(settings_path)
-    stable = stable_hook(state_dir if state_dir is not None else osdirs.state_dir())
+    state = Path(state_dir) if state_dir is not None else osdirs.state_dir()
+    stable = stable_hook(state)
     obj = _read(settings_path)
+    try:
+        want = hook_paths(state)
+    except IntegrationError:
+        want = None  # the runtime's base interpreter is gone: nothing installed can be current
     hooks = obj.get("hooks", {})
     events, port_ok = [], True
+    current = want is not None and all(os.path.isfile(p) for p in want)
     for ev in EVENTS:
         groups = [g for g in hooks.get(ev, []) if _group_is_ours(g, stable)] if isinstance(hooks.get(ev), list) else []
         if groups:
             events.append(ev)
             for g in groups:
                 for h in _group_hooks(g):
-                    if _hook_is_ours(h, stable) and isinstance(h.get("args"), list) and h["args"][-1:] != [str(port)]:
+                    if not _hook_is_ours(h, stable):
+                        continue
+                    args = h.get("args") if isinstance(h.get("args"), list) else []
+                    if args[-1:] != [str(port)]:
                         port_ok = False
+                    if want is None or h.get("command") != want[0] or args[2:3] != [want[1]]:
+                        current = False
     line = obj.get("statusLine")
     line_ours = _line_is_ours(line, stable)
     command = str(line["command"]) if line_ours else ""
     if line_ours and f"--port {port} " not in command + " ":
         port_ok = False
+    if line_ours and (want is None or not command.startswith(_statusline_head(*want) + " ")):
+        current = False
     return {"settings_path": str(settings_path), "hooks_installed": bool(events), "events": events,
             "statusline_installed": line_ours, "port_matches": bool(events) and port_ok,
+            "paths_current": (bool(events) or line_ours) and current,
             "previous_statusline": line_ours and "--passthrough-file" in command}

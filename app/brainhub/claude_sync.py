@@ -25,7 +25,9 @@ A sync, in order:
    key is the folder's path with every character that isn't an ASCII letter or digit turned into
    ``-``, case kept (ruling D2). On Windows, keys that differ only in the drive letter's case
    (``d--X``, ``D--X``) are one key. Other keys (scratch folders, say) are left alone, and so are
-   the hub's own filing worktrees (``…-data-worktrees-e-<entry id>``, ruling D11), always.
+   the hub's own filing worktrees (``…-data-worktrees-e-<entry id>``, ruling D11), always. A folder
+   that ``pairs.json`` names pairs only under the name it gives there, never also under its own
+   folder name; a root folder named like an entry that names another folder doesn't pair.
 2. **Point** (ruling D2: option 2, since a linked memory folder fails on Linux). For each pair
    with notes on either side, this OS's real memory folder (``<claude>/projects/<key>/memory``)
    is merged into the shared one after a backup to ``<state>/claude-sync-backups/<key>-<stamp>/``:
@@ -33,10 +35,18 @@ A sync, in order:
    ``<stem>.<os><suffix>``; ``MEMORY.md`` is merged line by line, without duplicates (its links to
    a file kept under the second name point there). Only files new or changed since this key's last
    merge count, so a backup is made once per change, and a note removed from the store isn't
-   brought back. The local folder stays where it is. Then ``autoMemoryDirectory`` = the shared
-   folder goes into the pair's ``settings.local.json`` (home: ``<claude>/settings.local.json``; a
-   project: ``<project>/.claude/settings.local.json``, which is also added to the project's
-   ``.git/info/exclude`` when git doesn't ignore it yet). Every other key there stays as it is.
+   brought back; likewise only the ``MEMORY.md`` lines new since this key's last merged index are
+   added, so a line the owner deleted from the store stays deleted. A key with no record (a first
+   merge, or a lost or damaged ``claude-sync-last.json``) merges only the notes whose content the
+   store has never held: not now under any name, nor in its git history. The local folder stays
+   where it is. Then ``autoMemoryDirectory`` = the shared folder goes into the pair's
+   ``settings.local.json`` (home: ``<home>/.claude/settings.local.json``, the home folder's own
+   project settings, wherever ``<claude>`` is; a project: ``<project>/.claude/settings.local.json``,
+   which is also added to the repo's ``info/exclude`` when git doesn't ignore it yet). Every other
+   key there stays as it is. Never pointed (their notes still merge): a project folder holding a
+   BrainHub root (the live copy is never a workspace, design §5.1), one on the shared drive (the
+   store's parent) outside this OS's projects root, and a file whose ``autoMemoryDirectory`` has
+   the other OS's path shape (that OS's sessions read it).
 3. **Header.** Every shared ``MEMORY.md`` starts with exactly one ``HEADER`` line.
 4. **Skills.** A skill folder in ``<claude>/skills`` that isn't a link and isn't managed by
    claude.ai sync (``synced``) or by a plugin (a name in ``<claude>/plugins``) is copied to the
@@ -70,6 +80,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -111,10 +122,19 @@ _GIT_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRE
 _URL_CREDENTIALS = re.compile(r"(://)[^/@\s]+@")
 _KEY_CHARS = re.compile(r"[^A-Za-z0-9]")
 _DRIVE_KEY = re.compile(r"[A-Za-z]--")
-# An absolute path inside a string: /x or //x (POSIX, UNC), C:\ or C:/ (a drive), \\x (UNC), at the
-# start or after a space, quote, =, (, comma, [, { or <. URLs (https://…) and relative paths don't
-# match; ~/ paths are portable, so they don't either.
-_ABS_PATH = re.compile(r"(?:^|(?<=[\s\"'=(,\[{<]))(?://?[^\s/]|[A-Za-z]:[\\/]|\\\\[^\s\\])")
+# A path bound to one machine inside a string, at the start or after a space, quote, =, (, comma,
+# [, {, < or ; (a Windows PATH-style list): /x or //x (POSIX, UNC), C:\ or C:/ (a drive), \\x (UNC),
+# ~/ or ~\ (a home folder: ~/dev/X on Linux is D:\X on Windows), $VAR/, ${VAR}/ or %VAR%\ (a folder
+# from the environment, like $HOME/bin or %USERPROFILE%\x). Also /x right after a colon (the later
+# parts of /usr/bin:/bin or .:/opt/x, never the // of https://), and file:/ URLs. Web URLs and
+# relative paths don't match.
+_ABS_PATH = re.compile(
+    r"(?:^|(?<=[\s\"'=(,\[{<;]))(?://?[^\s/]|[A-Za-z]:[\\/]|\\\\[^\s\\]|~[\\/]"
+    r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?[\\/]|%[A-Za-z_][A-Za-z0-9_()]*%[\\/])"
+    r"|(?<=:)/(?!/)"
+    r"|(?i:(?<![A-Za-z0-9])file:/)")
+# A Windows path's shape (P7): a drive letter, or a \\server UNC path. A leading / is Linux's.
+_WINDOWS_SHAPE = re.compile(r"[A-Za-z]:[\\/]|\\\\")
 _SETTING_KEY = re.compile(r"[A-Za-z0-9_.:-]{1,100}")
 # The hub's own filing runs (claude -p in <root>/data/worktrees/<entry id>) left keys like
 # -mnt-data-BrainHub-data-worktrees-e-20261020-101500-ab12 or D--BrainHub-data-worktrees-e-…
@@ -179,7 +199,8 @@ def fold_key(key: str, os_name: str) -> str:
 
 
 def holds_abs_path(value) -> bool:
-    """Does a settings value hold an absolute path anywhere (strings, dict keys, lists)?"""
+    """Does a settings value hold a path bound to one machine anywhere (strings, dict keys, lists,
+    at any depth)? See _ABS_PATH for the forms."""
     if isinstance(value, str):
         return bool(_ABS_PATH.search(value))
     if isinstance(value, dict):
@@ -187,6 +208,22 @@ def holds_abs_path(value) -> bool:
     if isinstance(value, list):
         return any(holds_abs_path(v) for v in value)
     return False
+
+
+def other_os_path(value, os_name: str) -> bool:
+    """Is `value` a path in the other OS's shape (P7)? On Linux a drive letter or a \\\\server path;
+    on Windows a leading /."""
+    if not isinstance(value, str):
+        return False
+    if os_name == "windows":
+        return value.startswith("/")
+    return bool(_WINDOWS_SHAPE.match(value))
+
+
+def _under(path, folder) -> bool:
+    """Is `path` `folder` or inside it (case-folded on Windows, no links resolved)?"""
+    a, b = (os.path.normcase(os.path.abspath(p)) for p in (path, folder))
+    return Path(a).is_relative_to(b)
 
 
 def is_link(path) -> bool:
@@ -320,32 +357,68 @@ def _replace(src, dst) -> None:
             time.sleep(REPLACE_PAUSE_S)
 
 
-def write_text_atomic(path: Path, text: str) -> None:
-    """LF line endings; a temp file beside it (named for this process), flushed, then replaced."""
+def _write_atomic(path: Path, fill, *, stat_from: Path | None = None) -> None:
+    """Whole or not at all: `fill(f)` writes a temp file beside `path` (a dot-file named for this
+    process, so a leftover is never taken for a note or a skill), which is flushed to disk and then
+    renamed over `path`."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.claude-sync-{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.claude-sync-{os.getpid()}.tmp")
     try:
-        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
+        with open(tmp, "wb") as f:
+            fill(f)
             f.flush()
             os.fsync(f.fileno())
+        if stat_from is not None:
+            try:
+                shutil.copystat(stat_from, tmp)
+            except OSError:
+                pass  # times and mode bits are a nicety; the content is what counts
         _replace(tmp, path)
     finally:
         if os.path.lexists(tmp):  # only our own temp file, after a failed write
             os.unlink(tmp)
 
 
-def write_json_atomic(path: Path, obj, *, sort_keys: bool = False) -> None:
-    write_text_atomic(path, json.dumps(obj, indent=2, ensure_ascii=False, sort_keys=sort_keys) + "\n")
+def write_text_atomic(path: Path, text: str, *, errors: str = "strict") -> None:
+    """UTF-8, LF line endings (written as given), atomically. `errors="surrogateescape"` writes
+    back the bytes of a file that was read that way."""
+    data = text.encode("utf-8", errors)
+    _write_atomic(path, lambda f: f.write(data))
+
+
+def copy_atomic(src: Path, dst: Path) -> None:
+    """Copy a file atomically (a crash never leaves half a note), with its times where possible."""
+    def fill(f):
+        with open(src, "rb") as source:
+            shutil.copyfileobj(source, f)
+    _write_atomic(dst, fill, stat_from=src)
+
+
+def write_json_atomic(path: Path, obj, *, sort_keys: bool = False, ascii: bool = False) -> None:
+    """`ascii` escapes everything else, so text that came from a file that isn't UTF-8 (kept as
+    surrogates, see _read_lines; a note's file name on Linux, too) can still be written."""
+    write_text_atomic(path, json.dumps(obj, indent=2, ensure_ascii=ascii, sort_keys=sort_keys) + "\n")
 
 
 def _read_lines(path: Path) -> list[str]:
-    return path.read_text("utf-8-sig").splitlines()
+    """A MEMORY.md's lines. Bytes that aren't UTF-8 (a file saved in another encoding) come through
+    as surrogates, so the merge still works and writing back with surrogateescape keeps them."""
+    return path.read_text("utf-8-sig", errors="surrogateescape").splitlines()
 
 
 def _join(lines: list[str]) -> str:
     return "\n".join(lines) + "\n"
+
+
+def _write_lines(path: Path, lines: list[str]) -> None:
+    """A MEMORY.md, LF, with any bytes _read_lines kept as surrogates written back as they were."""
+    write_text_atomic(path, _join(lines), errors="surrogateescape")
+
+
+def _index_texts(lines: list[str]) -> list[str]:
+    """The lines of a MEMORY.md that count (neither blank nor the header), stripped, once each."""
+    return list(dict.fromkeys(t for t in (line.strip() for line in lines) if t and t != HEADER))
 
 
 def _err(e: BaseException) -> str:
@@ -504,12 +577,15 @@ def view(state: Path, shared: Path) -> dict:
 # -- git -----------------------------------------------------------------------------------------
 
 def _child_env() -> dict:
-    """Never a prompt (terminal, credential manager, ssh askpass), and no inherited variable that
-    points git at another repo."""
+    """Never a prompt (terminal, credential manager, ssh askpass, ssh's own password or host-key
+    questions), and no inherited variable that points git at another repo. An ssh command the owner
+    set (GIT_SSH_COMMAND, GIT_SSH) is kept."""
     env = dict(os.environ)
     for name in _GIT_REPO_VARS:
         env.pop(name, None)
     env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never", SSH_ASKPASS_REQUIRE="never")
+    if not (env.get("GIT_SSH_COMMAND") or env.get("GIT_SSH")):
+        env["GIT_SSH_COMMAND"] = "ssh -oBatchMode=yes"
     return env
 
 
@@ -519,30 +595,49 @@ def _masked(text: str) -> str:
 
 class Git:
     """git on one repo, with safe.directory (files the other OS made may have another owner) and
-    this store's rules on every call: no line-ending conversion, no mode bits, no background gc on
-    the shared drive, BrainHub's identity."""
+    this store's rules on every call: no line-ending conversion, no mode bits, this OS's case rule
+    (core.ignorecase, as for the brain in ruling D7: the store's .git/config may come from the
+    other OS, and with Windows' true Linux git wouldn't see a note.md next to Note.md), no
+    background gc on the shared drive, BrainHub's identity."""
 
     def __init__(self, repo: Path):
         self.repo = Path(repo)
         safe = str(self.repo.resolve()).replace("\\", "/")
         self.base = ["git", "-c", f"safe.directory={safe}", "-c", "core.autocrlf=false",
-                     "-c", "core.filemode=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+                     "-c", "core.filemode=false", "-c", f"core.ignorecase={'true' if _WIN else 'false'}",
+                     "-c", "gc.auto=0", "-c", "maintenance.auto=false",
                      "-c", "user.name=BrainHub", "-c", "user.email=brainhub@localhost"]
 
-    def __call__(self, *args: str, timeout: float = GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
+    def __call__(self, *args: str, timeout: float = GIT_TIMEOUT_S, input: str | None = None,
+                 detach: bool = False) -> subprocess.CompletedProcess:
+        """`input` goes to git's stdin (otherwise it reads nothing). `detach` (the push) starts git
+        in a session of its own on POSIX: with no controlling terminal, nothing it runs (ssh, a
+        credential helper) can open /dev/tty and wait on a prompt, and a timeout kills the session."""
         cmd = [*self.base, *args]
+        group = detach and not _WIN
         try:
-            return subprocess.run(cmd, cwd=self.repo, capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", env=_child_env(), stdin=subprocess.DEVNULL,
-                                  timeout=timeout, creationflags=_NO_WINDOW)
-        except subprocess.TimeoutExpired:
-            return subprocess.CompletedProcess(cmd, 124, "", f"git {args[0]} timed out after {timeout:g} s")
+            with subprocess.Popen(cmd, cwd=self.repo, text=True, encoding="utf-8", errors="replace",
+                                  stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_child_env(),
+                                  creationflags=_NO_WINDOW, start_new_session=group) as p:
+                try:
+                    out, err = p.communicate(input, timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    if group:
+                        try:
+                            os.killpg(p.pid, signal.SIGKILL)
+                        except OSError:
+                            pass
+                    p.kill()
+                    p.wait()
+                    return subprocess.CompletedProcess(cmd, 124, "", f"git {args[0]} timed out after {timeout:g} s")
+                return subprocess.CompletedProcess(cmd, p.returncode, out, err)
         except OSError as e:
             return subprocess.CompletedProcess(cmd, 127, "", f"can't run git: {e}")
 
     def push(self) -> tuple[bool, str]:
         r = self("-c", "credential.interactive=never", "push", "--quiet", "origin", "HEAD:refs/heads/main",
-                 timeout=PUSH_TIMEOUT_S)
+                 timeout=PUSH_TIMEOUT_S, detach=True)
         return r.returncode == 0, _masked(r.stderr)
 
 
@@ -607,8 +702,11 @@ class Sync:
         try:
             self.last = read_json_obj(state / LAST_FILE) or {}
         except BadFile as e:
+            # Unknown, not empty: no key has a record now, so a merge takes only the notes the store
+            # has never held (merge_folder), never every stale local copy as <stem>.<os>.md.
             self.last = {}
-            self.problem("settings", f"{e}; treated as a first sync")
+            self.problem("memory", f"{e}; {self._keep_damaged_state()}only notes the store has never "
+                                   "held are merged, and settings compare as on a first sync")
         merged = self.last.get("merged")
         self.merged: dict[str, dict] = dict(merged) if isinstance(merged, dict) else {}
         snapshot = self.last.get("settings")
@@ -645,6 +743,18 @@ class Sync:
         shutil.copy2(path, target)
         return target
 
+    def _keep_damaged_state(self) -> str:
+        """Copy a claude-sync-last.json that can't be read to the backups (this run replaces it)."""
+        if self.dry:
+            return ""
+        try:
+            target = self._backup_path(LAST_FILE)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.state / LAST_FILE, target)
+        except OSError as e:
+            return f"couldn't back it up ({_err(e)}); "
+        return f"backed up to {target}; "
+
     # -- 1. pairs -------------------------------------------------------------------------------------
     def find_pairs(self) -> tuple[list[Pair], int]:
         exceptions: dict[str, Path] = {}
@@ -669,12 +779,16 @@ class Sync:
         candidates: dict[str, tuple[str, Path]] = {}
         shared_real = os.path.normcase(str(self.shared))
         for child in _dirs(self.root):
-            if not child.name.startswith(".") and os.path.normcase(str(child)) != shared_real:
+            # A root folder named like an exception that names another folder isn't that project.
+            if (not child.name.startswith(".") and os.path.normcase(str(child)) != shared_real
+                    and child.name not in exceptions):
                 candidates[fold(encode_key(child))] = (child.name, child)
         for name, folder in exceptions.items():  # an exception names that folder's project
             candidates[fold(encode_key(folder))] = (name, folder)
 
-        home = Pair("home", self.shared / "memory" / "home", self.claude / "settings.local.json", None)
+        # The home folder's own project settings, which a session started there reads (ruling D2):
+        # <home>/.claude, not Claude Code's config folder (they differ under CLAUDE_CONFIG_DIR).
+        home = Pair("home", self.shared / "memory" / "home", self.home / ".claude" / "settings.local.json", None)
         projects: dict[str, Pair] = {}
 
         def project(name: str, folder: Path) -> Pair:
@@ -694,12 +808,22 @@ class Sync:
                 project(*candidates[key]).keys.append(key_dir.name)
             else:
                 unpaired += 1
-        for folder in _dirs(self.shared / "memory" / "projects"):  # notes from the other OS
+        # Notes from the other OS: a store folder pairs with the root folder of its name, unless
+        # pairs.json gives that folder another name (it would then be pointed at both, in turn, at
+        # every sync) or names another folder for it.
+        claimed = {os.path.normcase(str(f)) for f in exceptions.values()}
+        claimed |= {os.path.normcase(str(p.project)) for p in projects.values()}
+        for folder in _dirs(self.shared / "memory" / "projects"):
             name = folder.name
-            if name not in projects and _valid_name(name) and not name.startswith("."):
-                local = exceptions.get(name, self.root / name)
-                if local.is_dir():
-                    project(name, local)
+            if name in projects or not _valid_name(name) or name.startswith("."):
+                continue
+            local = exceptions.get(name)
+            if local is None:
+                local = self.root / name
+                if os.path.normcase(str(local)) in claimed:
+                    continue
+            if local.is_dir():
+                project(name, local)
         return [home, *(projects[n] for n in sorted(projects))], unpaired
 
     # -- 2. point, merge ----------------------------------------------------------------------------
@@ -729,14 +853,58 @@ class Sync:
         if self.point(pair):
             out["pointed"].append(pair.name)
 
+    def _record(self, key: str) -> dict | None:
+        """This key's last merge, {"files": {rel: sha256}, "index": [its MEMORY.md's lines] or
+        None}; None when there is none (a first merge, a lost state file) or it has another shape."""
+        rec = self.merged.get(key)
+        files = rec.get("files") if isinstance(rec, dict) else None
+        if not isinstance(files, dict):
+            return None
+        index = rec.get("index")
+        return {"files": files, "index": index if isinstance(index, list) else None}
+
+    def _known_to_store(self, local: Path, shared: Path, files: list[str], hashes: dict) -> dict:
+        """For a key with no record: the local notes whose content the store already holds, as
+        rel -> its name in the pair's folder now (maybe another one), or None when it is only in the
+        store's git history (changed or removed there since: this copy is stale)."""
+        here: dict[str, str] = {}
+        for rel in note_files(shared):
+            here.setdefault(_sha(shared / rel), rel)
+        known: dict[str, str | None] = {rel: here[hashes[rel]] for rel in files if hashes[rel] in here}
+        rest = [rel for rel in files if rel not in known]
+        if rest and (self.shared / ".git").exists():
+            git = Git(self.shared)
+            ids = git("hash-object", "--no-filters", "--", *(str(local / rel) for rel in rest))
+            names = ids.stdout.split() if ids.returncode == 0 else []
+            if len(names) == len(rest):
+                found = git("cat-file", "--batch-check", input="".join(f"{n}\n" for n in names))
+                lines = found.stdout.splitlines() if found.returncode == 0 else []
+                if len(lines) == len(rest):
+                    known.update({rel: None for rel, line in zip(rest, lines) if not line.endswith(" missing")})
+        return known
+
     def merge_folder(self, key: str, local: Path, shared: Path) -> dict | None:
         """Merge one local memory folder into its shared folder (never deleting or overwriting
-        anything there); None when nothing in it is new since this key's last merge."""
+        anything there); None when nothing in it is new. With a record of this key's last merge,
+        new means new or changed since then. Without one (a first merge, or a lost state file) it
+        means content the store has never held, so stale copies of notes changed or removed in the
+        store since are never merged back, as <stem>.<os>.md or at all."""
         files = note_files(local)
         hashes = {rel: _sha(local / rel) for rel in files}
-        before = self.merged.get(key) if isinstance(self.merged.get(key), dict) else {}
-        todo = {rel for rel in files if before.get(rel) != hashes[rel]}
+        record = self._record(key)
+        if record is not None:
+            known: dict[str, str | None] = {}
+            todo = {rel for rel in files if record["files"].get(rel) != hashes[rel]}
+        else:
+            known = self._known_to_store(local, shared, files, hashes)
+            todo = {rel for rel in files if rel not in known}
+        index = record["index"] if record is not None else None
         if not todo:
+            if record is None and not self.dry:  # from now on, compare with this
+                renamed = {rel: where for rel, where in known.items() if where and rel not in (where, INDEX)}
+                if INDEX in files:
+                    index = _index_texts(self._local_index(local / INDEX, renamed))
+                self.merged[key] = {"files": hashes, "index": index or []}
             return None
         result = {"key": key, "into": shared.relative_to(self.shared).as_posix(), "copied": [],
                   "kept_both": [], "index": False, "backup": None}
@@ -751,12 +919,15 @@ class Sync:
                 continue
             src, dst = local / rel, shared / rel
             data = src.read_bytes()
+            if os.path.lexists(dst) and dst.read_bytes() == data:
+                continue
+            if known.get(rel):  # the store holds this content under another name
+                renamed[rel] = known[rel]
+                continue
             if not os.path.lexists(dst):
                 if rel in todo:  # an unchanged note the store no longer has was removed there
                     self._copy(src, dst)
                     result["copied"].append(rel)
-                continue
-            if dst.read_bytes() == data:
                 continue
             alt, there = self._alt_name(dst, data)
             alt_rel = alt.relative_to(shared).as_posix()
@@ -767,9 +938,11 @@ class Sync:
                 result["kept_both"].append(alt_rel)
                 renamed[rel] = alt_rel
         if INDEX in todo:
-            result["index"] = self.merge_index(local / INDEX, shared / INDEX, renamed)
+            result["index"], index = self.merge_index(local / INDEX, shared / INDEX, renamed, index)
+        elif index is None and INDEX in files:
+            index = _index_texts(self._local_index(local / INDEX, renamed))
         if not self.dry:
-            self.merged[key] = hashes
+            self.merged[key] = {"files": hashes, "index": index or []}
         self.log(f"memory: merged {key} into {result['into']}: {len(result['copied'])} copied, "
                  f"{len(result['kept_both'])} kept under a second name"
                  + (f" ({', '.join(result['kept_both'])})" if result["kept_both"] else "")
@@ -778,8 +951,7 @@ class Sync:
 
     def _copy(self, src: Path, dst: Path) -> None:
         if not self.dry:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            copy_atomic(src, dst)
 
     def _alt_name(self, dst: Path, data: bytes) -> tuple[Path, bool]:
         """The name for the local version of a clashing note: <stem>.<os><suffix>, then
@@ -794,35 +966,69 @@ class Sync:
                 return alt, True
             n += 1
 
-    def merge_index(self, local_md: Path, shared_md: Path, renamed: dict[str, str]) -> bool:
-        """Add the local MEMORY.md's lines that the shared one lacks, at its end (blank lines and the
-        header aside). A link to a note kept under a second name points at that name."""
-        lines = _read_lines(local_md)
+    @staticmethod
+    def _local_index(local_md: Path, renamed: dict[str, str]) -> list[str]:
+        """A local MEMORY.md's lines, right-stripped, with links to a note kept under a second name
+        pointing at that name."""
+        lines = [line.rstrip() for line in _read_lines(local_md)]
         for rel, alt in renamed.items():
             lines = [line.replace(f"]({rel})", f"]({alt})") for line in lines]
-        if not os.path.lexists(shared_md):
+        return lines
+
+    def merge_index(self, local_md: Path, shared_md: Path, renamed: dict[str, str],
+                    since: list[str] | None) -> tuple[bool, list[str]]:
+        """Add the local MEMORY.md's lines that are new since its last merge (`since`: its lines
+        then; None: all of them) and that the shared one lacks, at its end (blank lines and the
+        header aside). A line the owner deleted from the store is in `since`, so an old copy of it
+        here never brings it back. Returns (whether the shared index changed, the local index's
+        lines now, for the record)."""
+        lines = self._local_index(local_md, renamed)
+        now = _index_texts(lines)
+        have = _read_lines(shared_md) if os.path.lexists(shared_md) else None
+        if have is None and since is None:
             if not self.dry:
-                write_text_atomic(shared_md, _join([line.rstrip() for line in lines]))
-            return True
-        have = _read_lines(shared_md)
-        seen = {line.strip() for line in have if line.strip()}
+                _write_lines(shared_md, lines)
+            return True, now
+        seen = {line.strip() for line in have or [] if line.strip()} | set(since or ())
         add = []
         for line in lines:
             text = line.strip()
             if text and text != HEADER and text not in seen:
                 seen.add(text)
-                add.append(line.rstrip())
+                add.append(line)
         if not add:
-            return False
+            return False, now
+        have = have or []
         while have and not have[-1].strip():
             have.pop()
         if not self.dry:
-            write_text_atomic(shared_md, _join(have + add))
-        return True
+            _write_lines(shared_md, have + add)
+        return True, now
+
+    def _not_a_workspace(self, folder: Path) -> str | None:
+        """Why a project folder is never pointed (its notes still merge), or None: it holds a
+        BrainHub root (the live copy is never a workspace, design §5.1; a legacy root has only
+        brain/map.json), or it is on the shared drive (the store's parent) outside this OS's
+        projects root, where sessions on both OSes would read its one settings.local.json. On
+        Windows the projects root (D:\\) is on that drive itself, so there only the first applies."""
+        for marker in ("data/root.json", "brain/map.json"):
+            if os.path.lexists(folder / marker):
+                return f"holds a BrainHub root ({marker})"
+        drive = self.shared.parent
+        if _under(folder, drive) and not _under(folder, self.root):
+            return f"is on the shared drive ({drive})"
+        return None
 
     def point(self, pair: Pair) -> bool:
         """Write autoMemoryDirectory = the pair's shared folder into its settings.local.json, keeping
-        every other key. True when the file changed (or would, in a dry run)."""
+        every other key. True when the file changed (or would, in a dry run). Never for a project
+        folder that isn't a workspace (_not_a_workspace), and never over a value of the other OS's
+        path shape: that OS's sessions use it."""
+        if pair.project is not None:
+            why = self._not_a_workspace(pair.project)
+            if why:
+                self.log(f"memory: {pair.name}: {pair.project} {why}; its notes are merged, but it isn't pointed")
+                return False
         target, path = str(pair.shared), pair.settings_local
         try:
             obj = read_json_obj(path)
@@ -830,7 +1036,12 @@ class Sync:
             self.problem("memory", f"{e}; left alone, so {pair.name} keeps its memory on this OS")
             return False
         obj = obj if obj is not None else {}
-        changed = obj.get("autoMemoryDirectory") != target
+        current = obj.get("autoMemoryDirectory")
+        if current != target and other_os_path(current, self.os):
+            self.log(f"memory: {pair.name}: {path} names {current!r}, a path of the other OS, whose "
+                     "sessions read it; left as it is")
+            return False
+        changed = current != target
         if changed:
             if "autoMemoryDirectory" in obj:
                 self.log(f"memory: {pair.name}: autoMemoryDirectory was {obj['autoMemoryDirectory']!r}")
@@ -846,15 +1057,20 @@ class Sync:
 
     def exclude_from_git(self, project: Path) -> None:
         """Keep .claude/settings.local.json out of the project's git status (an untracked file there
-        would make the live copy look dirty to the update step): add it to .git/info/exclude, which
-        is never committed, when git doesn't ignore it already."""
-        if not (project / ".git").is_dir():
+        would make a checkout look dirty to the update step): add it to the repo's info/exclude,
+        which is never committed, when git doesn't ignore it already. The file is the one `git
+        rev-parse --git-path info/exclude` names, so a worktree (whose .git is a file) uses its main
+        repo's, which every worktree reads. Quietly nothing for a folder that isn't a repo's top."""
+        if not os.path.lexists(project / ".git"):
             return
-        rel = ".claude/settings.local.json"
-        r = Git(project)("check-ignore", "-q", "--", rel)
+        rel, git = ".claude/settings.local.json", Git(project)
+        r = git("check-ignore", "-q", "--", rel)
         if r.returncode != 1:  # 0: ignored already; anything else: git couldn't tell, so leave it
             return
-        exclude, line = project / ".git" / "info" / "exclude", "/" + rel
+        where = git("rev-parse", "--git-path", "info/exclude")
+        if where.returncode != 0 or not where.stdout.strip():
+            return
+        exclude, line = project / where.stdout.strip(), "/" + rel
         try:
             text = exclude.read_text("utf-8") if exclude.exists() else ""
             if line in text.splitlines():
@@ -880,9 +1096,9 @@ class Sync:
                 fixed = [HEADER, *(line for line in lines if line.strip() != HEADER)]
                 if fixed != lines:
                     if not self.dry:
-                        write_text_atomic(md, _join(fixed))
+                        _write_lines(md, fixed)
                     changed += 1
-            except (OSError, UnicodeDecodeError) as e:
+            except (OSError, UnicodeError) as e:
                 self.problem("memory", f"{md}: {_err(e)}")
         return changed
 
@@ -968,6 +1184,8 @@ class Sync:
             mine = local.get(key, _MISSING)
             if key in per_os or (mine is not _MISSING and holds_abs_path(mine)):
                 continue
+            if mine is _MISSING and snap is not None and holds_abs_path(snap.get(key)):
+                continue  # a key that held a path here was never shared, so neither is its removal
             entry = entries.get(key)
             if snap is not None:
                 if mine == snap.get(key, _MISSING) and not (entry is None and mine is not _MISSING):
@@ -1070,8 +1288,8 @@ class Sync:
         last = {**self.last, "merged": self.merged, "push_pending": self.push_pending}
         if self.snapshot is not None:
             last["settings"] = self.snapshot
-        write_json_atomic(self.state / LAST_FILE, last)
-        write_json_atomic(self.state / SUMMARY_FILE, summary)
+        write_json_atomic(self.state / LAST_FILE, last, ascii=True)
+        write_json_atomic(self.state / SUMMARY_FILE, summary, ascii=True)
         write_log(self.state, self.started, self.os, [*self.lines, summary_line(summary)])
 
 
@@ -1083,7 +1301,7 @@ def write_log(state: Path, started: str, os_name: str, lines: list[str]) -> None
             os.replace(path, path.with_name(LOG_FILE + ".1"))
     except OSError:
         pass
-    with open(path, "a", encoding="utf-8", newline="\n") as f:
+    with open(path, "a", encoding="utf-8", errors="backslashreplace", newline="\n") as f:
         for line in lines:
             f.write(f"{started} {os_name} {line}\n")
 
@@ -1173,7 +1391,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="Claude Code's folder (default $CLAUDE_CONFIG_DIR, else ~/.claude)")
     ap.add_argument("--projects-root", type=Path, default=None,
                     help="where the projects live (default ~/dev on Linux, D:\\ on Windows)")
-    ap.add_argument("--home", type=Path, default=None, help="the home folder whose key is the home key")
+    ap.add_argument("--home", type=Path, default=None,
+                    help="the home folder (default ~): its key is the home key, and its "
+                         ".claude/settings.local.json gets the home memory folder")
     ap.add_argument("--dry-run", action="store_true", help="print what would change; write nothing")
     ap.add_argument("--settings-only", action="store_true",
                     help="only the settings sync and the commit (the shell's settings.json watch)")

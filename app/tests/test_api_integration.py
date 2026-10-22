@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 
@@ -73,6 +74,7 @@ async def test_integration_install_in_runtime_mode_uses_stable_paths(client, tmp
     assert hook["command"] == str(ci.base_python()) and hook["args"][2] == str(stable)
     view = await (await client.get("/api/integration")).json()
     assert view["hooks_installed"] and view["statusline_installed"] and view["port_matches"]
+    assert view["paths_current"] is True
     r = await client.post("/api/integration/uninstall", json={})
     assert (await r.json())["hooks_installed"] is False
     assert json.loads((tmp_path / "s" / "settings.json").read_text("utf-8")) == {}
@@ -83,3 +85,24 @@ async def test_integration_invalid_json_is_400(client, tmp_path):
     f.parent.mkdir()
     f.write_text("{ bad")
     assert (await client.post("/api/integration/install", json={})).status == 400
+
+
+async def test_integration_view_says_when_paths_are_old(client, tmp_path, monkeypatch):
+    """Installed in dev mode, then `runtime init`: the view says the paths are old (Settings offers
+    the reinstall). With the runtime's base interpreter gone, the view still answers, and install
+    refuses with what to do."""
+    assert (await client.post("/api/integration/install", json={})).status == 200
+    assert (await (await client.get("/api/integration")).json())["paths_current"] is True
+    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    (state / "runtime").mkdir(parents=True)
+    (state / "runtime" / "current.json").write_text('{"slot": "a", "commit": "c", "deps": "d"}')
+    stable = ci.stable_hook(state)
+    stable.parent.mkdir()
+    stable.write_bytes(ci.hook_script().read_bytes())
+    view = await (await client.get("/api/integration")).json()
+    assert view["hooks_installed"] and view["paths_current"] is False
+    monkeypatch.setattr(sys, "_base_executable", str(tmp_path / "gone" / "python3"))
+    r = await client.get("/api/integration")
+    assert r.status == 200 and (await r.json())["paths_current"] is False
+    r = await client.post("/api/integration/install", json={})
+    assert r.status == 400 and "runtime init" in (await r.json())["error"]

@@ -324,6 +324,10 @@ export async function render(container) {
         el('dt', {}, 'Last hook event'), el('dd', {}, whenText(s.last_hook_at)),
         el('dt', {}, 'Last usage update'), el('dd', {}, whenText(s.last_usage_at)),
         el('dt', {}, 'Settings file'), el('dd', {}, el('code', {}, s.settings_path || ''))),
+      // Quiet: installed before `runtime init`, or its interpreter or script has moved since.
+      (s.hooks_installed || s.statusline_installed) && s.paths_current === false
+        ? el('p', { class: 'quiet-note' }, 'Reinstall: the installed hooks point at an old Python or script.')
+        : null,
       el('div', { class: 'actions' },
         el('button', { type: 'button', class: 'primary', onclick: run('/api/integration/install', 'Installed.') }, 'Install'),
         el('button', { type: 'button', onclick: run('/api/integration/uninstall', 'Removed.') }, 'Remove')),
