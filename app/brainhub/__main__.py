@@ -133,19 +133,53 @@ def run_integration(argv: list[str]) -> None:
 def run_desktop_config(argv: list[str]) -> None:
     from . import claude_integration as ci
     from . import desktop_config as dc
+    from . import osdirs
     ap = argparse.ArgumentParser(prog="brainhub desktop-config")
     ap.add_argument("--root", required=True, type=Path)
     ap.add_argument("--target", type=Path, default=None)
+    ap.add_argument("--runtime", action="store_true",
+                    help="run the hub from the runtime slots, updated from --live before each start")
+    ap.add_argument("--live", type=Path, default=None, help="the live copy (runtime mode)")
     args = ap.parse_args(argv)
+    if args.runtime != (args.live is not None):
+        ap.error("--runtime and --live go together")
     paths = Paths(args.root.resolve())
     target = args.target or dc.default_target()
-    written = dc.write_desktop_config(root=paths.root, port=load_settings(paths)["port"],
-                                      python=ci.console_python(Path(sys.executable)), app_dir=paths.app,
-                                      target=target)
+    port = load_settings(paths)["port"]
+    if args.runtime:
+        state = osdirs.state_dir().resolve()
+        written = dc.write_runtime_desktop_config(root=paths.root, port=port, live=args.live.resolve(),
+                                                  state=state, target=target)
+        if not (state / "runtime" / "current.json").exists():
+            print(f"note: no runtime slot yet: run `python -m brainhub runtime init --live {args.live}`",
+                  file=sys.stderr)
+    else:
+        written = dc.write_desktop_config(root=paths.root, port=port,
+                                          python=ci.console_python(Path(sys.executable)), app_dir=paths.app,
+                                          target=target)
     print(written)
 
 
-COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config}
+def run_runtime(argv: list[str]) -> None:
+    from . import osdirs, runtime
+    ap = argparse.ArgumentParser(prog="brainhub runtime")
+    sub = ap.add_subparsers(dest="action", required=True)
+    init = sub.add_parser("init", help="build the first runtime slot from the live copy's HEAD")
+    init.add_argument("--live", required=True, type=Path)
+    sub.add_parser("status", help="the current slot and the last update step")
+    args = ap.parse_args(argv)
+    state = osdirs.state_dir()
+    if args.action == "init":
+        result = runtime.init(args.live.resolve(), state.resolve())
+        print(json.dumps(result, indent=2))
+        if result["pending"]:
+            print(f"error: {result['pending']}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(json.dumps(runtime.status(state), indent=2))
+
+
+COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config, "runtime": run_runtime}
 
 
 def main() -> None:
