@@ -97,6 +97,9 @@ Review found that the boot time rounded to the minute can differ between two pro
 - **`WHERE_BY_ENTRYPOINT` is unchanged.** The terminal and VS Code values weren't measured. An interactive session can't run against a scratch `CLAUDE_CONFIG_DIR` (no login), and with the real one it would write `~/.claude/projects/**`. The owner checks them at rollout (plan Task 10, "Linux entrypoints"); `cli` is expected for the terminal.
 - **An e2e on the real login leaves a folder behind:** even with `--no-session-persistence`, `claude -p` creates an empty `~/.claude/projects/<key of the cwd>/memory/`. Remove it afterwards.
 
+## D11: The hub's own Claude runs have no auto memory (Task 10 review)
+Measured with Claude Code 2.1.308: with the runner's isolation flags (`--setting-sources ""`, `--no-session-persistence` and the rest), `claude -p` still gets auto memory. Its instructions name `~/.claude/projects/<key>/memory/` for its cwd, and the folder is created. So every filing (cwd `data/worktrees/<entry id>`) left a stray folder in the owner's `~/.claude/projects` (on Windows since phase 2), and the filing agent, which may write files, was told about a folder outside its worktree. `child_env()` now sets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (measured: no path in the instructions, no folder). Stray `*-data-worktrees-e-*` keys left by earlier runs are cleaned up at the rollout, and `claude-sync` must never pair them as projects.
+
 ## Residuals
 - An integration installed before `runtime init` keeps the dev paths (the dev venv and the dev copy's `hook_client.py`). Status still shows it as installed; reinstall after `runtime init` (the rollout installs it after).
 - `app/README.md` still says the integration files live in `data/` (Task 12 fixes the docs).

@@ -12,6 +12,11 @@ def test_child_env_strips_api_key(monkeypatch):
     assert "ANTHROPIC_API_KEY" not in child_env()
 
 
+def test_child_env_disables_auto_memory(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_AUTO_MEMORY", raising=False)
+    assert child_env()["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+
+
 def test_build_args_json():
     a = build_args(model="sonnet", system_prompt_file=Path("p.md"), allowed_tools=["Read", "Edit"],
                    max_turns=20, json_schema={"type": "object"}, stream=False)

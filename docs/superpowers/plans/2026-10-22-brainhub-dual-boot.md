@@ -606,7 +606,8 @@ Not code. Each step is confirmed with the owner as it happens.
    - switch the live copy `/mnt/data/BrainHub` from the local `dual-boot` branch to master (`git switch master && git pull --ff-only`). The design commit on D:'s local `dual-boot` branch is already in master; delete that branch only with the owner's OK;
    - add the repo-local `core.filemode=false` on the live copy;
    - `runtime init`; build the shell (local `CARGO_TARGET_DIR`); `desktop-config` in runtime mode;
-   - install the integration; `gh auth setup-git` for the brain push; check the time zone;
+   - install the integration, then one interactive terminal session and one VS Code session: record their `CLAUDE_CODE_ENTRYPOINT` (row tooltip), check that Where is right, that the status line shows, and that `/api/usage` updates (the status line doesn't run under `claude -p`, D10); `gh auth setup-git` for the brain push; check the time zone;
+   - remove stray `~/.claude/projects/*-data-worktrees-e-*` folders left by earlier filing runs (D11), on both OSes;
    - run `claude-sync` (it merges the Kubuntu home memory into the shared store), then label one-OS notes with the owner;
    - start the shell and run the **setup wizard** on `/mnt/data/BrainHub`, with both OS columns. The first real capture lands on the shared drive.
 3. **Windows:** install uv and gh (`gh auth login`); `runtime init`; build the shell; `desktop-config`; install the integration; `claude-sync` (merges the Windows home memory and the 10 project memories; label one-OS notes); re-check Fast Startup. The wizard doesn't run again.

@@ -51,6 +51,10 @@ class ClaudeError(Exception):
 def child_env() -> dict:
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
+    # No auto memory for the hub's agents: --setting-sources "" doesn't turn it off (measured with
+    # 2.1.308), so every run would be told about, and create, ~/.claude/projects/<key>/memory for
+    # its cwd: a folder outside the filing worktree, and a stray one per filing.
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     return env
 
 
