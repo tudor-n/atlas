@@ -56,7 +56,6 @@ def test_state_dir_linux_xdg(tmp_path, monkeypatch):
     assert not (tmp_path / "home").exists() and not (tmp_path / "xdg").exists()
 
 
-@posix_only
 @pytest.mark.skipif(sys.platform == "win32", reason="XDG rules")
 def test_relative_xdg_value_is_ignored(tmp_path, monkeypatch):
     monkeypatch.delenv("BRAINHUB_STATE_DIR", raising=False)
@@ -65,6 +64,7 @@ def test_relative_xdg_value_is_ignored(tmp_path, monkeypatch):
     assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "brainhub"
 
 
+@posix_only
 def test_config_dir_linux_xdg(tmp_path, monkeypatch):
     monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
     _home(monkeypatch, tmp_path / "home")

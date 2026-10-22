@@ -438,6 +438,9 @@ def test_leftover_worktree_from_the_other_os_is_removed(env):
     wt_path = env.paths.data / "worktrees" / wid
     env.repo.worktree_add(wt_path)
     other = "/mnt/data/BrainHub" if sys.platform == "win32" else "D:/BrainHub"
+    # Git for Windows marks a worktree's .git file hidden, and Windows won't open a hidden file
+    # for overwriting: replace it instead.
+    (wt_path / ".git").unlink()
     (wt_path / ".git").write_text(f"gitdir: {other}/brain/.git/worktrees/{wid}\n", encoding="utf-8")
     (env.paths.brain / ".git" / "worktrees" / wid / "gitdir").write_text(
         f"{other}/data/worktrees/{wid}/.git\n", encoding="utf-8")
