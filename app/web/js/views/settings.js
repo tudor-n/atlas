@@ -3,6 +3,7 @@ import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 import { runtimeText } from './runtime-model.js';
+import { renderClaudeSync } from './claude-sync.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
@@ -337,6 +338,12 @@ export async function render(container) {
     }
   }
   await loadIntegration();
+
+  // ---- Claude Code sync (claude-sync: shared memory, skills and settings across the OSes)
+  const syncBox = el('div', {});
+  container.appendChild(el('h2', {}, 'Claude Code sync'));
+  container.appendChild(syncBox);
+  await renderClaudeSync(syncBox, () => dead);
 
   subs.push(api.onEvent('map.changed', () => loadTree()));
   subs.push(api.onEvent('items.changed', () => loadTree()));

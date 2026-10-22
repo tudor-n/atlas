@@ -14,6 +14,7 @@ from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from . import claude_integration as ci
+from . import claude_sync
 from . import holding
 from . import osdirs
 from . import rootguard
@@ -706,6 +707,29 @@ async def post_integration_uninstall(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(reason=str(e)) from None
 
 
+# -- Claude Code sync (plan Task 11): the last summary and the per-OS keys -------------------
+def _claude_sync_view() -> dict:
+    return claude_sync.view(osdirs.state_dir(), claude_sync.default_shared_dir())
+
+
+async def get_claude_sync(request: web.Request) -> web.Response:
+    """The last claude-sync summary (<state>/claude-sync.json, None before the first run), whether
+    the shared store is there, and the per-OS settings keys (the defaults and the owner's)."""
+    return web.json_response(await t(_claude_sync_view))
+
+
+async def put_claude_sync_per_os_keys(request: web.Request) -> web.Response:
+    """{"keys": [...]}: the owner's extra per-OS keys, kept in the shared store's
+    settings.shared.json. 409 while the store isn't available, or while a sync runs."""
+    body = await body_dict(request)
+    state, shared = osdirs.state_dir(), claude_sync.default_shared_dir()
+    try:
+        await t(claude_sync.set_per_os_keys, shared, body.get("keys"), state)
+    except (claude_sync.StoreUnavailable, claude_sync.Busy) as e:
+        return err(409, str(e))
+    return web.json_response(await t(_claude_sync_view))
+
+
 # -- reduced and read-only modes (dual-boot design §6.5 items 2 and 3) -----------
 def drive(app: web.Application, problems: list | None = None) -> dict | None:
     """The drive banner: None while the root is fine, else its state, the message and how many
@@ -820,6 +844,8 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/integration", get_integration),
         web.post("/api/integration/install", post_integration_install),
         web.post("/api/integration/uninstall", post_integration_uninstall),
+        web.get("/api/claude-sync", get_claude_sync),
+        web.put("/api/claude-sync/per-os-keys", put_claude_sync_per_os_keys),
         web.get("/api/widget", get_widget), web.get("/widget", widget_page),
         web.post("/api/open", post_open),
         web.get("/ws", ws_handler),

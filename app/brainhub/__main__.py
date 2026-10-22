@@ -187,7 +187,13 @@ def run_runtime(argv: list[str]) -> None:
         print(json.dumps(runtime.status(state), indent=2))
 
 
-COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config, "runtime": run_runtime}
+def run_claude_sync(argv: list[str]) -> None:
+    from . import claude_sync
+    sys.exit(claude_sync.main(argv))
+
+
+COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config, "runtime": run_runtime,
+            "claude-sync": run_claude_sync}
 
 
 def main() -> None:
