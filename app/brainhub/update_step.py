@@ -178,9 +178,14 @@ class Runner:
         return proc.returncode, out
 
 
+# No background gc or maintenance on the live copy: fetch and merge may start one that detaches
+# itself, outlives the budget's kill, and keeps writing to the shared drive while the hub starts.
+NO_BACKGROUND = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
+
+
 class Live:
     """git on the live copy. Every call names it as a safe directory (the other OS's files may
-    have another owner, design §5.4)."""
+    have another owner, design §5.4) and starts no background gc or maintenance."""
 
     def __init__(self, path, runner):
         self.path = os.path.abspath(path)
@@ -189,7 +194,8 @@ class Live:
 
     def git(self, *args, what="git", network=False):
         cap = self.runner.timeout if network else LOCAL_TIMEOUT_S
-        return self.runner.run(["git", "-c", self.safe, *args], cwd=self.path, what=what, cap=cap)
+        return self.runner.run(["git", "-c", self.safe, *NO_BACKGROUND, *args], cwd=self.path, what=what,
+                               cap=cap)
 
     def rev(self, ref):
         code, out = self.git("rev-parse", "--verify", "-q", ref)
