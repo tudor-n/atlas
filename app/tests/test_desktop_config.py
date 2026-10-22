@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from brainhub.config import Paths
 from brainhub.claude_integration import console_python
 from brainhub.desktop_config import default_target, write_desktop_config, write_runtime_desktop_config
@@ -20,10 +22,44 @@ def test_write_desktop_config(tmp_path):
     assert data == {"port": 8099, "root": str(root), "python": str(py), "app_dir": str(app)}
 
 
-def test_default_target_uses_localappdata(tmp_path):
-    # conftest points LOCALAPPDATA at a temp dir
+def test_default_target_honours_env(tmp_path):
+    # conftest points BRAINHUB_CONFIG_DIR at a temp dir (the Rust shell reads the same variable)
+    assert default_target() == tmp_path / "config" / "desktop.json"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="XDG rules")
+def test_default_target_xdg(tmp_path, monkeypatch):
+    monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert default_target() == tmp_path / "xdg" / "brainhub" / "desktop.json"
+    monkeypatch.delenv("XDG_CONFIG_HOME")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    assert default_target() == tmp_path / "home" / ".config" / "brainhub" / "desktop.json"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows folder rules")
+def test_default_target_windows(tmp_path, monkeypatch):
+    monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
     assert default_target() == Path(os.environ["LOCALAPPDATA"]) / "BrainHub" / "desktop.json"
     assert str(tmp_path) in str(default_target())
+
+
+def test_console_python_posix_layout(tmp_path):
+    # A POSIX venv has bin/python, a symlink to the base interpreter: it is returned as it is,
+    # never resolved (the base interpreter would run without the venv's packages).
+    base = tmp_path / "base" / "bin" / "python3.14"
+    base.parent.mkdir(parents=True)
+    base.write_text("")
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    try:
+        (venv_bin / "python").symlink_to(base)
+    except OSError:  # Windows without symlink rights: a plain file shows the same rule
+        (venv_bin / "python").write_text("")
+    assert console_python(venv_bin / "python") == venv_bin / "python"
+    # No pythonw on Linux; where one exists (a framework build), the console python beside it.
+    assert console_python(venv_bin / "pythonw") == venv_bin / "python"
+    assert console_python(base.with_name("pythonw")) == base.with_name("pythonw")  # no sibling: as is
 
 
 def test_cli_desktop_config(tmp_path):

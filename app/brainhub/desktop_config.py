@@ -1,4 +1,4 @@
-"""The desktop shell's config file (design §8): `%LOCALAPPDATA%\\BrainHub\\desktop.json`.
+"""The desktop shell's config file (design §8): `desktop.json` in the per-OS config folder (P10).
 
 Two modes:
 - **Legacy (dev):** `{port, root, python, app_dir}`. The shell starts
@@ -14,12 +14,15 @@ CREATE_NO_WINDOW, which gives the hub a hidden console that every git, claude an
 inherits. Under pythonw (no console at all) each of those children would open a visible one.
 """
 import json
-import os
 from pathlib import Path
+
+from . import osdirs
 
 
 def default_target() -> Path:
-    return Path(os.environ["LOCALAPPDATA"]) / "BrainHub" / "desktop.json"
+    """$BRAINHUB_CONFIG_DIR, else ~/.config/brainhub (XDG) on Linux and %LOCALAPPDATA%\\BrainHub on
+    Windows, plus desktop.json: the same rules as the shell's config.rs."""
+    return osdirs.config_dir() / "desktop.json"
 
 
 def _write(target: Path, data: dict) -> Path:

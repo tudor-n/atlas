@@ -1,9 +1,12 @@
-//! `%LOCALAPPDATA%\BrainHub\desktop.json`, written by `python -m brainhub desktop-config`.
+//! `desktop.json`, written by `python -m brainhub desktop-config`, and the per-OS folders (P10):
+//! the config folder holds `desktop.json`, the state folder `hub.log`. Both follow the rules of
+//! `brainhub/osdirs.py`, env overrides included.
 //!
 //! A missing or invalid file gives the defaults: port 8090 and nothing to start, so the shell
 //! only connects to an already running hub.
 
 use serde::Deserialize;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_PORT: u16 = 8090;
@@ -34,10 +37,67 @@ impl DesktopConfig {
     }
 }
 
-/// `%LOCALAPPDATA%\BrainHub\desktop.json`, read from the environment so a test run can point it
-/// elsewhere.
+/// Reads an environment variable (tests pass a fake environment).
+type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+fn real_env(name: &str) -> Option<OsString> {
+    std::env::var_os(name)
+}
+
+/// An unset or empty variable gives no value.
+fn env_path(env: Env, name: &str) -> Option<PathBuf> {
+    env(name).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+#[cfg(windows)]
+const HOME_VAR: &str = "USERPROFILE";
+#[cfg(not(windows))]
+const HOME_VAR: &str = "HOME";
+
+fn home(env: Env) -> Option<PathBuf> {
+    env_path(env, HOME_VAR).or_else(std::env::home_dir)
+}
+
+/// `$override_var`, else `%LOCALAPPDATA%\BrainHub` on Windows and `${xdg_var:-~/xdg_default}/brainhub`
+/// elsewhere. As in osdirs.py, an empty or relative XDG value falls back to the default.
+fn os_dir(env: Env, override_var: &str, xdg_var: &str, xdg_default: &str) -> Option<PathBuf> {
+    if let Some(dir) = env_path(env, override_var) {
+        return Some(dir);
+    }
+    #[cfg(windows)]
+    {
+        let _ = (xdg_var, xdg_default);
+        let local = env_path(env, "LOCALAPPDATA").or_else(|| home(env).map(|h| h.join("AppData").join("Local")))?;
+        Some(local.join("BrainHub"))
+    }
+    #[cfg(not(windows))]
+    {
+        let base = match env_path(env, xdg_var) {
+            Some(dir) if dir.is_absolute() => dir,
+            _ => home(env)?.join(xdg_default),
+        };
+        Some(base.join("brainhub"))
+    }
+}
+
+fn default_path_in(env: Env) -> Option<PathBuf> {
+    os_dir(env, "BRAINHUB_CONFIG_DIR", "XDG_CONFIG_HOME", ".config").map(|d| d.join("desktop.json"))
+}
+
+fn state_dir_in(env: Env) -> Option<PathBuf> {
+    os_dir(env, "BRAINHUB_STATE_DIR", "XDG_DATA_HOME", ".local/share")
+}
+
+/// `desktop.json` in the config folder: `$BRAINHUB_CONFIG_DIR`, else
+/// `${XDG_CONFIG_HOME:-~/.config}/brainhub` on Linux and `%LOCALAPPDATA%\BrainHub` on Windows.
 pub fn default_path() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("BrainHub").join("desktop.json"))
+    default_path_in(&real_env)
+}
+
+/// The per-OS state folder: `$BRAINHUB_STATE_DIR`, else `${XDG_DATA_HOME:-~/.local/share}/brainhub`
+/// on Linux and `%LOCALAPPDATA%\BrainHub` on Windows.
+pub fn state_dir() -> Option<PathBuf> {
+    state_dir_in(&real_env)
 }
 
 pub fn load(path: &Path) -> DesktopConfig {
@@ -93,5 +153,71 @@ mod tests {
         let c = load(&temp_file("partial.json", r#"{"root": "C:\\r"}"#));
         assert_eq!(c.port, 8090);
         assert!(!c.can_spawn());
+    }
+
+    /// A fake environment: the real one is shared by every test thread.
+    fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| OsString::from(v))
+    }
+
+    #[test]
+    fn config_path_honours_env_override() {
+        let mut vars = [
+            ("BRAINHUB_CONFIG_DIR", "/tmp/bh-cfg"),
+            ("XDG_CONFIG_HOME", "/x/config"),
+            ("LOCALAPPDATA", "/x/local"),
+            ("HOME", "/home/u"),
+            ("USERPROFILE", "/home/u"),
+        ];
+        assert_eq!(default_path_in(&env(&vars)), Some(Path::new("/tmp/bh-cfg").join("desktop.json")));
+        // Empty counts as unset: the OS default applies.
+        vars[0].1 = "";
+        let fallback = default_path_in(&env(&vars)).unwrap();
+        assert!(!fallback.starts_with("/tmp/bh-cfg") && fallback.ends_with("desktop.json"), "{}", fallback.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_path_xdg() {
+        let default = Some(PathBuf::from("/home/u/.config/brainhub/desktop.json"));
+        assert_eq!(default_path_in(&env(&[("HOME", "/home/u")])), default);
+        let xdg = [("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/x/config")];
+        assert_eq!(default_path_in(&env(&xdg)), Some(PathBuf::from("/x/config/brainhub/desktop.json")));
+        // Empty or relative XDG values fall back to the default (the XDG spec ignores relative ones).
+        for bad in ["", "rel/config"] {
+            assert_eq!(default_path_in(&env(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", bad)])), default);
+        }
+        // LOCALAPPDATA means nothing here.
+        assert_eq!(default_path_in(&env(&[("HOME", "/home/u"), ("LOCALAPPDATA", "/x/local")])), default);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_path_windows() {
+        let local = [("LOCALAPPDATA", r"C:\Users\u\AppData\Local"), ("XDG_CONFIG_HOME", r"C:\x")];
+        assert_eq!(default_path_in(&env(&local)), Some(PathBuf::from(r"C:\Users\u\AppData\Local\BrainHub\desktop.json")));
+        // Without LOCALAPPDATA: the profile's AppData\Local, as osdirs.py does.
+        let profile = [("USERPROFILE", r"C:\Users\u")];
+        assert_eq!(default_path_in(&env(&profile)), Some(PathBuf::from(r"C:\Users\u\AppData\Local\BrainHub\desktop.json")));
+        assert_eq!(state_dir_in(&env(&profile)), Some(PathBuf::from(r"C:\Users\u\AppData\Local\BrainHub")));
+    }
+
+    #[test]
+    fn state_dir_env_override() {
+        let vars = [("BRAINHUB_STATE_DIR", "/tmp/bh-state"), ("XDG_DATA_HOME", "/x/data"), ("HOME", "/home/u")];
+        assert_eq!(state_dir_in(&env(&vars)), Some(PathBuf::from("/tmp/bh-state")));
+        // The config override doesn't move the state folder.
+        let vars = [("BRAINHUB_CONFIG_DIR", "/tmp/bh-cfg"), ("HOME", "/home/u"), ("USERPROFILE", "/home/u")];
+        assert_ne!(state_dir_in(&env(&vars)), Some(PathBuf::from("/tmp/bh-cfg")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_dir_xdg() {
+        let default = Some(PathBuf::from("/home/u/.local/share/brainhub"));
+        assert_eq!(state_dir_in(&env(&[("HOME", "/home/u")])), default);
+        assert_eq!(state_dir_in(&env(&[("HOME", "/home/u"), ("XDG_DATA_HOME", "/x/data")])),
+                   Some(PathBuf::from("/x/data/brainhub")));
+        assert_eq!(state_dir_in(&env(&[("HOME", "/home/u"), ("XDG_DATA_HOME", "data")])), default);
     }
 }

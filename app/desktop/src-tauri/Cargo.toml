@@ -18,3 +18,10 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-window-state = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The version tauri 2 uses (`cargo tree -i gtk`), for the widget's window type hint (ruling D1).
+gtk = "0.18"

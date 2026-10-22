@@ -4,6 +4,8 @@
 pub mod config;
 pub mod supervisor;
 
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -15,10 +17,94 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_window_state::StateFlags;
 
-use supervisor::{Supervisor, CREATE_NO_WINDOW};
+use supervisor::Supervisor;
+#[cfg(windows)]
+use supervisor::CREATE_NO_WINDOW;
 
 const WIDGET: &str = "widget";
 const TICK: Duration = Duration::from_secs(2);
+
+/// Set when the shell set `GDK_BACKEND` itself (D1). Its children (the hub, xdg-open, and the
+/// browsers they start) don't inherit it: a browser started from here would run under XWayland too.
+static FORCED_GDK_BACKEND: AtomicBool = AtomicBool::new(false);
+
+/// Ruling D1: on Linux the shell runs under XWayland, where KWin honours keep-above, skip-taskbar
+/// and a remembered position (a native Wayland window can ask for none of them). This must run
+/// before GTK starts, while the process has one thread. A `GDK_BACKEND` from the environment wins.
+#[cfg(target_os = "linux")]
+fn use_xwayland() {
+    if std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+        FORCED_GDK_BACKEND.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Take the shell's own environment changes back out of a child's environment.
+pub(crate) fn child_env(cmd: &mut Command) {
+    if FORCED_GDK_BACKEND.load(Ordering::Relaxed) {
+        cmd.env_remove("GDK_BACKEND");
+    }
+}
+
+/// Quit cleanly on SIGTERM (logout) and SIGINT (Ctrl+C), as the tray's Quit does (D1): `exit(0)`
+/// leads to `RunEvent::Exit`, where the window-state plugin saves the position and the supervisor
+/// stops the hub. Without this a signal ends the shell on the spot, saving nothing. The handler
+/// only writes a byte to a pipe; a plain thread reads it and asks the app to exit.
+#[cfg(unix)]
+fn quit_on_signals(app: AppHandle) -> std::io::Result<()> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    use std::sync::atomic::AtomicI32;
+
+    const SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
+    static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
+    extern "C" fn on_signal(_: libc::c_int) {
+        // Async-signal-safe only: one write(2) to a non-blocking pipe.
+        let _ = unsafe { libc::write(WAKE_FD.load(Ordering::Relaxed), b"q".as_ptr().cast(), 1) };
+    }
+
+    let mut fds: [libc::c_int; 2] = [-1; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // Close-on-exec, so the hub and xdg-open don't inherit the pipe; a non-blocking write end, so
+    // the handler never blocks.
+    unsafe {
+        libc::fcntl(fds[0], libc::F_SETFD, libc::FD_CLOEXEC);
+        libc::fcntl(fds[1], libc::F_SETFD, libc::FD_CLOEXEC);
+        libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK);
+    }
+    WAKE_FD.store(fds[1], Ordering::Relaxed);
+    let mut wake = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    // The reader runs before any handler is installed, so a caught signal is never left unread.
+    std::thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        loop {
+            match wake.read(&mut byte) {
+                Ok(1) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                _ => return,
+            }
+        }
+        // A second signal ends the shell at once, as it would have without this.
+        for sig in SIGNALS {
+            unsafe { libc::signal(sig, libc::SIG_DFL) };
+        }
+        app.exit(0);
+    });
+    for sig in SIGNALS {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        let failed = unsafe {
+            libc::sigemptyset(&mut action.sa_mask) != 0 || libc::sigaction(sig, &action, std::ptr::null_mut()) != 0
+        };
+        if failed {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 struct Shared(Arc<Mutex<Supervisor>>);
@@ -48,15 +134,27 @@ fn toggle_widget(app: &AppHandle) {
 }
 
 /// The default browser at `url`, via `cmd /C start "" <url>` without a console flash.
+#[cfg(windows)]
 fn open_browser(url: &str) {
-    let mut cmd = std::process::Command::new("cmd");
+    use std::os::windows::process::CommandExt;
+    let mut cmd = Command::new("cmd");
     cmd.args(["/C", "start", "", url]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
     let _ = cmd.spawn();
+}
+
+/// The default browser at `url`, via `xdg-open`, detached: stdio closed, its own process group (a
+/// Ctrl+C meant for the shell doesn't reach a browser it starts), and reaped on a thread.
+#[cfg(unix)]
+fn open_browser(url: &str) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut cmd = Command::new("xdg-open");
+    cmd.arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+    child_env(&mut cmd);
+    if let Ok(mut child) = cmd.spawn() {
+        std::thread::spawn(move || child.wait());
+    }
 }
 
 fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<Wry>) {
@@ -149,9 +247,12 @@ fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    use_xwayland();
     let cfg = config::default_path().map(|p| config::load(&p)).unwrap_or_default();
     let port = cfg.port;
-    let sup = Shared(Arc::new(Mutex::new(Supervisor::new(cfg))));
+    let state = config::state_dir().unwrap_or_else(std::env::temp_dir); // temp: no home folder at all
+    let sup = Shared(Arc::new(Mutex::new(Supervisor::new(cfg, state))));
     let sup_for_exit = sup.clone();
 
     let app = tauri::Builder::default()
@@ -170,11 +271,25 @@ pub fn run() {
                 .skip_taskbar(true)
                 .resizable(false)
                 .shadow(false)
+                // Shown below, once its window type is set.
+                .visible(false)
                 .build()?;
+            // D1: a utility window stays out of KWin's Alt+Tab. The type counts only if it is set
+            // before the window is first shown.
+            #[cfg(target_os = "linux")]
+            if let Ok(window) = widget.gtk_window() {
+                use gtk::prelude::GtkWindowExt;
+                window.set_type_hint(gtk::gdk::WindowTypeHint::Utility);
+            }
             // A remembered (or first-launch) position may leave the window partly off-screen.
             keep_on_screen(&widget.as_ref().window());
+            widget.show()?;
 
             let handle = app.handle();
+            #[cfg(unix)]
+            if let Err(e) = quit_on_signals(handle.clone()) {
+                eprintln!("brainhub-desktop: SIGTERM/SIGINT won't quit cleanly: {e}");
+            }
             let open = MenuItem::with_id(handle, "open", "Open BrainHub", true, None::<&str>)?;
             let toggle = MenuItem::with_id(handle, "toggle", "Show/Hide widget", true, None::<&str>)?;
             let autostart_on = handle.autolaunch().is_enabled().unwrap_or(false);

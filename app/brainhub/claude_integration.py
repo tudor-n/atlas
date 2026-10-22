@@ -36,10 +36,13 @@ def hook_script() -> Path:
 
 
 def console_python(executable: Path) -> Path:
-    """pythonw has no usable stdout (the status line needs it): prefer the sibling python.exe."""
+    """pythonw has no usable stdout (the status line needs it): prefer the sibling python.exe
+    (`pythonw` → `python` where a POSIX build has one). A POSIX venv's bin/python is returned as it
+    is, never resolved: it is a symlink to the base interpreter, which would run without the venv."""
     executable = Path(executable)
-    if executable.name.lower() == "pythonw.exe":
-        sibling = executable.with_name("python.exe")
+    name = executable.name.lower()
+    if name in ("pythonw.exe", "pythonw"):
+        sibling = executable.with_name("python.exe" if name.endswith(".exe") else "python")
         if sibling.exists():
             return sibling
     return executable
