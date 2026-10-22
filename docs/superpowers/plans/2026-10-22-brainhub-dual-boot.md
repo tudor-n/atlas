@@ -548,7 +548,7 @@
 
 Record the winner (Ruling D2), with the exact key encoding observed (the `<key>` for `/home/tudor/dev/X` and for `D:\X`).
 
-**Interfaces (written for option 1; for 2/3 only the "link" step changes):**
+**Interfaces (written for option 1; for 2/3 only the "link" step changes). Ruling D2 picked option 2 on Linux: step 2 "Link" becomes "point": write `autoMemoryDirectory` into `~/.claude/settings.local.json` (home) and each paired project's `.claude/settings.local.json` (merge, never other keys); the merge and backup of a real local memory folder stay the same, and the local folder is left in place (not replaced by a link) after its notes are merged:**
 - Shared store: `$BRAINHUB_SHARED_DIR`, else `/mnt/data/ClaudeShared` (Linux) or `D:\ClaudeShared` (Windows). Layout as design §7.2.
 - `python -m brainhub claude-sync [--shared <dir>] [--claude-dir <dir>] [--dry-run]`: stdlib only, no hub dependency. It does nothing if the shared dir isn't available (exits 0 with a one-line log). Steps:
   1. **Pairs:** home key ↔ `memory/home`; project keys ↔ `memory/projects/<name>`. The name is the folder's last component; Windows keys that differ only by drive-letter case are one project; `pairs.json` lists the exceptions.
