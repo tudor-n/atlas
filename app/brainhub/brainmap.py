@@ -77,8 +77,9 @@ def save_map(brain: Path, m: BrainMap) -> None:
         raise ValueError(errors)
     brain = Path(brain)
     brain.mkdir(parents=True, exist_ok=True)
-    (brain / "map.json").write_text(
-        json.dumps(_to_dict(m), indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    # LF always: both OSes write this file, and it must not flip between CRLF and LF in git.
+    with open(brain / "map.json", "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(_to_dict(m), indent=2, sort_keys=True, ensure_ascii=False))
 
 
 def ensure_folders(brain: Path, m: BrainMap) -> None:

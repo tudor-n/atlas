@@ -21,6 +21,9 @@ def store(paths):
 
 @pytest.fixture(autouse=True)
 def _isolate_claude_dirs(tmp_path, monkeypatch):
-    """Keep tests away from the owner's real Claude config and local app data."""
+    """Keep tests away from the owner's real Claude config, local app data and the per-OS
+    state and config folders."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setenv("BRAINHUB_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("BRAINHUB_CONFIG_DIR", str(tmp_path / "config"))

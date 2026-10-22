@@ -42,6 +42,7 @@ def port_free(host: str, port: int) -> bool:
 
 def run_integration(argv: list[str]) -> None:
     from . import claude_integration as ci
+    from . import osdirs
     ap = argparse.ArgumentParser(prog="brainhub integration")
     ap.add_argument("action", choices=["install", "uninstall", "status"])
     ap.add_argument("--root", required=True, type=Path)
@@ -50,12 +51,13 @@ def run_integration(argv: list[str]) -> None:
     paths = Paths(args.root)
     target = args.settings or ci.default_settings_path()
     port = load_settings(paths)["port"]
+    state = osdirs.state_dir()
     try:
         if args.action == "install":
             ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                       port=port, data_dir=paths.data)
+                       port=port, state_dir=state, data_dir=paths.data)
         elif args.action == "uninstall":
-            ci.uninstall(target, data_dir=paths.data)
+            ci.uninstall(target, state_dir=state, data_dir=paths.data)
         print(json.dumps(ci.status(target, port=port), indent=2))
     except ci.IntegrationError as e:
         print(f"error: {e}", file=sys.stderr)

@@ -76,9 +76,16 @@ def build_args(*, model: str, system_prompt_file: Path, allowed_tools: list[str]
     return args
 
 
+def _local_bin(name: str) -> str | None:
+    """The native installer puts claude in ~/.local/bin, which a hub started at login may not
+    have on PATH (P6)."""
+    exe = Path.home() / ".local" / "bin" / (name + (".exe" if sys.platform == "win32" else ""))
+    return str(exe) if exe.is_file() else None
+
+
 class ClaudeRunner:
     def __init__(self, claude_path: str):
-        self.claude_path = shutil.which(claude_path)
+        self.claude_path = shutil.which(claude_path) or _local_bin(claude_path)
 
     async def _spawn(self, args: list[str], prompt: str, cwd: Path) -> asyncio.subprocess.Process:
         if not self.claude_path:

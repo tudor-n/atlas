@@ -29,6 +29,12 @@ def test_save_load_roundtrip_and_folders(tmp_path):
     assert load_map(tmp_path) == m
     assert (tmp_path/"projects"/"robot-arm").is_dir() and (tmp_path/"_items").is_dir()
 
+def test_map_json_is_lf(tmp_path):
+    # map.json is shared by both OSes: always LF, so it never flips between CRLF and LF in git.
+    save_map(tmp_path, add_node(default_map(), "project", "Robot Arm", None))
+    raw = (tmp_path / "map.json").read_bytes()
+    assert b"\n" in raw and b"\r\n" not in raw
+
 def test_add_node_duplicate_raises():
     m = add_node(default_map(), "course", "Fizica", None)
     with pytest.raises(ValueError): add_node(m, "course", "Fizica", None)

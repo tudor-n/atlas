@@ -8,7 +8,7 @@ const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const HINTS = {
   port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
-  claude_path: 'Command or full path of the claude CLI. Takes effect after BrainHub restarts.',
+  claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after BrainHub restarts.',
   quiet_hours: 'Stored now; used when reminders arrive.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',

@@ -8,12 +8,16 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from . import osdirs
+
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd")
 # Async hooks never make the owner wait on a downed hub. Stop/SessionEnd stay synchronous so
 # they are not cancelled at teardown.
 ASYNC_EVENTS = ("UserPromptSubmit", "Notification", "PostToolUse")
 MARK = "hook_client.py"
 OUR_SUFFIX = "brainhub/hook_client.py"  # our own package path, not any file named hook_client.py
+# Both files describe one OS's Claude settings, so they live in that OS's state folder
+# (osdirs.state_dir()), never in the shared data/ folder (dual-boot design §6.2).
 STATE_FILE = "claude_integration.json"
 PASSTHROUGH_FILE = "statusline_passthrough.txt"
 
@@ -162,18 +166,45 @@ def _strip_ours(obj: dict) -> None:
         del obj["hooks"]
 
 
-def _load_state(data_dir: Path) -> dict | None:
+def _load_state(state_dir: Path) -> dict | None:
     try:
-        return json.loads((data_dir / STATE_FILE).read_text("utf-8"))
+        return json.loads((state_dir / STATE_FILE).read_text("utf-8"))
     except (OSError, ValueError):
         return None
 
 
-def install(settings_path: Path, *, python: str, script: str, port: int, data_dir: Path,
-            now: Callable[[], datetime] = datetime.now) -> dict:
-    settings_path = Path(settings_path)
+def adopt_legacy(data_dir: Path, state_dir: Path, os_name: str) -> list[str]:
+    """Move the files an older hub kept in the shared data/ folder into this OS's state folder,
+    unless the state folder already has either one. Windows only: those files always described
+    the Windows install, so Linux never reads or touches them. Returns the names moved."""
+    if os_name != "windows":
+        return []
+    data_dir, state_dir = Path(data_dir), Path(state_dir)
+    if any((state_dir / name).exists() for name in (STATE_FILE, PASSTHROUGH_FILE)):
+        return []
+    moved = []
+    for name in (STATE_FILE, PASSTHROUGH_FILE):
+        src = data_dir / name
+        if not src.is_file():
+            continue
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(src, state_dir / name)  # D: to C: is a copy and delete, not a rename
+        except OSError as e:
+            raise IntegrationError(f"cannot move {src} into {state_dir}: {e}") from e
+        moved.append(name)
+    return moved
+
+
+def install(settings_path: Path, *, python: str, script: str, port: int, state_dir: Path,
+            data_dir: Path | None = None, now: Callable[[], datetime] = datetime.now) -> dict:
+    """`state_dir` is this OS's state folder. `data_dir`, when given, is the shared data/ folder,
+    only for adopting an older hub's files (adopt_legacy)."""
+    settings_path, state_dir = Path(settings_path), Path(state_dir)
     obj = _read(settings_path)
     _validate(obj, settings_path)
+    if data_dir is not None:
+        adopt_legacy(data_dir, state_dir, osdirs.os_name())
     _strip_ours(obj)
     hooks = obj.setdefault("hooks", {})
     for ev in EVENTS:
@@ -181,33 +212,35 @@ def install(settings_path: Path, *, python: str, script: str, port: int, data_di
             {"hooks": [hook_entry(python, script, port, is_async=ev in ASYNC_EVENTS)]})
 
     existing = obj.get("statusLine")
-    state = _load_state(data_dir)
+    state = _load_state(state_dir)
     if existing is not None and not _line_is_ours(existing):
         previous = existing
     else:
         previous = state.get("previous_statusline") if state else None
     passthrough = None
-    data_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
     if isinstance(previous, dict) and previous.get("command"):
-        passthrough = data_dir / PASSTHROUGH_FILE
+        passthrough = state_dir / PASSTHROUGH_FILE
         _atomic_write(passthrough, str(previous["command"]))
     obj["statusLine"] = {"type": "command", "command": statusline_command(python, script, port, passthrough)}
     installed_at = (state or {}).get("installed_at") if existing is not None and _line_is_ours(existing) else None
-    _atomic_write(data_dir / STATE_FILE, json.dumps(
+    _atomic_write(state_dir / STATE_FILE, json.dumps(
         {"previous_statusline": previous, "installed_at": installed_at or now().replace(microsecond=0).isoformat()}, indent=2))
     _write_settings(settings_path, obj, now)
     return status(settings_path, port=port)
 
 
-def uninstall(settings_path: Path, *, data_dir: Path,
+def uninstall(settings_path: Path, *, state_dir: Path, data_dir: Path | None = None,
               now: Callable[[], datetime] = datetime.now) -> dict:
-    settings_path = Path(settings_path)
+    settings_path, state_dir = Path(settings_path), Path(state_dir)
     obj = _read(settings_path)
     _validate(obj, settings_path)
+    if data_dir is not None:
+        adopt_legacy(data_dir, state_dir, osdirs.os_name())
     before = json.dumps(obj, sort_keys=True)
     _strip_ours(obj)
     if _line_is_ours(obj.get("statusLine")):
-        state = _load_state(data_dir)
+        state = _load_state(state_dir)
         previous = state.get("previous_statusline") if state else None
         if previous is not None:
             obj["statusLine"] = previous
@@ -216,7 +249,7 @@ def uninstall(settings_path: Path, *, data_dir: Path,
     if json.dumps(obj, sort_keys=True) != before:
         _write_settings(settings_path, obj, now)
     for name in (STATE_FILE, PASSTHROUGH_FILE):
-        (data_dir / name).unlink(missing_ok=True)
+        (state_dir / name).unlink(missing_ok=True)
     return status(settings_path, port=0)
 
 

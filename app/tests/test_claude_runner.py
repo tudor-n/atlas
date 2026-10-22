@@ -32,6 +32,18 @@ async def test_missing_cli_raises(tmp_path):
                          allowed_tools=[], json_schema={}, max_turns=1, timeout_s=5)
 
 
+def test_claude_found_in_local_bin_fallback(tmp_path, monkeypatch):
+    # The native installer puts claude in ~/.local/bin, which a hub started at login may not
+    # have on PATH.
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert ClaudeRunner("claude").claude_path is None
+    exe = tmp_path / ".local" / "bin" / ("claude.exe" if sys.platform == "win32" else "claude")
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert ClaudeRunner("claude").claude_path == str(exe)
+
+
 # Live-process tests against a stand-in "claude" (a Python script), no real CLI needed.
 import sys
 

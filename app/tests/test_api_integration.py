@@ -1,5 +1,9 @@
+import json
+
 import pytest
 
+from brainhub import claude_integration as ci
+from brainhub import osdirs
 from brainhub.server import create_app
 from tests.test_server import make_runner
 
@@ -19,6 +23,30 @@ async def test_integration_roundtrip(client, tmp_path):
     assert (await (await client.get("/api/integration")).json())["hooks_installed"] is True
     r = await client.post("/api/integration/uninstall", json={})
     assert (await r.json())["hooks_installed"] is False
+
+
+async def test_integration_state_goes_to_the_state_folder(client, paths, tmp_path):
+    f = tmp_path / "s" / "settings.json"
+    f.parent.mkdir()
+    f.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo mine"}}), "utf-8")
+    assert (await client.post("/api/integration/install", json={})).status == 200
+    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    assert (state / ci.STATE_FILE).exists() and (state / ci.PASSTHROUGH_FILE).read_text("utf-8") == "echo mine"
+    assert not any((paths.data / name).exists() for name in (ci.STATE_FILE, ci.PASSTHROUGH_FILE))
+    assert (await client.post("/api/integration/uninstall", json={})).status == 200
+    assert json.loads(f.read_text("utf-8"))["statusLine"] == {"type": "command", "command": "echo mine"}
+
+
+@pytest.mark.parametrize("os_name", ["windows", "linux"])
+async def test_integration_view_adopts_legacy_on_windows_only(client, paths, tmp_path, monkeypatch, os_name):
+    monkeypatch.setattr(osdirs, "os_name", lambda: os_name)
+    (paths.data / ci.STATE_FILE).write_text('{"previous_statusline": null, "installed_at": "2026-10-01T10:00:00"}')
+    (paths.data / ci.PASSTHROUGH_FILE).write_text("echo old")
+    assert (await client.get("/api/integration")).status == 200
+    state = tmp_path / "state"
+    moved = os_name == "windows"
+    assert (state / ci.PASSTHROUGH_FILE).exists() is moved and (state / ci.STATE_FILE).exists() is moved
+    assert (paths.data / ci.PASSTHROUGH_FILE).exists() is not moved
 
 
 async def test_integration_invalid_json_is_400(client, tmp_path):

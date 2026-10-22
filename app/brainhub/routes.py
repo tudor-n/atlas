@@ -15,6 +15,7 @@ from aiohttp import web
 
 from .brainmap import BrainMap, hierarchy, load_map, save_map, validate_map
 from . import claude_integration as ci
+from . import osdirs
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -124,7 +125,7 @@ async def state(request: web.Request) -> web.Response:
         "setup_done": setup_done(app), "settings": await t(load_settings, app["paths"]),
         "backup": app["backup"].status(), "log_error": app["log_error"],
         "startup_error": list(app["startup_errors"]) or None,
-        "brain_path": str(app["paths"].brain)})
+        "brain_path": str(app["paths"].brain), "os": osdirs.os_name()})
 
 
 async def setup(request: web.Request) -> web.Response:
@@ -622,6 +623,7 @@ async def delete_agent(request: web.Request) -> web.Response:
 
 
 def _integration_view(app: web.Application) -> dict:
+    ci.adopt_legacy(app["paths"].data, osdirs.state_dir(), osdirs.os_name())
     view = ci.status(app["claude_settings_path"], port=app["port"])
     return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
 
@@ -634,12 +636,12 @@ async def get_integration(request: web.Request) -> web.Response:
 
 
 def _integration_change(app: web.Application, install: bool) -> dict:
-    paths, target = app["paths"], app["claude_settings_path"]
+    paths, target, state = app["paths"], app["claude_settings_path"], osdirs.state_dir()
     if install:
         ci.install(target, python=str(ci.console_python(Path(sys.executable))), script=str(ci.hook_script()),
-                   port=app["port"], data_dir=paths.data)
+                   port=app["port"], state_dir=state, data_dir=paths.data)
     else:
-        ci.uninstall(target, data_dir=paths.data)
+        ci.uninstall(target, state_dir=state, data_dir=paths.data)
     return _integration_view(app)
 
 
