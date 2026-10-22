@@ -42,5 +42,8 @@ Review found that the boot time rounded to the minute can differ between two pro
 - **Manual check** (Kubuntu, temp roots, temp state folder, `claude_path` pointed at a missing command): a missing root showed the banner, held a capture (200), answered Today with 503 and a hook with 204, and was never created. Once a brain appeared there the hub exited 75 after 15 s; the restart put the held capture in its own day's file and queued it. A read-only root (`chmod -R a-w`) served Today and the journal, refused confirm (503), held a capture, and left `hub.db` unchanged with no `-wal`/`-shm`; after `chmod -R u+w` it exited 75 after 15 s and the restart flushed the capture.
 
 ## Residuals
-- The desktop shell still treats exit 75 like any other exit (restart with backoff) until Task 8 wires P8.
 - `app/README.md` still says the integration files live in `data/` (Task 12 fixes the docs).
+- `map.json` load/change/save isn't serialised across `PUT /api/map`, the Reviewer's `add_node` and the Agents link: two edits at the same moment could lose one (the first two already raced before the dual boot).
+- `//server/share` counts as a Linux path (P7 to the letter), so the map editor on Windows calls it a Linux folder; UNC paths in the `\\server\share` form are fine.
+- Two hubs started at the same instant on one root can both take the lock; the port check and the supervisor make this unlikely in practice.
+- `app["root_status"]` stays "fresh" after setup on the started app (aiohttp freezes it); "fresh" and "ok" show no banner alike, so nothing reads the difference.
