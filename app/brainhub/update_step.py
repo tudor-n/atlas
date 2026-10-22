@@ -13,6 +13,8 @@ is pending) to ``<state>/update.json``, and always exits 0, except on a usage er
 subprocess gets at most the time left, and a fast-forward or a venv sync that may not finish in
 it is put off to the next start. Only one step runs per state folder at a time
 (``runtime/update.lock``); a second one says "update already running" and touches nothing.
+On POSIX, SIGTERM (the shell's own time limit) kills the running git, gh or uv with its process
+tree (each runs in a session of its own, out of the signal's reach) and ends the step at once.
 
 1. **Pull:** fast-forward the live copy to ``origin/master``, only when the live copy is a clean
    checkout of master, the fetch worked, ``origin/master`` is a fast-forward of HEAD, and CI
@@ -141,6 +143,7 @@ class Runner:
         self.timeout = timeout  # per network call
         self.deadline = time.monotonic() + budget
         self.stderr = None
+        self.proc = None  # the call running now, for the SIGTERM handler (on_sigterm)
 
     def left(self):
         return self.deadline - time.monotonic()
@@ -164,6 +167,7 @@ class Runner:
                                     creationflags=_NO_WINDOW, start_new_session=not _WIN)
         except OSError as e:
             raise Pending(f"{cmd[0]} could not start ({type(e).__name__})") from None
+        self.proc = proc
         try:
             out, err = proc.communicate(timeout=limit)
         except subprocess.TimeoutExpired:
@@ -173,6 +177,8 @@ class Runner:
             except Exception:
                 pass
             raise Pending(f"{what} timed out") from None
+        finally:
+            self.proc = None
         if proc.returncode != 0 and err.strip():
             self.stderr = stderr_tail(err)
         return proc.returncode, out
@@ -594,11 +600,34 @@ def _result(state, pulled, pending):
             "commit": cur["commit"] if cur else None, "pending": pending}
 
 
-def run_step(live_path, state, *, timeout=TIMEOUT_S, budget=BUDGET_S, pull_first=True):
+def on_sigterm(runner):
+    """POSIX: on SIGTERM, kill `runner`'s running call with its process tree and exit at once.
+
+    The shell's time limit sends SIGTERM to the step's process group, but each git, gh or uv runs
+    in a session of its own (see `Runner.run`), which the signal doesn't reach: without this they
+    would outlive the step. The handler does nothing else: no lock to release (the OS drops it),
+    no update.json (a half-built slot never counts as current)."""
+    if _WIN:
+        return
+    import signal
+
+    def handler(signum, frame):
+        proc = runner.proc
+        if proc is not None:
+            _kill_tree(proc)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, handler)
+
+
+def run_step(live_path, state, *, timeout=TIMEOUT_S, budget=BUDGET_S, pull_first=True, on_runner=None):
     """Pull (unless `pull_first` is False, as for `runtime init`), refresh, copy the hook client,
-    record. Never raises. A busy lock touches nothing."""
+    record. Never raises. A busy lock touches nothing. `on_runner` gets the step's Runner before
+    anything runs (`main` installs the SIGTERM handler with it)."""
     state = os.path.abspath(state)
     runner = Runner(child_env(), timeout, budget)
+    if on_runner is not None:
+        on_runner(runner)
     live = Live(live_path, runner)
     try:
         lock = take_lock(state)
@@ -660,7 +689,8 @@ def main(argv):
     if not args.live or not args.state or not args.timeout > 0 or not args.budget > 0:
         ap.error("--live and --state must be folders, --timeout and --budget positive")
     try:
-        result = run_step(args.live, args.state, timeout=args.timeout, budget=args.budget)
+        result = run_step(args.live, args.state, timeout=args.timeout, budget=args.budget,
+                          on_runner=on_sigterm)
     except BaseException:  # never stop the shell from starting the hub
         result = {"pulled": False, "slot": None, "commit": None, "pending": "update step failed"}
     print(json.dumps(result), flush=True)

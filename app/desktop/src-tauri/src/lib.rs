@@ -1,6 +1,7 @@
 //! BrainHub desktop shell (design §8): the `widget` window, the tray, autostart and the hub
 //! supervisor. The hub serves the widget page; this shell only frames it.
 
+pub mod claude_watch;
 pub mod config;
 pub mod supervisor;
 
@@ -232,8 +233,8 @@ fn keep_on_screen<R: Runtime>(window: &Window<R>) {
     }
 }
 
-/// The tray's tooltip, and its menu's first line (disabled) while there is a notice: Linux's tray
-/// (AppIndicator) shows no tooltip, so the menu says it there.
+/// The tray's tooltip, and its menu's first line (disabled) while there is a notice, on both OSes:
+/// Linux's tray (AppIndicator) shows no tooltip, so the menu says it there too.
 struct TrayNotice {
     menu: Menu<Wry>,
     line: MenuItem<Wry>,
@@ -379,6 +380,16 @@ pub fn run() {
             }
             tray.build(app)?;
 
+            // Here, not before the builder: only the one instance that runs gets this far (the
+            // single-instance plugin ends a second launch before setup).
+            let claude_watch = {
+                let s = sup.lock();
+                s.record_shell();
+                s.claude_watch()
+            };
+            if let Some(w) = claude_watch {
+                w.spawn();
+            }
             watch(handle.clone(), sup.clone(), port, restart, TrayNotice { menu, line: notice_line, shown: None });
             Ok(())
         })

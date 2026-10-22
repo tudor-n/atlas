@@ -1,6 +1,7 @@
 //! `desktop.json`, written by `python -m brainhub desktop-config`, and the per-OS folders (P10):
-//! the config folder holds `desktop.json`, the state folder `hub.log`. Both follow the rules of
-//! `brainhub/osdirs.py`, env overrides included.
+//! the config folder holds `desktop.json`, the state folder `hub.log` (in runtime mode,
+//! `desktop.json`'s state folder does). Both follow the rules of `brainhub/osdirs.py`, env
+//! overrides included. Also Claude Code's settings file, which the shell's claude-sync watch polls.
 //!
 //! A missing or invalid file gives the defaults: port 8090 and nothing to start, so the shell
 //! only connects to an already running hub.
@@ -118,6 +119,21 @@ fn default_path_in(env: Env) -> Option<PathBuf> {
 
 fn state_dir_in(env: Env) -> Option<PathBuf> {
     os_dir(env, "BRAINHUB_STATE_DIR", "XDG_DATA_HOME", ".local/share")
+}
+
+fn claude_settings_in(env: Env) -> Option<PathBuf> {
+    let dir = match env_path(env, "CLAUDE_CONFIG_DIR") {
+        Some(dir) => dir,
+        None => home(env)?.join(".claude"),
+    };
+    Some(dir.join("settings.json"))
+}
+
+/// Claude Code's own settings file, which the shell's claude-sync watch polls (ruling D12):
+/// `$CLAUDE_CONFIG_DIR/settings.json` (as Claude Code and `claude_sync.py` read it), else
+/// `~/.claude/settings.json` (`%USERPROFILE%\.claude\settings.json` on Windows).
+pub fn claude_settings_path() -> Option<PathBuf> {
+    claude_settings_in(&real_env)
 }
 
 /// `desktop.json` in the config folder: `$BRAINHUB_CONFIG_DIR`, else
@@ -260,6 +276,19 @@ mod tests {
         // The config override doesn't move the state folder.
         let vars = [("BRAINHUB_CONFIG_DIR", "/tmp/bh-cfg"), ("HOME", "/home/u"), ("USERPROFILE", "/home/u")];
         assert_ne!(state_dir_in(&env(&vars)), Some(PathBuf::from("/tmp/bh-cfg")));
+    }
+
+    #[test]
+    fn claude_settings_path_rules() {
+        let vars = [("CLAUDE_CONFIG_DIR", "/tmp/bh-claude"), ("HOME", "/home/u"), ("USERPROFILE", "/home/u")];
+        assert_eq!(claude_settings_in(&env(&vars)), Some(Path::new("/tmp/bh-claude").join("settings.json")));
+        // Empty counts as unset: the home folder's .claude (HOME on unix, USERPROFILE on Windows).
+        let vars = [("CLAUDE_CONFIG_DIR", ""), ("HOME", "/home/u"), ("USERPROFILE", "/home/u")];
+        assert_eq!(claude_settings_in(&env(&vars)), Some(Path::new("/home/u").join(".claude").join("settings.json")));
+        // The BrainHub overrides don't move it.
+        let vars = [("BRAINHUB_CONFIG_DIR", "/tmp/c"), ("BRAINHUB_STATE_DIR", "/tmp/s"), ("HOME", "/home/u"),
+                    ("USERPROFILE", "/home/u")];
+        assert_eq!(claude_settings_in(&env(&vars)), Some(Path::new("/home/u").join(".claude").join("settings.json")));
     }
 
     #[cfg(unix)]

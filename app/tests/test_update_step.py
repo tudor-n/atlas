@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -572,6 +573,38 @@ def test_timeout_kills_the_whole_process_tree(tmp_path):
                 _kill(pid)
 
 
+@pytest.mark.skipif(WIN, reason="POSIX: the shell's time limit is SIGTERM to the step's process group")
+def test_sigterm_kills_the_running_call_tree(w, tmp_path):
+    """The shell's time limit sends SIGTERM to the step's process group (supervisor.rs
+    `kill_tree`). uv runs in a session of its own, which that doesn't reach, so the step's handler
+    kills uv's tree, then exits at once."""
+    pids = tmp_path / "pids"
+    fake_cli(w.bin, HANG_TREE.format(pids=str(pids)), name="uv")  # a slow venv sync
+    step = subprocess.Popen([sys.executable, "-I", "-S", str(STEP), "--live", str(w.live), "--state", str(w.state)],
+                            env=w.env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True)
+    try:
+        deadline = time.monotonic() + 30
+        while len(pids.read_text().split() if pids.exists() else []) != 2:
+            assert step.poll() is None, step.communicate()
+            assert time.monotonic() < deadline, "uv never started"
+            time.sleep(0.05)
+        uv, grandchild = map(int, pids.read_text().split())
+        assert os.getpgid(uv) != step.pid, "uv runs outside the step's process group"
+        os.killpg(step.pid, signal.SIGTERM)
+        out, err = step.communicate(timeout=10)
+        assert (step.returncode, out, err) == (0, b"", b"")
+        assert _gone(uv) and _gone(grandchild), "the step's grandchild outlived it"
+        assert not (w.state / "runtime" / "current.json").exists(), "the half-built slot never counts"
+    finally:
+        if step.poll() is None:
+            os.killpg(step.pid, signal.SIGKILL)
+            step.communicate()
+        if pids.exists():
+            for pid in map(int, pids.read_text().split()):
+                _kill(pid)
+
+
 def test_out_of_budget_starts_nothing(tmp_path):
     runner = us.Runner(dict(os.environ, PATH=str(tmp_path)), timeout=20, budget=0.001)
     time.sleep(0.01)
@@ -900,6 +933,19 @@ def test_shell_source_algorithm(tmp_path):
         data = SHELL_TREE[rel]
         h.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode("ascii") + b"\0" + data)
     assert us.shell_source(str(tmp_path)) == h.hexdigest() == SHELL_VECTOR
+
+
+SHELL_VECTOR_NOT_UTF8 = "a173d86857aa60db6a95b186b37800a8f0413f89f70053eb317a6bdcec3e4270"  # shell_source.rs too
+
+
+@pytest.mark.skipif(sys.platform in ("win32", "darwin"), reason="needs a file name that isn't UTF-8 (Linux)")
+def test_shell_source_name_not_utf8(tmp_path):
+    """A name that isn't UTF-8 counts with its raw bytes (what os.fsencode gives); the shell's
+    shell_source.rs hashes the same bytes on unix."""
+    base = _shell_tree(tmp_path, SHELL_TREE)
+    with open(os.path.join(os.fsencode(base), b"src", b"caf\xe9.rs"), "wb") as f:
+        f.write(b"// not UTF-8\n")
+    assert us.shell_source(str(tmp_path)) == SHELL_VECTOR_NOT_UTF8
 
 
 @pytest.mark.parametrize("rel", ["build.rs", "tauri.conf.json", "capabilities/widget.json",

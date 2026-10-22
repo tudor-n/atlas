@@ -2,8 +2,11 @@
 //!
 //! In runtime mode (plan decision P2) every start first runs, outside the supervisor's lock (see
 //! `Prep`): `claude-sync` once per shell start, then the update step, both with the current
-//! slot's python; then the hub starts from the slot `current.json` names.
+//! slot's python; then the hub starts from the slot `current.json` names. The hub, the step and
+//! claude-sync all get `BRAINHUB_STATE_DIR` = `desktop.json`'s state folder, which also holds
+//! hub.log, so the logs and the hub's view of the runtime never split from the slots (ruling D12).
 
+use crate::claude_watch::{ClaudeSync, ClaudeWatch};
 use crate::config::{DesktopConfig, Mode};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -11,6 +14,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// `CREATE_NO_WINDOW`: the child gets no console window.
@@ -25,8 +29,12 @@ pub const EXIT_RESTART: i32 = 75;
 pub const STOP_GRACE: Duration = Duration::from_secs(10);
 /// The update step's limit. It keeps to its own 75 s budget (ruling D9); this is the backstop.
 pub const UPDATE_STEP_LIMIT: Duration = Duration::from_secs(90);
-/// `claude-sync`'s limit, once per shell start.
+/// `claude-sync`'s limit, at the first start and in the shell's watch (`claude_watch`).
 pub const CLAUDE_SYNC_LIMIT: Duration = Duration::from_secs(60);
+/// Unix: how long a timed-out step or claude-sync gets to exit after SIGTERM to its process group
+/// (the update step first kills its running git or uv, which run in sessions of their own) before
+/// the group gets SIGKILL.
+pub const TERM_GRACE: Duration = Duration::from_secs(3);
 /// How long a killed process tree gets to be reaped before the supervisor moves on.
 const KILL_WAIT: Duration = Duration::from_secs(5);
 /// The digest of this shell's own source, baked in by build.rs (empty when it couldn't be
@@ -112,14 +120,37 @@ fn append_log(log: &Path, msg: &str) {
     }
 }
 
-/// Kill `child` and everything in its tree: its process group on unix (it was started as a group
-/// leader), `taskkill /T /F` on Windows. Then reap it, waiting at most `KILL_WAIT`.
-fn kill_tree(child: &mut Child) {
+/// Whether our child `pid` has exited, without reaping it (unix): until it is reaped its pid, and
+/// so its process group's id, can't be given to another process.
+#[cfg(unix)]
+fn exited_unreaped(pid: libc::pid_t) -> bool {
+    let Ok(id) = libc::id_t::try_from(pid) else { return true };
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+    // With WNOHANG, si_pid stays 0 while the child still runs.
+    unsafe { libc::waitid(libc::P_PID, id, &mut info, flags) != 0 || info.si_pid() != 0 }
+}
+
+/// Kill `child` and everything in its tree, then reap it, waiting at most `KILL_WAIT`.
+/// - Unix (it was started as a group leader): SIGTERM to its process group, up to `grace` for it
+///   to exit, then SIGKILL to the group. The update step needs the SIGTERM: its git and uv run in
+///   sessions of their own, out of the group's reach, and its handler kills the running one's
+///   tree before it exits (`on_sigterm` in update_step.py).
+/// - Windows: `taskkill /T /F`, which follows the tree itself.
+fn kill_tree(child: &mut Child, grace: Duration) {
     #[cfg(unix)]
     if let Ok(pid) = libc::pid_t::try_from(child.id()) {
-        // Not reaped yet, so no other group can have this id.
+        // Never reaped before the SIGKILL (exited_unreaped only peeks), so no other group can
+        // have this id.
+        unsafe { libc::killpg(pid, libc::SIGTERM) };
+        let deadline = Instant::now() + grace;
+        while !exited_unreaped(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         unsafe { libc::killpg(pid, libc::SIGKILL) };
     }
+    #[cfg(not(unix))]
+    let _ = grace;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -141,9 +172,9 @@ fn kill_tree(child: &mut Child) {
 }
 
 /// Run `cmd` with stdin closed and stdout and stderr appended to `log`, for at most `limit`. On
-/// timeout its whole process tree is killed. It never opens a window (Windows: CREATE_NO_WINDOW,
-/// Ruling 13). Returns how it ended, for the log.
-fn run_bounded(mut cmd: Command, log: &Path, limit: Duration) -> String {
+/// timeout its whole process tree is killed (`kill_tree`, with `grace`). It never opens a window
+/// (Windows: CREATE_NO_WINDOW, Ruling 13). Returns how it ended, for the log.
+fn run_bounded(mut cmd: Command, log: &Path, limit: Duration, grace: Duration) -> String {
     let out = match OpenOptions::new().create(true).append(true).open(log) {
         Ok(f) => f,
         Err(e) => return format!("not run: cannot open {}: {e}", log.display()),
@@ -175,22 +206,43 @@ fn run_bounded(mut cmd: Command, log: &Path, limit: Duration) -> String {
             Ok(Some(status)) => return format!("{status} after {:.1} s", started.elapsed().as_secs_f32()),
             Ok(None) if started.elapsed() < limit => std::thread::sleep(Duration::from_millis(50)),
             Ok(None) => {
-                kill_tree(&mut child);
+                kill_tree(&mut child, grace);
                 return format!("timed out after {} s: killed with its process tree", limit.as_secs_f32());
             }
             Err(e) => {
-                kill_tree(&mut child);
+                kill_tree(&mut child, grace);
                 return format!("unknown status ({e}): killed with its process tree");
             }
         }
     }
 }
 
-/// The time limits of a runtime start's slow part (tests shorten them).
+/// The time limits of a runtime start's slow part and of the claude-sync watch (tests shorten them).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub update_step: Duration,
     pub claude_sync: Duration,
+    /// Unix: from SIGTERM to SIGKILL when one of them is killed at its limit.
+    pub term_grace: Duration,
+}
+
+/// Run `<slot python> -m brainhub claude-sync [--settings-only]` in the slot's `app/`, bounded, and
+/// log the command and how it ended (`why` says what asked for it). The exit code is only logged:
+/// a slot without the command, or a missing shared drive, just fails here.
+pub(crate) fn run_claude_sync(python: &Path, app: &Path, state: &Path, log: &Path, settings_only: bool, why: &str,
+                              limits: Limits) {
+    let mut sync = Command::new(python);
+    sync.args(["-m", "brainhub", "claude-sync"])
+        .args(settings_only.then_some("--settings-only"))
+        .current_dir(app)
+        .env("BRAINHUB_STATE_DIR", state)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8");
+    let flag = if settings_only { " --settings-only" } else { "" };
+    append_log(log, &format!("claude-sync ({why}): {} -m brainhub claude-sync{flag} (in {})", python.display(),
+                             app.display()));
+    let how = run_bounded(sync, log, limits.claude_sync, limits.term_grace);
+    append_log(log, &format!("claude-sync ({why}): {how}"));
 }
 
 /// The slow part of a runtime start: `claude-sync` (first start only) and the update step, with
@@ -206,22 +258,21 @@ pub struct Prep {
     log: PathBuf,
     claude_sync: bool,
     limits: Limits,
+    /// Shared with the claude-sync watch: one run at a time, and the watch's mtime and cadence.
+    sync: Arc<ClaudeSync>,
+    /// The Claude Code settings file the watch polls.
+    settings: Option<PathBuf>,
 }
 
 impl Prep {
     pub fn run(&self) {
         let log = |msg: &str| append_log(&self.log, msg);
         if self.claude_sync {
-            // Exit code ignored: a slot without the command (or a missing shared drive) just
-            // fails here and the hub starts anyway.
-            let mut sync = Command::new(&self.python);
-            sync.args(["-m", "brainhub", "claude-sync"])
-                .current_dir(&self.app)
-                .env("PYTHONUNBUFFERED", "1")
-                .env("PYTHONIOENCODING", "utf-8");
-            log(&format!("claude-sync: {} -m brainhub claude-sync (in {})", self.python.display(), self.app.display()));
-            let how = run_bounded(sync, &self.log, self.limits.claude_sync);
-            log(&format!("claude-sync: {how}"));
+            // After a watch run that is still going, if any. The hub starts whatever its outcome.
+            let mtime = || crate::claude_watch::mtime(self.settings.as_deref());
+            self.sync.run_now(Instant::now, mtime, || {
+                run_claude_sync(&self.python, &self.app, &self.state, &self.log, false, "at start", self.limits)
+            });
         }
         // Run as a file, isolated (-I -S), like the hook client: it imports nothing from brainhub.
         // Its one JSON line goes straight to hub.log.
@@ -233,10 +284,11 @@ impl Prep {
             .arg(&self.live)
             .arg("--state")
             .arg(&self.state)
-            .current_dir(&self.state);
+            .current_dir(&self.state)
+            .env("BRAINHUB_STATE_DIR", &self.state);
         log(&format!("update step: {} -I -S {} --live {} --state {}", self.python.display(), script.display(),
                      self.live.display(), self.state.display()));
-        let how = run_bounded(step, &self.log, self.limits.update_step);
+        let how = run_bounded(step, &self.log, self.limits.update_step, self.limits.term_grace);
         log(&format!("update step: {how}"));
     }
 }
@@ -262,8 +314,9 @@ pub fn hub_up(port: u16) -> bool {
 
 pub struct Supervisor {
     cfg: DesktopConfig,
-    /// The per-OS state folder. `hub.log` lives there, not under the root: a missing drive can
-    /// still be diagnosed, and the shell never creates anything on the root.
+    /// The per-OS state folder, `desktop.json`'s in runtime mode. `hub.log` lives there, not under
+    /// the root: a missing drive can still be diagnosed, and the shell never creates anything on
+    /// the root.
     state: PathBuf,
     child: Option<Child>,
     started_at: Option<Instant>,
@@ -280,10 +333,20 @@ pub struct Supervisor {
     no_slot: bool,
     /// Runtime mode: the live copy's shell source differs from this shell's (`update.json`).
     shell_update: bool,
+    /// claude-sync runs (the first start's and the watch's): one at a time.
+    sync: Arc<ClaudeSync>,
+    /// The Claude Code settings file the claude-sync watch polls (None: no home folder).
+    settings: Option<PathBuf>,
 }
 
 impl Supervisor {
+    /// `state` is the shell's own state folder (P10). In runtime mode `desktop.json`'s takes its
+    /// place, so hub.log sits beside the slots and the `update.json` the hub reads.
     pub fn new(cfg: DesktopConfig, state: PathBuf) -> Self {
+        let state = match cfg.mode() {
+            Mode::Runtime { state, .. } => state,
+            _ => state,
+        };
         let mut s = Supervisor {
             cfg,
             state,
@@ -294,18 +357,41 @@ impl Supervisor {
             stopped: false,
             last_up: false,
             stop_grace: STOP_GRACE,
-            limits: Limits { update_step: UPDATE_STEP_LIMIT, claude_sync: CLAUDE_SYNC_LIMIT },
+            limits: Limits { update_step: UPDATE_STEP_LIMIT, claude_sync: CLAUDE_SYNC_LIMIT, term_grace: TERM_GRACE },
             synced: false,
             no_slot: false,
             shell_update: false,
+            sync: Arc::new(ClaudeSync::new(Instant::now())),
+            settings: crate::config::claude_settings_path(),
         };
         if let Mode::Runtime { state, .. } = s.cfg.mode() {
-            if let Err(e) = write_shell_json(&state, SHELL_SOURCE) {
-                s.log(&format!("cannot write {}: {e}", state.join("shell.json").display()));
-            }
             s.shell_update = shell_update_in(&state, SHELL_SOURCE);
         }
         s
+    }
+
+    /// Runtime mode: record this shell's source digest in `<state>/shell.json`. The app's setup
+    /// calls it, after the single-instance check, so a second launch (perhaps of another build)
+    /// never overwrites the running shell's record.
+    pub fn record_shell(&self) {
+        if let Mode::Runtime { state, .. } = self.cfg.mode() {
+            if let Err(e) = write_shell_json(&state, SHELL_SOURCE) {
+                self.log(&format!("cannot write {}: {e}", state.join("shell.json").display()));
+            }
+        }
+    }
+
+    /// Runtime mode: the claude-sync watch (Claude Code's settings file every 5 s, a full sync
+    /// every 10 minutes), for its own thread. None in the other modes.
+    pub fn claude_watch(&self) -> Option<ClaudeWatch> {
+        let Mode::Runtime { state, .. } = self.cfg.mode() else { return None };
+        Some(ClaudeWatch {
+            sync: self.sync.clone(),
+            state,
+            log: self.log_path(),
+            settings: self.settings.clone(),
+            limits: self.limits,
+        })
     }
 
     /// Whether the port answered at the last `tick`.
@@ -377,7 +463,17 @@ impl Supervisor {
         };
         self.no_slot = false;
         let claude_sync = !std::mem::replace(&mut self.synced, true);
-        Some(Prep { python, app, live, state, log: self.log_path(), claude_sync, limits: self.limits })
+        Some(Prep {
+            python,
+            app,
+            live,
+            state,
+            log: self.log_path(),
+            claude_sync,
+            limits: self.limits,
+            sync: self.sync.clone(),
+            settings: self.settings.clone(),
+        })
     }
 
     /// After `prep` ran: start the hub from the slot the update step left current, unless the
@@ -531,6 +627,11 @@ impl Supervisor {
             .stdin(Stdio::null())
             .stdout(out)
             .stderr(err);
+        // Runtime mode: the hub reads update.json, current.json and shell.json (and keeps its held
+        // captures and integration state) in the state folder the slots are in.
+        if let Mode::Runtime { state, .. } = self.cfg.mode() {
+            cmd.env("BRAINHUB_STATE_DIR", state);
+        }
         crate::child_env(&mut cmd);
         // Its own process group: a Ctrl+C in the shell's terminal doesn't reach the hub as well, so
         // the supervisor's SIGTERM is the only stop signal it gets.
@@ -578,6 +679,7 @@ mod tests {
 
     #[test]
     fn hub_up_false_on_closed_port() {
+        let _serial = serial(); // a fork could hold the short-lived listener open (see `serial`)
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         assert!(!hub_up(port));
     }
@@ -802,6 +904,7 @@ mod tests {
 
     #[test]
     fn no_slot_means_connect_only() {
+        let _serial = serial(); // free_port's listener, then a tick's port check
         let dir = temp("bh-sup-noslot");
         let mut s = sup(runtime_cfg(free_port(), &dir), &dir);
         assert!(s.tick().is_none(), "nothing to prepare without a slot");
@@ -823,6 +926,7 @@ mod tests {
 
     #[test]
     fn restart_in_runtime_mode_leaves_the_start_to_the_watch_thread() {
+        let _serial = serial(); // free_port's listener, then a tick's port check
         let dir = temp("bh-sup-rt-restart");
         make_slot(&dir.join("state"), "a", "c0ffee");
         make_current(&dir.join("state"), "a", "c0ffee");
@@ -843,6 +947,9 @@ mod tests {
         let update = |src: &str| std::fs::write(state.join("update.json"), format!(r#"{{"shell_source": "{src}"}}"#)).unwrap();
         update(SHELL_SOURCE);
         let s = sup(runtime_cfg(free_port(), &dir), &dir);
+        // Only the app's setup writes it (after the single-instance check), never a bare `new`.
+        assert!(!state.join("shell.json").exists());
+        s.record_shell();
         let shell: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(state.join("shell.json")).unwrap()).unwrap();
         assert_eq!(shell["shell_source"], SHELL_SOURCE);
         assert_eq!(s.notice(), None, "same source: nothing to rebuild");
@@ -874,28 +981,36 @@ mod tests {
             cur = state.join("runtime").join("current.json").display(),
             upd = state.join("update.json").display()
         );
-        let record = |slot: &str| format!("echo \"{slot}|$(pwd)|$*\" >> \"{}\"", calls.display());
+        // Each call records its slot, working folder, BRAINHUB_STATE_DIR and arguments.
+        let record =
+            |slot: &str| format!("echo \"{slot}|$(pwd)|$BRAINHUB_STATE_DIR|$*\" >> \"{}\"", calls.display());
         script(&a.join("venv").join("bin"), "python", &format!("{}\n{step}", record("a")));
         script(&b.join("venv").join("bin"), "python", &record("b"));
 
         let port = free_port();
-        let mut s = sup(runtime_cfg(port, &dir), &dir);
+        // The shell's own state folder (its env or XDG default) differs from desktop.json's: the
+        // logs and every child follow desktop.json's.
+        let own = dir.join("shell-default");
+        let mut s = sup_in(runtime_cfg(port, &dir), &dir, &own);
         tick_now(&mut s);
         wait_exit(&mut s);
         let got = std::fs::read_to_string(&calls).unwrap();
         let (a_app, b_app, root, live) = (a.join("app"), b.join("app"), dir.join("root"), dir.join("live"));
+        let st = state.display();
         let expected = [
-            format!("a|{}|-m brainhub claude-sync", a_app.display()),
-            format!("a|{}|-I -S {} --live {} --state {}", state.display(),
-                    a_app.join("brainhub").join("update_step.py").display(), live.display(), state.display()),
+            format!("a|{}|{st}|-m brainhub claude-sync", a_app.display()),
+            format!("a|{st}|{st}|-I -S {} --live {} --state {st}",
+                    a_app.join("brainhub").join("update_step.py").display(), live.display()),
             // The hub runs from the slot the step left current, with no -I: its app folder (the
             // working folder) must stay importable.
-            format!("b|{}|-m brainhub --root {} --port {port}", b_app.display(), root.display()),
+            format!("b|{}|{st}|-m brainhub --root {} --port {port}", b_app.display(), root.display()),
         ];
         assert_eq!(got.lines().collect::<Vec<_>>(), expected);
         let log = std::fs::read_to_string(state.join("hub.log")).unwrap();
         assert!(log.contains("{\"pulled\": true, \"slot\": \"b\""), "the step's JSON line: {log}");
         assert!(log.contains("update step: exit status: 0"), "{log}");
+        assert!(log.contains("claude-sync (at start): exit status: 0"), "{log}");
+        assert!(!own.exists(), "nothing goes to the shell's own state folder");
         assert_eq!(s.notice(), Some(Notice::ShellUpdate));
 
         // The next start runs the update step again (now with slot b's python), but not claude-sync.
@@ -905,8 +1020,8 @@ mod tests {
         let got = std::fs::read_to_string(&calls).unwrap();
         let later: Vec<&str> = got.lines().skip(3).collect();
         assert_eq!(later.len(), 2, "{got}");
-        assert!(later[0].starts_with(&format!("b|{}|-I -S ", state.display())), "{got}");
-        assert!(later[1].starts_with(&format!("b|{}|-m brainhub --root", b_app.display())), "{got}");
+        assert!(later[0].starts_with(&format!("b|{st}|{st}|-I -S ")), "{got}");
+        assert!(later[1].starts_with(&format!("b|{}|{st}|-m brainhub --root", b_app.display())), "{got}");
         assert_eq!(got.matches("claude-sync").count(), 1, "once per shell start: {got}");
         assert!(!root.exists(), "the shell writes nothing under the root");
         let _ = std::fs::remove_dir_all(&dir);
@@ -932,7 +1047,9 @@ mod tests {
                    [format!("{}|-m brainhub --root {} --port {port}", app.display(), dir.join("root").display())]);
         let log = std::fs::read_to_string(dir.join("state").join("hub.log")).unwrap();
         assert!(!log.contains("update step") && !log.contains("claude-sync"), "{log}");
+        s.record_shell();
         assert!(!dir.join("state").join("shell.json").exists(), "shell.json is for runtime mode");
+        assert!(s.claude_watch().is_none(), "the claude-sync watch is for runtime mode");
         assert_eq!(s.notice(), None);
         // Restart hub still starts it at once.
         s.restart();
@@ -963,9 +1080,12 @@ mod tests {
         let (pid_file, calls) = (dir.join("sleep.pid"), dir.join("calls.txt"));
         let a = make_slot(&state, "a", "c0ffee");
         make_current(&state, "a", "c0ffee");
-        // As the update step it starts a child in its process group and hangs on it.
+        // As the real update step: it starts its child in a session of its own (out of reach of
+        // a signal to the step's process group), hangs on it, and on SIGTERM kills the child's
+        // group and exits (`on_sigterm` in update_step.py).
         let body = format!(
-            "echo \"$*\" >> \"{calls}\"\ncase \"$1\" in -I) sleep 30 &\necho $! > \"{pid}\"\nwait;; esac",
+            "echo \"$*\" >> \"{calls}\"\ncase \"$1\" in -I) trap 'kill -s KILL -- -$child; exit 0' TERM\n\
+             setsid sleep 30 &\nchild=$!\necho $child > \"{pid}\"\nwait;; esac",
             calls = calls.display(),
             pid = pid_file.display()
         );
@@ -975,7 +1095,7 @@ mod tests {
         s.limits.update_step = Duration::from_millis(500);
         let t = Instant::now();
         tick_now(&mut s);
-        assert!(t.elapsed() < Duration::from_secs(10), "the step was cut off at its limit");
+        assert!(t.elapsed() < Duration::from_secs(3), "the step was cut off at its limit and ended on SIGTERM");
         let pid: libc::pid_t = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while !pid_gone(pid) {
@@ -991,6 +1111,81 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_a_step_that_ignores_sigterm() {
+        let _serial = serial();
+        let dir = temp("bh-sup-stepkill");
+        let state = dir.join("state");
+        let pid_file = dir.join("sleep.pid");
+        let a = make_slot(&state, "a", "c0ffee");
+        make_current(&state, "a", "c0ffee");
+        // A step that ignores SIGTERM, with a child in its process group (which ignores it too):
+        // SIGKILL to the group follows after the grace.
+        let body = format!("case \"$1\" in -I) trap '' TERM\nsleep 30 &\necho $! > \"{}\"\nwait;; esac",
+                           pid_file.display());
+        script(&a.join("venv").join("bin"), "python", &body);
+        let mut s = sup(runtime_cfg(free_port(), &dir), &dir);
+        s.synced = true;
+        s.limits.update_step = Duration::from_millis(500);
+        s.limits.term_grace = Duration::from_millis(300);
+        let t = Instant::now();
+        tick_now(&mut s);
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+        let pid: libc::pid_t = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_gone(pid) {
+            assert!(Instant::now() < deadline, "the step's child {pid} outlived the timeout");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let log = std::fs::read_to_string(state.join("hub.log")).unwrap();
+        assert!(log.contains("update step: timed out after 0.5 s: killed with its process tree"), "{log}");
+        wait_exit(&mut s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_watch_runs_settings_only_on_a_change() {
+        let _serial = serial();
+        let dir = temp("bh-sup-watch");
+        let state = dir.join("state");
+        let (calls, settings) = (dir.join("calls.txt"), dir.join("claude").join("settings.json"));
+        let a = make_slot(&state, "a", "c0ffee");
+        make_current(&state, "a", "c0ffee");
+        // As claude-sync, slot a's python records the call and rewrites the settings file.
+        let body = format!("echo \"$(pwd)|$BRAINHUB_STATE_DIR|$*\" >> \"{}\"\nprintf '{{}}' > \"{}\"",
+                           calls.display(), settings.display());
+        script(&a.join("venv").join("bin"), "python", &body);
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        std::fs::write(&settings, "{}").unwrap();
+        // Times set by hand: two writes within one clock tick can share an mtime.
+        let set_mtime = |secs: u64| {
+            let f = std::fs::File::options().write(true).open(&settings).unwrap();
+            f.set_modified(UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+        };
+        set_mtime(1_000_000);
+        let s = sup(runtime_cfg(free_port(), &dir), &dir);
+        let watch = s.claude_watch().expect("runtime mode has the watch");
+        assert_eq!(watch.settings.as_deref(), Some(settings.as_path()));
+        assert_eq!(watch.poll_once(), None, "the first look only records the mtime");
+        set_mtime(2_000_000); // the owner changed a setting
+        assert_eq!(watch.poll_once(), Some(crate::claude_watch::Run::SettingsOnly));
+        assert_eq!(watch.poll_once(), None, "claude-sync's own write is no change");
+        let got = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(got.lines().collect::<Vec<_>>(),
+                   [format!("{}|{}|-m brainhub claude-sync --settings-only", a.join("app").display(), state.display())]);
+        let log = std::fs::read_to_string(state.join("hub.log")).unwrap();
+        assert!(log.contains("claude-sync (settings changed): exit status: 0"), "{log}");
+        // Without a slot nothing runs, and the change waits for one.
+        std::fs::remove_file(state.join("runtime").join("current.json")).unwrap();
+        set_mtime(3_000_000);
+        assert_eq!(watch.poll_once(), None);
+        make_current(&state, "a", "c0ffee");
+        assert_eq!(watch.poll_once(), Some(crate::claude_watch::Run::SettingsOnly));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn hub_args_pass_the_configured_port() {
         // The hub must listen where the shell looks, whatever its own `port` setting says.
@@ -1000,7 +1195,9 @@ mod tests {
     }
 
     /// Tests that start processes run one at a time: a script written while another test's spawn
-    /// forks can be held open in that child, and executing it then fails with ETXTBSY.
+    /// forks can be held open in that child, and executing it then fails with ETXTBSY. Tests that
+    /// need a port to be closed take it too: a fork holds a short-lived listener (`free_port`) open
+    /// in the child until it execs, so a connect to that port would succeed.
     fn serial() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
@@ -1056,8 +1253,16 @@ mod tests {
         }
     }
 
-    /// A supervisor whose state folder (hub.log) is `<dir>/state`.
+    /// A supervisor whose own state folder (hub.log outside runtime mode) is `<dir>/state`.
     fn sup(c: DesktopConfig, dir: &Path) -> Supervisor {
-        Supervisor::new(c, dir.join("state"))
+        sup_in(c, dir, &dir.join("state"))
+    }
+
+    /// A supervisor whose own state folder is `own`, watching `<dir>/claude/settings.json` (never
+    /// the real one).
+    fn sup_in(c: DesktopConfig, dir: &Path, own: &Path) -> Supervisor {
+        let mut s = Supervisor::new(c, own.to_path_buf());
+        s.settings = Some(dir.join("claude").join("settings.json"));
+        s
     }
 }
