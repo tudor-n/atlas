@@ -3,7 +3,7 @@ import * as api from './api.js';
 import { el, clear } from './dom.js';
 import { mountCapture } from './components/capture.js';
 import { confirmCard } from './components/confirm-card.js';
-import { driveText } from './drive.js';
+import { driveText, readonlyReason } from './drive.js';
 
 // Re-exported so older imports keep working; new code imports from ./dom.js.
 export { el, clear, fmtWhen } from './dom.js';
@@ -144,6 +144,7 @@ function showTrayCard(entryId) {
   if (existing) { existing.reload(); return; }
   const card = confirmCard(entryId, {
     entryText: mine.get(entryId),
+    blocked: () => readonlyReason(state.drive),
     onClose: () => { card.destroy(); card.remove(); trayCards.delete(entryId); },
   });
   trayCards.set(entryId, card);

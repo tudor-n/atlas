@@ -64,7 +64,8 @@ function draftFor(entryId) {
   return drafts.get(entryId);
 }
 
-export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
+// `blocked()` returns why confirming can't work right now (a read-only root), or ''.
+export function confirmCard(entryId, { entryText, onChange, onClose, blocked = () => '' } = {}) {
   const root = el('section', { class: 'card', 'aria-label': 'Filing review' });
   const s = {
     data: null, map: null, items: {}, loadError: '', notice: '', busy: false,
@@ -137,9 +138,10 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
   function actions(p, canConfirm) {
     const f = s.data && s.data.filing;
     if (f && (f.status === 'queued' || f.status === 'running')) canConfirm = false;  // re-filing
+    const reason = blocked();
     return el('div', { class: 'row-actions' },
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: 'Confirm', disabled: !canConfirm || s.busy || null,
-        onclick: () => confirmIds([p.id]) }, '✓'),
+      el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: reason || 'Confirm',
+        disabled: !canConfirm || !!reason || s.busy || null, onclick: () => confirmIds([p.id]) }, '✓'),
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Edit', title: 'Edit', disabled: s.busy || null,
         onclick: () => { s.draft.editing = p.id; render(); } }, '✎'),
       el('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss', disabled: s.busy || null,
@@ -353,8 +355,10 @@ export function confirmCard(entryId, { entryText, onChange, onClose } = {}) {
     const foot = el('div', { class: 'card-foot' });
     if (list.length > 0) {
       const ok = list.filter((p) => !(p.ptype === 'update' && ((p.warnings || []).some((w) => /unknown item/i.test(w)) || !p.payload.item_id)));
+      const reason = blocked();
       foot.appendChild(el('div', { class: 'actions' },
-        el('button', { class: 'primary', type: 'button', disabled: ok.length === 0 || s.busy || null,
+        el('button', { class: 'primary', type: 'button', title: reason || null,
+          disabled: ok.length === 0 || !!reason || s.busy || null,
           onclick: () => confirmIds(ok.map((p) => p.id)) }, s.busy ? 'Working…' : 'Confirm all')));
     }
     foot.appendChild(correctionBox());

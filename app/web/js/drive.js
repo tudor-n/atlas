@@ -11,3 +11,9 @@ export function driveText(drive) {
   if (!drive) return '';
   return [drive.message, heldText(drive.held)].filter(Boolean).join(' · ');
 }
+
+// Read-only root: why confirm and tick are disabled (their title), or '' while they work.
+export function readonlyReason(drive) {
+  if (drive?.state !== 'readonly') return '';
+  return drive.message || "BrainHub's data folder is read-only.";
+}

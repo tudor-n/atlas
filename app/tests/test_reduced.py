@@ -3,6 +3,7 @@ foreign, newer or read-only root never gets a brain created, never has hub.db mo
 never loses a capture; once the root is usable again the hub stops with exit code 75."""
 import _thread
 import asyncio
+import errno
 import os
 import socket
 import sqlite3
@@ -372,7 +373,7 @@ async def test_held_captures_flushed_and_queued_at_ok_start(aiohttp_client, tmp_
     assert (await c.post("/api/setup", json={"map": MAP})).status == 200
     await c.close()
     # More than the cap on never-filed entries: held captures are filed all the same.
-    held = [holding.hold(_state_dir(), f"held {i}", "widget", datetime(2026, 10, 20, 9, 0, i))
+    held = [holding.hold(_state_dir(), paths, f"held {i}", "widget", datetime(2026, 10, 20, 9, 0, i))
             for i in range(MAX_AUTO_REQUEUE + 1)]
     app = create_app(paths, runner=make_runner(), start_workers=False)
     c = await aiohttp_client(app)
@@ -387,3 +388,80 @@ async def test_held_captures_flushed_and_queued_at_ok_start(aiohttp_client, tmp_
     assert queued == [h["id"] for h in held]
     hits = await (await c.get("/api/search", params={"q": "held"})).json()
     assert hits and all(h["ref"] in {x["id"] for x in held} for h in hits)  # indexed for recall
+
+
+async def test_captures_for_another_root_stay_held_at_ok_start(aiohttp_client, tmp_path):
+    """A dev hub on a temp root shares this OS's state folder: it never pulls in the captures held
+    for the real brain."""
+    real = Paths(tmp_path / "mnt" / "data" / "BrainHub")  # the drive is missing
+    c = await aiohttp_client(_reduced(real))
+    assert (await c.post("/api/entries", json={"text": "for the real brain", "source": "widget"})).status == 200
+    await c.close()
+    [mine] = holding.held(_state_dir())
+    assert mine["root"] == {"id": None, "path": str(real.root.resolve())}
+    dev = Paths(tmp_path / "dev-root")
+    dev.root.mkdir()
+    c = await aiohttp_client(create_app(dev, runner=make_runner(), start_workers=False))
+    assert (await c.post("/api/setup", json={"map": MAP})).status == 200
+    await c.close()
+    app = create_app(dev, runner=make_runner(), start_workers=False)
+    c = await aiohttp_client(app)
+    state = await (await c.get("/api/state")).json()
+    assert state["startup_error"] == [
+        f"1 capture held on this OS belongs to another BrainHub folder ({real.root.resolve()}); "
+        "it was left in the holding folder"]
+    assert read_log(dev.brain) == [] and holding.held(_state_dir()) == [mine]
+
+
+async def test_held_count_is_per_root(aiohttp_client, tmp_path):
+    other = Paths(tmp_path / "elsewhere" / "BrainHub")
+    holding.hold(_state_dir(), other, "for another root", "pc", datetime(2026, 10, 20, 9, 0, 0))
+    paths = Paths(tmp_path / "drive" / "BrainHub")
+    c = await aiohttp_client(_reduced(paths))
+    assert (await (await c.get("/api/state")).json())["drive"]["held"] == 0
+    assert (await c.post("/api/entries", json={"text": "for this root", "source": "pc"})).status == 200
+    assert (await (await c.get("/api/state")).json())["drive"]["held"] == 1
+    assert (await (await c.get("/api/widget")).json())["drive"]["held"] == 1
+    assert len(holding.held(_state_dir())) == 2
+
+
+# -- the root goes away or read-only while the full app runs -----------------------
+async def _running_brain(aiohttp_client, paths):
+    paths.root.mkdir(parents=True)
+    app = create_app(paths, runner=make_runner(), start_workers=False)
+    c = await aiohttp_client(app)
+    assert (await c.post("/api/setup", json={"map": MAP})).status == 200
+    await c.close()
+    app = create_app(paths, runner=make_runner(), start_workers=False)
+    assert app["root_status"].state == "ok"
+    return await aiohttp_client(app)
+
+
+async def test_capture_held_when_the_log_cant_be_written_mid_run(aiohttp_client, tmp_path, monkeypatch):
+    from brainhub import routes
+
+    def read_only(*args, **kwargs):
+        raise OSError(errno.EROFS, "Read-only file system")
+    paths = Paths(tmp_path / "BrainHub")
+    c = await _running_brain(aiohttp_client, paths)
+    monkeypatch.setattr(routes, "append_entry", read_only)
+    r = await c.post("/api/entries", json={"text": "typed as the drive went read-only", "source": "pc"})
+    assert r.status == 200 and (await r.json())["held"] is True
+    [held] = holding.held(_state_dir())
+    assert held["text"] == "typed as the drive went read-only"
+    assert held["root"]["id"] == rootguard.read_marker(paths)["id"]
+
+
+async def test_capture_held_when_the_drive_goes_away_mid_run(aiohttp_client, tmp_path):
+    paths = Paths(tmp_path / "BrainHub")
+    c = await _running_brain(aiohttp_client, paths)
+    away = tmp_path / "unplugged"
+    paths.root.rename(away)  # the drive is gone while the hub runs
+    r = await c.post("/api/entries", json={"text": "typed after the drive went", "source": "widget"})
+    assert r.status == 200 and (await r.json())["held"] is True
+    assert not paths.root.exists()  # never recreated, not even brain/log
+    await c.close()
+    away.rename(paths.root)  # back: the next start puts it in the raw log
+    await aiohttp_client(create_app(paths, runner=make_runner(), start_workers=False))
+    assert [e.text for e in read_log(paths.brain)] == ["typed after the drive went"]
+    assert holding.held(_state_dir()) == []

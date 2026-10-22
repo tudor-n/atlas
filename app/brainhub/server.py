@@ -95,12 +95,21 @@ def _backfill_log(app: web.Application) -> None:
 
 
 def _flush_held(app: web.Application) -> None:
-    """Captures held while the root wasn't writable go into the raw log with their own id and ts;
-    the raw log step right after indexes them. Each is marked queued as a fresh capture is, so
-    the filing queue step files them all (the cap on never-filed entries doesn't apply)."""
-    for entry_id in holding.flush(osdirs.state_dir(), app["paths"].brain, app["store"],
-                                  app["startup_errors"]):
+    """Captures held for this root while it wasn't writable go into the raw log with their own id
+    and ts; the raw log step right after indexes them. Each is marked queued as a fresh capture
+    is, so the filing queue step files them all (the cap on never-filed entries doesn't apply).
+    Captures held for another BrainHub folder (this OS's state folder is shared by every hub on
+    it) stay held, in one line of startup_errors."""
+    done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
+    for entry_id in done.appended:
         app["worker"].mark_queued(entry_id)
+    if done.elsewhere:
+        n = len(done.elsewhere)
+        folders = ", ".join(sorted({r["root"]["path"] for r in done.elsewhere}))
+        held, left = ("1 capture held on this OS belongs", "it was") if n == 1 else (
+            f"{n} captures held on this OS belong", "they were")
+        app["startup_errors"].append(f"{held} to another BrainHub folder ({folders}); {left} left in "
+                                     "the holding folder")
 
 
 def _rebuild_notes(app: web.Application) -> None:

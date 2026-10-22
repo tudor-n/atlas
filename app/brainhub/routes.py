@@ -265,13 +265,20 @@ async def post_entry(request: web.Request) -> web.Response:
     app = request.app
     body = await body_dict(request)
     text, source = body.get("text"), body.get("source")
-    if not setup_done(app):
+    # A root that was ok at start had a brain: if map.json is gone now, the drive went away mid-run
+    # and the capture is held below, not refused.
+    if not setup_done(app) and app["root_status"].state != "ok":
         return err(409, "run setup first")
     if not isinstance(text, str) or not text.strip():
         return err(400, "entry text is blank")
     if source not in CAPTURE_SOURCES:
         return err(400, f"source must be one of {list(CAPTURE_SOURCES)}")
-    entry = await t(append_entry, app["paths"].brain, text, source)  # the log comes first
+    try:
+        entry = await t(append_entry, app["paths"].brain, text, source)  # the log comes first
+    except OSError as e:  # the root went read-only or away mid-run: hold it on this OS instead
+        log.error("the raw log can't be written (%s); the capture is held on this OS", e)
+        record = await t(holding.hold, osdirs.state_dir(), app["paths"], text, source, datetime.now())
+        return web.json_response({"entry_id": record["id"], "held": True})
     try:
         await t(app["store"].add_entry, entry)
         await t(app["store"].index_entry, entry)
@@ -701,25 +708,26 @@ async def post_integration_uninstall(request: web.Request) -> web.Response:
 # -- reduced and read-only modes (dual-boot design §6.5 items 2 and 3) -----------
 def drive(app: web.Application, problems: list | None = None) -> dict | None:
     """The drive banner: None while the root is fine, else its state, the message and how many
-    captures this OS holds. Held files that can't be read are described in `problems`."""
+    captures this OS holds for this root. Held files that can't be read are described in
+    `problems`."""
     status = app["root_status"]
     if status.state in ("ok", "fresh"):
         return None
     return {"state": status.state, "message": status.message,
-            "held": len(holding.held(osdirs.state_dir(), problems))}
+            "held": len(holding.held(osdirs.state_dir(), problems, app["paths"]))}
 
 
 async def hold_entry(request: web.Request) -> web.Response:
     """POST /api/entries while the root isn't writable: the capture goes to this OS's holding
-    inbox, on disk before the answer. It reaches the raw log, with its own id and ts, at the
-    first start on a writable root."""
+    inbox, on disk before the answer, marked with this root. It reaches the raw log, with its own
+    id and ts, at the first start of a hub on this root once it is writable."""
     body = await body_dict(request)
     text, source = body.get("text"), body.get("source")
     if not isinstance(text, str) or not text.strip():
         return err(400, "entry text is blank")
     if source not in CAPTURE_SOURCES:
         return err(400, f"source must be one of {list(CAPTURE_SOURCES)}")
-    record = await t(holding.hold, osdirs.state_dir(), text, source, datetime.now())
+    record = await t(holding.hold, osdirs.state_dir(), request.app["paths"], text, source, datetime.now())
     return web.json_response({"entry_id": record["id"], "held": True})
 
 
