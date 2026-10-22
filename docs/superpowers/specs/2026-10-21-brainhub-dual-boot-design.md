@@ -1,7 +1,7 @@
 # BrainHub on a dual boot (Kubuntu + Windows): design
 
 Date: 2026-10-21
-Status: draft, waiting for the owner's approval.
+Status: approved by the owner (confirmed 2026-10-22). The calls marked "not yet heard" in §11 are accepted with it.
 Parent spec: `2026-10-20-brainhub-design.md`. It stays the authority on what BrainHub does. This document changes **where it runs and how**, now that the laptop dual-boots. It amends the parent spec's §4 (where data lives), §11 (the shell is no longer Windows-only), §13.1 (folders per OS in the map) and §14 (deployment). The phase 2 design and its rulings still apply unless this document overrides them.
 
 Marking: "owner" marks the owner's decisions. **(my call)** marks a call I made; the owner heard it played back and didn't object. **(my call, new)** marks a call made while writing, which the owner hasn't heard yet.
