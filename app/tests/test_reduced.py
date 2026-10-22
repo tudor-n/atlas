@@ -455,13 +455,16 @@ async def test_capture_held_when_the_log_cant_be_written_mid_run(aiohttp_client,
 async def test_capture_held_when_the_drive_goes_away_mid_run(aiohttp_client, tmp_path):
     paths = Paths(tmp_path / "BrainHub")
     c = await _running_brain(aiohttp_client, paths)
+    # The drive is gone while the hub runs. Moving brain/ away stands in for it: Windows won't
+    # rename the root while the hub holds data/hub.db open, and append_entry refuses a missing
+    # brain/ exactly as it refuses a missing root.
     away = tmp_path / "unplugged"
-    paths.root.rename(away)  # the drive is gone while the hub runs
+    paths.brain.rename(away)
     r = await c.post("/api/entries", json={"text": "typed after the drive went", "source": "widget"})
     assert r.status == 200 and (await r.json())["held"] is True
-    assert not paths.root.exists()  # never recreated, not even brain/log
+    assert not paths.brain.exists()  # never recreated, not even brain/log
     await c.close()
-    away.rename(paths.root)  # back: the next start puts it in the raw log
+    away.rename(paths.brain)  # back: the next start puts it in the raw log
     await aiohttp_client(create_app(paths, runner=make_runner(), start_workers=False))
     assert [e.text for e in read_log(paths.brain)] == ["typed after the drive went"]
     assert holding.held(_state_dir()) == []
