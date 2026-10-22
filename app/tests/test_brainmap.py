@@ -1,7 +1,7 @@
 import pytest
 
-from brainhub.brainmap import (add_node, default_map, ensure_folders, hierarchy, load_map,
-                               save_map, slugify, validate_map)
+from brainhub.brainmap import (add_node, default_map, ensure_folders, folders_for, hierarchy,
+                               load_map, path_os, save_map, slugify, validate_map)
 
 
 def test_slugify():
@@ -34,6 +34,40 @@ def test_map_json_is_lf(tmp_path):
     save_map(tmp_path, add_node(default_map(), "project", "Robot Arm", None))
     raw = (tmp_path / "map.json").read_bytes()
     assert b"\n" in raw and b"\r\n" not in raw
+
+def test_path_os_by_shape():
+    assert path_os("D:\\RobotArmControl") == path_os("d:/x") == path_os("\\\\nas\\share") == "windows"
+    assert path_os("/home/u/dev/x") == "linux"
+    assert path_os("relative\\x") is path_os("D:") is path_os("") is path_os(None) is None
+
+
+def test_folders_for_mixes_os_folders_and_legacy():
+    # P7: os_folders first, then each legacy entry for the OS its shape belongs to.
+    p = {"slug": "robotarm", "name": "RobotArm",
+         "os_folders": {"windows": ["D:\\RobotArmControl"], "linux": ["/home/u/dev/RobotArmControl"]},
+         "folders": ["C:/Old", "/home/u/old", "\\\\nas\\robot", "relative"]}
+    assert folders_for(p, "windows") == ["D:\\RobotArmControl", "C:/Old", "\\\\nas\\robot"]
+    assert folders_for(p, "linux") == ["/home/u/dev/RobotArmControl", "/home/u/old"]
+    assert folders_for({"slug": "x", "name": "X", "folders": ["D:/X"]}, "linux") == []
+    assert folders_for({"slug": "x", "name": "X"}, "windows") == []
+
+
+def test_validate_rejects_wrong_column():
+    def errors(os_folders):
+        m = default_map()
+        m.projects = [{"slug": "robotarm", "name": "RobotArm", "is_company": False, "os_folders": os_folders}]
+        return validate_map(m)
+    assert errors({"windows": ["D:\\RobotArmControl", "\\\\nas\\x"], "linux": ["/home/u/dev/RobotArmControl"]}) == []
+    assert errors({}) == []
+    assert any("D:\\RobotArmControl" in e and "linux" in e for e in errors({"linux": ["D:\\RobotArmControl"]}))
+    assert any("/home/u/x" in e for e in errors({"windows": ["/home/u/x"]}))
+    assert errors({"windows": ["relative"]})
+    assert errors({"mac": []})
+    assert errors(["D:/x"])
+    assert errors({"windows": "D:/x"})
+    assert errors({"windows": [5]})
+    assert all(e.startswith("project ") for e in errors({"linux": ["D:/x"], "mac": []}))
+
 
 def test_add_node_duplicate_raises():
     m = add_node(default_map(), "course", "Fizica", None)

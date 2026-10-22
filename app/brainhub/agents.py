@@ -11,7 +11,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .brainmap import BrainMap, load_map
+from . import osdirs
+from .brainmap import OS_NAMES, BrainMap, add_os_folder, folders_for, load_map, path_os
 from .config import Paths
 from .store import Store
 
@@ -76,18 +77,51 @@ def simplify_branch(b: str | None) -> str | None:
     return b.rsplit("/", 1)[-1] if b else None
 
 
-def resolve_project(cwd: str, m: BrainMap | None) -> tuple[str, str, bool]:
+def _mapped_project(cwd: str, m: BrainMap | None) -> dict | None:
+    """The project whose folder on this OS holds cwd (the deepest such folder wins). Only this
+    OS's folders count, matched with this OS's rules (P7, dual-boot design §6.4)."""
     best, best_len = None, -1
     if m and cwd:
         for p in m.projects:
-            for folder in p.get("folders", []):
+            for folder in folders_for(p, osdirs.os_name()):
                 if folder and is_within(cwd, folder) and len(norm_path(folder)) > best_len:
                     best, best_len = p, len(norm_path(folder))
+    return best
+
+
+def resolve_project(cwd: str, m: BrainMap | None) -> tuple[str, str, bool]:
+    best = _mapped_project(cwd, m)
     if best:
         return best["slug"], best["name"], True
     found = find_git_dir(cwd)
     name = (found[0].name if found and found[0].name else "") or Path(cwd).name or cwd
     return name, name, False
+
+
+def _last_part(folder: str) -> str:
+    """A folder path's last component, for a path of either OS on either OS."""
+    return re.split(r"[\\/]", folder.rstrip("\\/"))[-1]
+
+
+def suggest_link(cwd: str, m: BrainMap | None) -> dict | None:
+    """For a session in an unmapped folder: its git top (else cwd) has the same folder name as a
+    folder of exactly one project on the other OS (~/dev/RobotArmControl vs D:\\RobotArmControl).
+    The Agents row then offers "link to <name>"; nothing is ever mapped automatically (§6.4)."""
+    here = osdirs.os_name()
+    # Only a folder that fits this OS's column (a row seen on the other OS never qualifies).
+    if not m or path_os(cwd) != here or _mapped_project(cwd, m):
+        return None
+    found = find_git_dir(cwd)
+    top = str(found[0] if found else Path(cwd))
+    name = _last_part(top).casefold()
+    if not name:
+        return None
+    hits = [p for p in m.projects
+            if any(_last_part(f).casefold() == name
+                   for other in OS_NAMES if other != here for f in folders_for(p, other))]
+    if len(hits) != 1:  # none, or ambiguous
+        return None
+    return {"slug": hits[0]["slug"], "name": hits[0]["name"], "folder": top}
 
 
 def _s(v) -> str | None:
@@ -204,7 +238,13 @@ class AgentTracker:
         row["project"], row["project_name"], row["mapped"] = resolve_project(row["cwd"], m)
 
     # reads
-    def _public(self, row: dict, next_time: dict[str, int]) -> dict:
+    def _map(self) -> BrainMap | None:
+        try:
+            return load_map(self._paths.brain)
+        except (OSError, ValueError):  # a broken map.json only costs the link suggestions
+            return None
+
+    def _public(self, row: dict, next_time: dict[str, int], m: BrainMap | None) -> dict:
         out = dict(row)
         out["part"] = (row["part_override"] or row["title"] or simplify_branch(row["branch"]) or "—")
         out["where"] = row["where_override"] or WHERE_BY_ENTRYPOINT.get(row["entrypoint"] or "", "unknown")
@@ -218,13 +258,15 @@ class AgentTracker:
             out["next_time"] = next_time[row["project"]]
         else:
             out["next_time"] = 0
+        out["suggest"] = None if row["mapped"] else suggest_link(row["cwd"], m)
         return out
 
     def rows(self) -> list[dict]:
         with self._lock:
             self.prune()
             cache: dict[str, int] = {}
-            out = [self._public(r, cache) for r in self._store.list_agents()]
+            m = self._map()
+            out = [self._public(r, cache, m) for r in self._store.list_agents()]
         out.sort(key=lambda r: r["last_event_at"], reverse=True)
         out.sort(key=lambda r: STATUS_ORDER.index(r["status"]) if r["status"] in STATUS_ORDER
                  else len(STATUS_ORDER))
@@ -266,7 +308,25 @@ class AgentTracker:
                     raise ValueError(f"where must be one of {WHERE_CHOICES}")
                 row["where_override"] = v
             self._store.upsert_agent(row)
-            return self._public(row, {})
+            return self._public(row, {}, self._map())
+
+    def link(self, session_id: str, slug: str, commit: Callable[[BrainMap], None]) -> dict | None:
+        """The owner clicked "link to <name>": the row's suggested folder joins project `slug` on
+        this OS, `commit(new_map)` saves and commits the map, and the row is re-resolved. None when
+        the row no longer has that suggestion (already linked, or the map changed)."""
+        with self._lock:
+            row = self._store.get_agent(session_id)
+            if row is None:
+                raise KeyError(session_id)
+            m = load_map(self._paths.brain)
+            s = suggest_link(row["cwd"], m)
+            if s is None or s["slug"] != slug:
+                return None
+            new = add_os_folder(m, slug, osdirs.os_name(), s["folder"])
+            commit(new)
+            row["project"], row["project_name"], row["mapped"] = resolve_project(row["cwd"], new)
+            self._store.upsert_agent(row)
+            return self._public(row, {}, new)
 
     def remove(self, session_id: str) -> None:
         self._store.delete_agents([session_id])

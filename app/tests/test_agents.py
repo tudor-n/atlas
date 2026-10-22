@@ -3,8 +3,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from brainhub import osdirs
 from brainhub.agents import (AgentTracker, find_git_dir, read_branch, resolve_project,
-                             simplify_branch)
+                             simplify_branch, suggest_link)
 from brainhub.brainmap import BrainMap, save_map
 
 T0 = datetime(2026, 10, 21, 12, 0, 0)
@@ -39,6 +40,13 @@ def make_repo(root, head="ref: refs/heads/main\n"):
     (root / ".git").mkdir(parents=True)
     (root / ".git" / "HEAD").write_text(head)
     return root
+
+
+def other_os_folder() -> tuple[str, str]:
+    """(the other OS, a RobotArmControl folder there) for the OS the tests run on."""
+    if osdirs.os_name() == "linux":
+        return "windows", "D:\\RobotArmControl"
+    return "linux", "/home/tudor/dev/RobotArmControl"
 
 
 def test_read_branch_variants(tmp_path):
@@ -87,6 +95,87 @@ def test_project_from_map_is_exact_on_posix():
     assert resolve_project("/home/u/dev/RobotArmControlOld", m)[2] is False
     assert resolve_project("/home/u/Work/robot/x", m) == ("robot", "Robot", True)
     assert resolve_project("/home/u/Work/other", m) == ("work", "Work", True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX half")
+def test_resolve_ignores_other_os_folders_posix():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False,
+         "os_folders": {"windows": ["D:/RobotArmControl"], "linux": ["/home/u/dev/RobotArmControl"]}},
+        {"slug": "old", "name": "Old", "is_company": False, "folders": ["D:/Old"]}])
+    assert resolve_project("D:/RobotArmControl/src", m)[2] is False
+    assert resolve_project("D:/Old/src", m)[2] is False
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m) == ("robotarm", "RobotArm", True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows half")
+def test_resolve_ignores_other_os_folders_windows():
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False,
+         "os_folders": {"windows": ["D:\\RobotArmControl"], "linux": ["/home/u/dev/RobotArmControl"]}},
+        {"slug": "old", "name": "Old", "is_company": False, "folders": ["/home/u/old"]}])
+    assert resolve_project("/home/u/dev/RobotArmControl/src", m)[2] is False
+    assert resolve_project("\\home\\u\\old\\src", m)[2] is False
+    assert resolve_project("d:/robotarmcontrol/src", m) == ("robotarm", "RobotArm", True)
+
+
+@pytest.mark.parametrize("os_", ["windows", "linux"])
+def test_resolve_uses_the_folders_of_os_name(monkeypatch, os_):
+    # The column comes from os_name(), not from the path rules of the OS running the test.
+    monkeypatch.setattr(osdirs, "os_name", lambda: os_)
+    m = BrainMap(projects=[{"slug": "robotarm", "name": "RobotArm", "is_company": False,
+                            "os_folders": {"windows": ["D:/RobotArmControl"],
+                                           "linux": ["/home/u/dev/RobotArmControl"]}}])
+    hits = (resolve_project("D:/RobotArmControl/src", m)[2],
+            resolve_project("/home/u/dev/RobotArmControl/src", m)[2])
+    assert hits == ((True, False) if os_ == "windows" else (False, True))
+
+
+def test_suggest_link_by_folder_name(tmp_path):
+    other, there = other_os_folder()
+    m = BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "os_folders": {other: [there]}},
+        {"slug": "web", "name": "Web", "is_company": False,
+         "os_folders": {other: [there.replace("RobotArmControl", "Web")]}}])
+    top = make_repo(tmp_path / "dev" / "RobotArmControl")
+    (top / "src").mkdir()
+    want = {"slug": "robotarm", "name": "RobotArm", "folder": str(top)}
+    assert suggest_link(str(top / "src"), m) == want
+    # Outside a git repo the session's own folder is offered; names compare case-insensitively.
+    loose = tmp_path / "loose" / "robotarmcontrol"
+    loose.mkdir(parents=True)
+    assert suggest_link(str(loose), m) == {**want, "folder": str(loose)}
+    assert suggest_link(str(tmp_path / "dev"), m) is None
+    assert suggest_link(str(top / "src"), None) is None
+    assert suggest_link("", m) is None
+    assert suggest_link(there, m) is None  # a row seen on the other OS: not this OS's column
+    # Ambiguous: two projects have a RobotArmControl on the other OS.
+    twin = "E:\\old\\robotarmcontrol" if other == "windows" else "/srv/old/robotarmcontrol/"
+    m2 = BrainMap(projects=m.projects + [
+        {"slug": "arm-old", "name": "Arm (old)", "is_company": False, "os_folders": {other: [twin]}}])
+    assert suggest_link(str(top / "src"), m2) is None
+    # Already mapped on this OS: nothing to suggest.
+    m.projects[0]["os_folders"][osdirs.os_name()] = [str(top)]
+    assert suggest_link(str(top / "src"), m) is None
+
+
+def test_rows_carry_the_suggestion(tracker, paths, tmp_path):
+    other, there = other_os_folder()
+    mapped = tmp_path / "dev" / "Mapped"
+    mapped.mkdir(parents=True)
+    save_map(paths.brain, BrainMap(projects=[
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "os_folders": {other: [there]}},
+        {"slug": "mapped", "name": "Mapped", "is_company": False,
+         "os_folders": {osdirs.os_name(): [str(mapped)], other: [there.replace("RobotArmControl", "Mapped")]}}]))
+    top = make_repo(tmp_path / "dev" / "RobotArmControl")
+    tracker.handle(ev("SessionStart", sid="a", cwd=str(top)))
+    tracker.handle(ev("SessionStart", sid="b", cwd=str(mapped)))
+    tracker.handle(ev("SessionStart", sid="c", cwd=str(tmp_path / "dev")))
+    rows = {r["session_id"]: r for r in tracker.rows()}
+    assert rows["a"]["suggest"] == {"slug": "robotarm", "name": "RobotArm", "folder": str(top)}
+    assert rows["b"]["mapped"] is True and rows["b"]["suggest"] is None
+    assert rows["c"]["suggest"] is None
+    assert tracker.edit("a", {"part": "x"})["suggest"]["slug"] == "robotarm"
 
 
 def test_project_fallback_git_top_then_basename(tmp_path):
@@ -188,13 +277,15 @@ def test_stale_rows_pruned(tracker, now):
     assert tracker.rows() == []
 
 
-def test_next_time_flag(tracker, store, paths):
+def test_next_time_flag(tracker, store, paths, tmp_path):
+    # A folder of the OS running the test: a Windows-shaped folder only counts on Windows (P7).
+    arm = tmp_path / "RobotArmControl"
     save_map(paths.brain, BrainMap(projects=[
-        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": ["D:/RobotArmControl"]}]))
+        {"slug": "robotarm", "name": "RobotArm", "is_company": False, "folders": [str(arm)]}]))
     store.create_item(kind="next_time", text="check J5", area="projects", project="robotarm",
                       source_entry="e-1")
-    tracker.handle(ev("SessionStart", cwd="D:/RobotArmControl/src"))
-    tracker.handle(ev("SessionStart", sid="s2", cwd="D:/Other"))
+    tracker.handle(ev("SessionStart", cwd=str(arm / "src")))
+    tracker.handle(ev("SessionStart", sid="s2", cwd=str(tmp_path / "Other")))
     rows = {r["session_id"]: r for r in tracker.rows()}
     assert rows["s1"]["next_time"] == 1 and rows["s1"]["mapped"] is True
     assert rows["s2"]["next_time"] == 0

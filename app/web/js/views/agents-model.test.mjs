@@ -1,7 +1,7 @@
 // Run with: node --test web/js/views/agents-model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { STATUS_LABEL, statusText, sinceText, nextTimeText, resetText } from './agents-model.js';
+import { STATUS_LABEL, statusText, sinceText, nextTimeText, resetText, linkText } from './agents-model.js';
 
 const now = new Date(2026, 9, 21, 12, 0, 0);
 
@@ -22,6 +22,14 @@ test('nextTimeText: plural, singular, none', () => {
   assert.equal(nextTimeText({ next_time: 1, project_name: 'robotarm' }), '1 next-time note for robotarm');
   assert.equal(nextTimeText({ next_time: 0, project_name: 'robotarm' }), null);
   assert.equal(nextTimeText({ project_name: 'robotarm' }), null);
+});
+
+test('linkText: only an unmapped row with a suggestion offers the link', () => {
+  const suggest = { slug: 'robotarm', name: 'RobotArm', folder: '/home/u/dev/RobotArmControl' };
+  assert.equal(linkText({ mapped: false, suggest }), 'link to RobotArm');
+  assert.equal(linkText({ mapped: false, suggest: null }), null);
+  assert.equal(linkText({ mapped: false }), null);
+  assert.equal(linkText({ mapped: true, suggest }), null);
 });
 
 test('resetText: future and passed', () => {

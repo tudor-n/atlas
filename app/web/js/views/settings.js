@@ -239,7 +239,7 @@ export async function render(container) {
     const map = normalizeMap(await api.get('/api/map'));
     if (dead) return cleanup;
     const saved = savedNodes(map);  // these slugs are read-only; new rows still auto-slug
-    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n) });
+    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n), os: state.os });
     const saveBtn = el('button', { type: 'button', class: 'primary', onclick: async () => {
       if (hasErrors(editors.validateAndShow())) { say(mapMsg, 'Fix the problems above, then save.'); return; }
       saveBtn.disabled = true;

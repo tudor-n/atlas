@@ -30,6 +30,12 @@ export function nextTimeText(row) {
   return `${n} next-time ${n === 1 ? 'note' : 'notes'} for ${row.project_name}`;
 }
 
+// An unmapped row whose folder has the same name as a project's folder on the other OS offers a
+// one-click link (dual-boot design §6.4). Nothing is mapped until the owner clicks it.
+export function linkText(row) {
+  return !row.mapped && row.suggest ? `link to ${row.suggest.name}` : null;
+}
+
 export function resetText(w, now) {
   const at = new Date(w.resets_at);
   let clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`;

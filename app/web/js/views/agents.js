@@ -1,7 +1,7 @@
 // Agents: Claude Code sessions seen through the hooks.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { statusText, sinceText, nextTimeText } from './agents-model.js';
+import { statusText, sinceText, nextTimeText, linkText } from './agents-model.js';
 
 const WHERE = ['terminal', 'IDE', 'desktop app', 'unknown'];
 
@@ -69,6 +69,20 @@ export async function render(container) {
     return btn;
   }
 
+  // "link to <name>": this row's folder joins that project's folders on this PC.
+  function linkButton(row) {
+    const text = linkText(row);
+    if (!text) return null;
+    return el('button', { type: 'button', class: 'linkish small', title: `Add ${row.suggest.folder} to ${row.suggest.name} on this PC`,
+      onclick: async () => {
+        clear(msg);
+        try {
+          await api.post(`/api/agents/${encodeURIComponent(row.session_id)}/link`, { slug: row.suggest.slug });
+        } catch (e) { fail(e); }
+        refresh(true);
+      } }, text);
+  }
+
   function whereCell(row) {
     const auto = el('option', { value: '', selected: !row.where_override }, `auto (${row.where})`);
     const select = el('select', { 'aria-label': 'Where', title: row.entrypoint || 'unknown entrypoint',
@@ -91,7 +105,7 @@ export async function render(container) {
     const body = rows.map((row) => {
       const nt = nextTimeText(row);
       return el('tr', row.ended ? { class: 'ended' } : {},
-        el('td', {}, row.project_name, row.mapped ? el('span', { class: 'badge' }, 'mapped') : null),
+        el('td', {}, row.project_name, row.mapped ? el('span', { class: 'badge' }, 'mapped') : null, linkButton(row)),
         el('td', {}, partCell(row)),
         el('td', {}, whereCell(row)),
         el('td', {}, el('span', { class: row.status === 'waiting' && !row.ended ? 'badge warn' : 'badge' }, statusText(row))),

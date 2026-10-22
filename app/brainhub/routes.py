@@ -615,6 +615,31 @@ async def patch_agent(request: web.Request) -> web.Response:
     return web.json_response(row)
 
 
+def _map_committer(app: web.Application):
+    def commit(m: BrainMap) -> None:
+        save_map(app["paths"].brain, m)
+        app["on_commit"](app["repo"].commit_all("map edit"))
+    return commit
+
+
+async def link_agent(request: web.Request) -> web.Response:
+    """The "link to <name>" button on an Agents row: its folder joins that project on this OS
+    (dual-boot design §6.4). Same JSON and local_only rules as every other POST."""
+    app = request.app
+    slug = (await body_dict(request)).get("slug")
+    if not isinstance(slug, str) or not slug:
+        raise ValueError("slug must be a project slug")
+    try:
+        row = await t(app["agents"].link, request.match_info["session_id"], slug, _map_committer(app))
+    except KeyError:
+        raise web.HTTPNotFound(reason="unknown session") from None
+    if row is None:
+        return err(409, "this session has no link to that project any more")
+    await app["broadcast"]("map.changed", {})
+    await app["broadcast"]("agents.changed", {})
+    return web.json_response(row)
+
+
 async def delete_agent(request: web.Request) -> web.Response:
     app = request.app
     await t(app["agents"].remove, request.match_info["session_id"])
@@ -681,6 +706,7 @@ def add_routes(app: web.Application) -> None:
         web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
         web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
         web.patch("/api/agents/{session_id}", patch_agent),
+        web.post("/api/agents/{session_id}/link", link_agent),
         web.delete("/api/agents/{session_id}", delete_agent),
         web.get("/api/integration", get_integration),
         web.post("/api/integration/install", post_integration_install),
