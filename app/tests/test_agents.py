@@ -392,3 +392,14 @@ def test_migration_2_adds_columns(paths, version, agents_table):
         row = s.get_agent("s1")
         assert row["status"] == "running" and row["os"] is None and row["boot"] is None
     s.close()
+
+
+def test_malformed_map_only_costs_suggestions(store, paths):
+    """A map.json that parses but has the wrong shape never breaks rows()."""
+    tr = AgentTracker(store, paths, lambda: {"agents_end_linger_s": 60, "agents_stale_h": 12},
+                      now=lambda: T0)
+    tr.handle({"session_id": "s1", "hook_event_name": "SessionStart", "cwd": str(paths.root / "x"),
+               "entrypoint": "cli"})
+    (paths.brain / "map.json").write_text('{"projects": [42, {"name": "no slug"}]}', encoding="utf-8")
+    rows = tr.rows()
+    assert len(rows) == 1 and rows[0]["suggest"] is None

@@ -262,8 +262,17 @@ class AgentTracker:
             out["next_time"] = next_time[row["project"]]
         else:
             out["next_time"] = 0
-        out["suggest"] = None if row["mapped"] else suggest_link(row["cwd"], m)
+        out["suggest"] = None if row["mapped"] or row["ended_at"] else self._suggest(row["cwd"], m)
         return out
+
+    @staticmethod
+    def _suggest(cwd: str, m: BrainMap | None) -> dict | None:
+        """The link suggestion, or None. A map.json that parses but has the wrong shape must not
+        take the Agents page or the widget down with it: it only costs the suggestions."""
+        try:
+            return suggest_link(cwd, m)
+        except Exception:
+            return None
 
     def rows(self) -> list[dict]:
         with self._lock:

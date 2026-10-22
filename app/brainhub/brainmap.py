@@ -142,7 +142,7 @@ def add_node(m: BrainMap, ntype: str, name: str, parent: str | None) -> BrainMap
     new = copy.deepcopy(m)
     slug = slugify(name)
     if ntype == "project":
-        target, node = new.projects, {"slug": slug, "name": name, "is_company": False, "folders": []}
+        target, node = new.projects, {"slug": slug, "name": name, "is_company": False, "os_folders": {}}
     elif ntype == "course":
         target, node = new.courses, {"slug": slug, "name": name}
     elif ntype == "person":
