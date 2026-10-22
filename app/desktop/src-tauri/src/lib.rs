@@ -17,11 +17,15 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_window_state::StateFlags;
 
-use supervisor::Supervisor;
+use supervisor::{Notice, Supervisor};
 #[cfg(windows)]
 use supervisor::CREATE_NO_WINDOW;
 
+#[cfg(test)]
+mod shell_source;
+
 const WIDGET: &str = "widget";
+const TRAY: &str = "main";
 const TICK: Duration = Duration::from_secs(2);
 
 /// Set when the shell set `GDK_BACKEND` itself (D1). Its children (the hub, xdg-open, and the
@@ -228,18 +232,61 @@ fn keep_on_screen<R: Runtime>(window: &Window<R>) {
     }
 }
 
+/// The tray's tooltip, and its menu's first line (disabled) while there is a notice: Linux's tray
+/// (AppIndicator) shows no tooltip, so the menu says it there.
+struct TrayNotice {
+    menu: Menu<Wry>,
+    line: MenuItem<Wry>,
+    shown: Option<Notice>,
+}
+
+impl TrayNotice {
+    fn show(&mut self, app: &AppHandle, notice: Option<Notice>) {
+        if notice == self.shown {
+            return;
+        }
+        let tooltip = notice.map_or_else(|| "BrainHub".to_string(), |n| format!("BrainHub — {}", n.text()));
+        if let Some(tray) = app.tray_by_id(TRAY) {
+            let _ = tray.set_tooltip(Some(tooltip));
+        }
+        match notice {
+            Some(n) => {
+                let text = n.text();
+                let _ = self.line.set_text(format!("{}{}", text[..1].to_uppercase(), &text[1..]));
+                if self.shown.is_none() {
+                    let _ = self.menu.insert(&self.line, 0);
+                }
+            }
+            None => {
+                let _ = self.menu.remove(&self.line);
+            }
+        }
+        self.shown = notice;
+    }
+}
+
 /// Every 2 s: let the supervisor act, point the widget at the hub once the port answers (see
-/// `needs_navigate`: never again after that), and keep "Restart hub" in sync.
-fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>) {
+/// `needs_navigate`: never again after that), and keep "Restart hub" and the tray notice in sync.
+/// In runtime mode a start first runs claude-sync and the update step (up to 150 s): that runs
+/// here, without the supervisor's lock, so the tray's Restart and Quit never wait for it.
+fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>, mut notice: TrayNotice) {
     std::thread::spawn(move || {
         let target = format!("http://127.0.0.1:{port}/widget");
         let mut navigated = false;
         loop {
-            let (up, owns) = {
+            let prep = sup.lock().tick();
+            if let Some(prep) = prep {
+                // Say what is already known (a widget update from the last step) before the wait.
+                let known = sup.lock().notice();
+                notice.show(&app, known);
+                prep.run();
+                sup.lock().start_prepared(prep);
+            }
+            let (up, owns, now) = {
                 let mut s = sup.lock();
-                s.tick();
-                (s.last_up(), s.owns_child())
+                (s.last_up(), s.owns_child(), s.notice())
             };
+            notice.show(&app, now);
             if let Some(w) = app.get_webview_window(WIDGET) {
                 let current = w.url().ok().map(|u| u.to_string());
                 if needs_navigate(up, navigated, current.as_deref(), &target) {
@@ -309,10 +356,12 @@ pub fn run() {
             let quit = MenuItem::with_id(handle, "quit", "Quit", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(handle)?;
             let menu = Menu::with_items(handle, &[&open, &toggle, &login, &restart, &sep, &quit])?;
+            // The notice line (no slot, widget update): shown at the top only while it applies.
+            let notice_line = MenuItem::with_id(handle, "notice", "", false, None::<&str>)?;
 
             let sup_menu = sup.clone();
             let login_item = login.clone();
-            let mut tray = TrayIconBuilder::with_id("main").tooltip("BrainHub").menu(&menu).on_menu_event(
+            let mut tray = TrayIconBuilder::with_id(TRAY).tooltip("BrainHub").menu(&menu).on_menu_event(
                 move |app, e| match e.id.as_ref() {
                     "open" => open_browser(&format!("http://127.0.0.1:{port}/")),
                     "toggle" => toggle_widget(app),
@@ -330,7 +379,7 @@ pub fn run() {
             }
             tray.build(app)?;
 
-            watch(handle.clone(), sup.clone(), port, restart);
+            watch(handle.clone(), sup.clone(), port, restart, TrayNotice { menu, line: notice_line, shown: None });
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -17,6 +17,7 @@ from . import claude_integration as ci
 from . import holding
 from . import osdirs
 from . import rootguard
+from . import runtime
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
@@ -128,7 +129,8 @@ async def state(request: web.Request) -> web.Response:
         "backup": app["backup"].status(), "log_error": app["log_error"],
         "startup_error": [*app["startup_errors"], *held_problems] or None,
         "brain_path": str(app["paths"].brain), "os": osdirs.os_name(),
-        "warnings": list(app["warnings"]), "drive": drive_})
+        "warnings": list(app["warnings"]), "drive": drive_,
+        "runtime": await t(runtime.hub_view, osdirs.state_dir())})
 
 
 async def setup(request: web.Request) -> web.Response:

@@ -2,6 +2,7 @@
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
+import { runtimeText } from './runtime-model.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
@@ -119,6 +120,9 @@ export async function render(container) {
   container.appendChild(el('h1', {}, 'Settings'));
   const hintLine = el('p', { class: 'muted' });
   container.appendChild(hintLine);
+  // ---- Runtime: one quiet line, only when the hub runs from a runtime slot (filled below).
+  const runtimeLine = el('p', { class: 'muted', hidden: true });
+  container.appendChild(runtimeLine);
 
   // ---- Brain map
   const mapMsg = el('div', { role: 'alert' });
@@ -234,6 +238,8 @@ export async function render(container) {
     hintLine.appendChild(el('code', {}, state.brain_path));
     hintLine.appendChild(document.createTextNode(' in Obsidian for a graph view.'));
   }
+  runtimeLine.textContent = runtimeText(state.runtime);
+  runtimeLine.hidden = !runtimeLine.textContent;
 
   try {
     const map = normalizeMap(await api.get('/api/map'));

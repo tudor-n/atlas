@@ -4,6 +4,12 @@
 //!
 //! A missing or invalid file gives the defaults: port 8090 and nothing to start, so the shell
 //! only connects to an already running hub.
+//!
+//! Two ways to start a hub (see `desktop_config.py`):
+//! - legacy (dev): `{port, root, python, app_dir}`: `<python> -m brainhub` in `app_dir`;
+//! - runtime (plan decision P2): `{port, root, live, state}`: before each start the update step
+//!   refreshes the runtime slots under `<state>/runtime` from the live copy, and the hub runs from
+//!   the slot `current.json` names.
 
 use serde::Deserialize;
 use std::ffi::OsString;
@@ -18,18 +24,44 @@ pub struct DesktopConfig {
     pub root: Option<PathBuf>,
     pub python: Option<PathBuf>,
     pub app_dir: Option<PathBuf>,
+    /// Runtime mode: the live copy the update step pulls and builds slots from.
+    pub live: Option<PathBuf>,
+    /// Runtime mode: the per-OS state folder holding `runtime/` and `update.json`.
+    pub state: Option<PathBuf>,
 }
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        DesktopConfig { port: DEFAULT_PORT, root: None, python: None, app_dir: None }
+        DesktopConfig { port: DEFAULT_PORT, root: None, python: None, app_dir: None, live: None, state: None }
     }
 }
 
+/// How the supervisor starts a hub, from what the file holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    /// Nothing to start: connect to the port only.
+    ConnectOnly,
+    Legacy { root: PathBuf, python: PathBuf, app_dir: PathBuf },
+    Runtime { root: PathBuf, live: PathBuf, state: PathBuf },
+}
+
 impl DesktopConfig {
+    /// Runtime mode wins when the file holds both shapes (`desktop-config` writes one or the other).
+    pub fn mode(&self) -> Mode {
+        match (&self.root, &self.live, &self.state, &self.python, &self.app_dir) {
+            (Some(root), Some(live), Some(state), _, _) => {
+                Mode::Runtime { root: root.clone(), live: live.clone(), state: state.clone() }
+            }
+            (Some(root), _, _, Some(python), Some(app_dir)) => {
+                Mode::Legacy { root: root.clone(), python: python.clone(), app_dir: app_dir.clone() }
+            }
+            _ => Mode::ConnectOnly,
+        }
+    }
+
     /// The supervisor may start a hub only when the file says how.
     pub fn can_spawn(&self) -> bool {
-        self.root.is_some() && self.python.is_some() && self.app_dir.is_some()
+        self.mode() != Mode::ConnectOnly
     }
 
     pub fn hub_url(&self, path: &str) -> String {
@@ -140,6 +172,25 @@ mod tests {
         assert_eq!(c.app_dir, Some(PathBuf::from("D:\\BrainHub\\app")));
         assert!(c.can_spawn());
         assert_eq!(c.hub_url("/widget"), "http://127.0.0.1:8099/widget");
+    }
+
+    #[test]
+    fn config_parses_runtime_file() {
+        let f = temp_file(
+            "runtime.json",
+            r#"{"port": 8098, "root": "/mnt/data/BrainHub", "live": "/mnt/data/BrainHub", "state": "/home/u/.local/share/brainhub"}"#,
+        );
+        let c = load(&f);
+        assert_eq!(c.port, 8098);
+        assert_eq!(c.mode(), Mode::Runtime {
+            root: PathBuf::from("/mnt/data/BrainHub"),
+            live: PathBuf::from("/mnt/data/BrainHub"),
+            state: PathBuf::from("/home/u/.local/share/brainhub"),
+        });
+        assert!(c.can_spawn());
+        // Without the root (or the state folder) there is nothing to start.
+        assert_eq!(load(&temp_file("rt-noroot.json", r#"{"live": "/l", "state": "/s"}"#)).mode(), Mode::ConnectOnly);
+        assert_eq!(load(&temp_file("rt-nostate.json", r#"{"root": "/r", "live": "/l"}"#)).mode(), Mode::ConnectOnly);
     }
 
     #[test]
