@@ -2,8 +2,28 @@
 
 Rulings made while building the dual-boot plan (`plans/2026-10-22-brainhub-dual-boot.md`) that amend or settle the plan or the design. Newest last. D1 and D2 are reserved for the two spikes the plan names.
 
-## D1: Wayland widget spike (Task 2)
-Pending.
+## D1: Wayland widget spike (Task 2): run the shell under XWayland
+Kubuntu 26.04, Plasma on Wayland, two screens (laptop 1536x864 logical at 125 %, external 1920x1080 at 100 %). Shell built from master's `app/desktop`, run connect-only against a temp hub. Window properties read from KWin with a script; visual checks by screenshot and by the owner.
+
+| Check | Native Wayland (no rule) | XWayland (`GDK_BACKEND=x11`) |
+|---|---|---|
+| Transparent, frameless, rounded panel | (not reached) | yes |
+| Stays above other windows | **no** (opened behind Firefox; `keepAbove` false) | yes (`keepAbove` true, owner confirmed) |
+| Not in the taskbar | **no** | yes (`skipTaskbar`, `skipPager`) |
+| Not in Alt+Tab | no | **no** (`skipSwitcher` false; owner saw it) |
+| Draggable | (not reached) | yes (owner) |
+| Expand/collapse resizes | (not reached) | yes (owner) |
+| Position remembered | no (apps can't place windows) | yes, after a clean quit (saved 1400,750 physical = 1120,600 logical, restored exactly) |
+| Kept on screen | no | yes: parked half off the bottom, it came back at y=656 (above the 48 px panel) |
+| Sharp on the 125 % screen | | yes (owner) |
+| Tray icon and menu | | yes (StatusNotifierItem, Active; menu items over D-Bus; owner sees it) |
+
+**Ruling: option 1, XWayland.** It meets the parent spec §3.1 target except Alt+Tab, and needs no KWin rule. Option 2 (native plus a KWin rule) was only baseline-tested: the plan prefers option 1 when it works, and native Wayland can't restore or clamp the position by itself. Task 8 must:
+- set `GDK_BACKEND=x11` before GTK starts (unless the env already sets it);
+- keep the widget out of Alt+Tab: set the GTK window type hint to Utility before the window is mapped (build it hidden, set the hint, then show). If KWin still lists it, fall back to a one-line KWin rule (`skipswitcher`) installed by `desktop-config`;
+- quit cleanly on SIGTERM/SIGINT (logout sends SIGTERM): call `app.exit(0)`, so the window-state plugin saves the position and the supervisor stops the hub. Today a killed shell saves nothing.
+- `WEBKIT_DISABLE_DMABUF_RENDERER` wasn't needed (no blank window).
+- The tray library warns that `libayatana-appindicator` is deprecated; harmless for now.
 
 ## D2: Claude Code memory spike (Task 11)
 Pending.

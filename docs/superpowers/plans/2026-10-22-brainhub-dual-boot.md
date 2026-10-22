@@ -430,7 +430,8 @@
   - Exit code 75 (P8): the next start happens at once and doesn't count as an attempt.
 - `lib.rs`:
   - `open_browser`: unix `xdg-open <url>` (detached, stdio null); Windows unchanged;
-  - apply D1 (for option 1: set `GDK_BACKEND=x11` before Tauri initialises, unless the env already sets `GDK_BACKEND`; the fallback `WEBKIT_DISABLE_DMABUF_RENDERER=1` only if D1 needed it);
+  - apply D1: set `GDK_BACKEND=x11` before Tauri initialises (unless the env already sets `GDK_BACKEND`); build the widget hidden, set its GTK type hint to Utility (keeps it out of Alt+Tab), then show it; if KWin still lists it in Alt+Tab, `desktop-config` installs a KWin rule with `skipswitcher` instead;
+  - quit cleanly on SIGTERM/SIGINT (unix): `app.exit(0)`, so the window state is saved and the supervisor stops the hub (D1);
   - autostart via the existing plugin (it writes `~/.config/autostart/` on Linux).
 - `desktop_config.py`:
   - `default_target()` uses the same rules (Python `osdirs.config_dir() / "desktop.json"`);
