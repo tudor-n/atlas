@@ -7,7 +7,7 @@ import { confirmCard } from './components/confirm-card.js';
 import { mountTopbar } from './components/topbar.js';
 import { notice } from './components/ui.js';
 import { installPress } from './press.js';
-import { parseHash, tabByKey, settingsSection } from './nav-model.js';
+import { parseHash, tabByKey } from './nav-model.js';
 import { driveText, heldText, readonlyReason } from './drive.js';
 
 // Re-exported so older imports keep working; new code imports from ./dom.js.
@@ -142,20 +142,12 @@ async function route() {
     const result = await mod.render(container, params, r.query);
     if (token !== routeToken) { if (typeof result === 'function') result(); return; }
     cleanup = typeof result === 'function' ? result : null;
-    if (name === 'settings' && r.param) showSection(settingsSection(r.param));
   } catch (e) {
     console.error(e);
     clear(container).appendChild(e.drive  // the drive went away: its notice, not an error
       ? el('div', { class: 'vw reduced' }, notice(driveText(e.drive), { title: 'DRIVE' }))
       : el('p', { class: 'bn err', role: 'alert' }, `Couldn't load this page: ${e.message}`));
   }
-}
-
-// `#/settings/<section>`: until Settings is split into sections, scroll to the section's heading if it
-// has one (the old in-page anchors `tablet` and `voice`).
-function showSection(id) {
-  const n = document.getElementById(id);
-  if (n && viewBox().contains(n) && typeof n.scrollIntoView === 'function') n.scrollIntoView({ block: 'start' });
 }
 
 // -- Keyboard: Alt+1…6 the tabs, Alt+0 Settings, Alt+C capture -----------------------------------

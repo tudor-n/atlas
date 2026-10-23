@@ -139,16 +139,3 @@ html, body { height: 100%; overflow: hidden; }
   border-top: 1px solid var(--line); background: var(--ground);
 }
 .actbar > .grow { flex: 1 1 auto; min-width: 0; }
-
-/* Interim, until wave C gives every view a .vw root: old views' content keeps off the edges.
-   Delete this block once no view renders without one. */
-#view > :not(.vw) { margin-left: 24px; margin-right: 24px; }
-#view > :first-child:not(.vw) { margin-top: 20px; }
-#view > :last-child:not(.vw) { margin-bottom: 24px; }
-#view > :not(.vw) button:not(.b):not(.row):not(.tab):not(.swb):not(.linkish):not(.link),
-#tray > .card button:not(.b):not(.row):not(.swb):not(.linkish):not(.link) {
-  min-height: 36px; margin: 2px 4px 2px 0; padding: 0 12px; border: 1px solid var(--line2); border-radius: var(--r-btn);
-  font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
-}
-#view > :not(.vw) button.primary, #tray > .card button.primary { background: var(--text); color: var(--ground); border-color: var(--text); }
-#tray > .card { padding: 12px 20px; border-bottom: 1px solid var(--sub); }
