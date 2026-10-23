@@ -458,7 +458,14 @@ def _widget_state(app) -> dict:
     return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(store.list_proposals()),
             "failed": len(store.list_filings("failed")), "map": load_map(paths.brain),
             "usage": app["usage"].view(settings["usage_warn_pct"], settings["fable_usage_url"]),
-            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now()}
+            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now(),
+            "requests": _open_requests(store)}
+
+
+def _open_requests(store: Store) -> int:
+    """Measurement requests waiting for the owner (phase 3): open and not ignored."""
+    hidden = store.hidden_refs("request")
+    return sum(1 for r in store.list_requests() if r["status"] == "open" and r["id"] not in hidden)
 
 
 async def get_widget(request: web.Request) -> web.Response:

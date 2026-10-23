@@ -4,6 +4,7 @@ import { el, clear } from '../dom.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 import { runtimeText } from './runtime-model.js';
 import { renderClaudeSync } from './claude-sync.js';
+import { renderTabletSettings } from './tablet-settings.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
@@ -342,6 +343,12 @@ export async function render(container) {
     }
   }
   await loadIntegration();
+
+  // ---- the workbench tablet (phase 3): Wi-Fi access, pairing, devices, units
+  const tabletBox = el('div', {});
+  container.appendChild(el('h2', { id: 'tablet' }, 'Tablet'));
+  container.appendChild(tabletBox);
+  subs.push(await renderTabletSettings(tabletBox, () => dead));
 
   // ---- Claude Code sync (claude-sync: shared memory, skills and settings across the OSes)
   const syncBox = el('div', {});

@@ -153,3 +153,9 @@ async def test_arm_probe_caches_failure_for_60s_by_default():
     finally:
         server.close()
         await server.wait_closed()
+
+
+def test_synopsis_counts_measurement_requests():
+    """Phase 3: an agent asked for workbench measurements; the owner should notice at the PC too."""
+    assert synopsis({"overdue": [], "due_today": []}, NO_REVIEW, [], NO_USAGE, NO_AGENTS, 1) == "1 request"
+    assert synopsis({"overdue": [], "due_today": []}, NO_REVIEW, [], NO_USAGE, NO_AGENTS, 2) == "2 requests"

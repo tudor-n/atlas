@@ -46,7 +46,7 @@ class ArmProbe:
         return True
 
 
-def synopsis(today: dict, review: dict, waiting: list[dict], usage: dict, agents: dict) -> str:
+def synopsis(today: dict, review: dict, waiting: list[dict], usage: dict, agents: dict, requests: int = 0) -> str:
     parts: list[str] = []
     k = len(today.get("overdue", []))
     n = k + len(today.get("due_today", []))
@@ -60,6 +60,8 @@ def synopsis(today: dict, review: dict, waiting: list[dict], usage: dict, agents
     rv = review.get("proposals", 0) + review.get("failed", 0)
     if rv > 0:
         parts.append(f"{rv} to review")
+    if requests:  # an agent asked for workbench measurements (phase 3)
+        parts.append("1 request" if requests == 1 else f"{requests} requests")
     five = usage.get("five_hour")
     if five and five.get("used") is not None:
         parts.append(f"5h {five['used']:.0f}% (resets {str(five.get('resets_at', ''))[-5:]})")
@@ -104,11 +106,13 @@ def build_widget(app_state: dict) -> dict:
         projects.append({"slug": p["slug"], "name": p.get("name") or p["slug"], "open": len(mine),
                          "next_time": sum(1 for i in mine if i.kind == "next_time")})
 
-    attention = (review["proposals"] + review["failed"] > 0 or counts["waiting"] > 0
+    requests = int(app_state.get("requests", 0))
+    attention = (review["proposals"] + review["failed"] > 0 or counts["waiting"] > 0 or requests > 0
                  or any((usage.get(w) or {}).get("warn") for w in ("five_hour", "seven_day")))
     top = (today["overdue"] + today["due_today"])[:5]
     return {
-        "synopsis": synopsis(today, review, waiting, usage, agents),
+        "synopsis": synopsis(today, review, waiting, usage, agents, requests),
+        "requests": requests,
         "attention": bool(attention),
         "tiles": list(settings["widget_tiles"]),
         "today": {"overdue": len(today["overdue"]), "due_today": len(today["due_today"]),

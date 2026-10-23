@@ -209,3 +209,20 @@ async def test_the_page_and_its_files(client):
     assert r.headers["Content-Type"] == "application/javascript; charset=utf-8"
     for bad in ("/tablet/server.py", "/tablet/..%2Fwidget.html", "/tablet/tablet.test.mjs", "/tablet/nope.js"):
         assert (await client.get(bad)).status == 404, bad
+
+
+async def test_open_requests_reach_the_widget(client):
+    w = await (await client.get("/api/widget")).json()
+    assert w["requests"] == 0 and w["attention"] is False
+    req = await _request(client)
+    w = await (await client.get("/api/widget")).json()
+    assert w["requests"] == 1 and w["attention"] is True and "1 request" in w["synopsis"]
+    await client.post(f"/api/requests/{req['id']}/ignore")
+    assert (await (await client.get("/api/widget")).json())["requests"] == 0
+
+
+async def test_tablet_lan_status_for_settings(client):
+    s = await (await client.get("/api/tablet-lan")).json()
+    assert s["tablet_lan"] is False and s["listening"] is None and s["error"] is None
+    assert "mm" in s["tablet_units"] and isinstance(s["port"], int)
+    assert s["this_address"] is None or s["this_address"].count(".") == 3

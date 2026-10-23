@@ -74,6 +74,32 @@ async def delete_device(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+def this_address() -> str | None:
+    """This laptop's address on its current network (the source address of its default route; a
+    UDP "connect" to a TEST-NET address sends nothing), if it is a private one: Settings offers it
+    as the tablet address."""
+    import socket
+    from .config import validate_setting
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 9))
+            addr = sock.getsockname()[0]
+        validate_setting("tablet_address", addr)
+        return addr
+    except (OSError, ValueError):
+        return None
+
+
+async def tablet_lan(request: web.Request) -> web.Response:
+    """Settings → Tablet: the switch, the address, whether the hub listens there right now."""
+    _pc_only(request)
+    app = request.app
+    s = await t(load_settings, app["paths"])
+    return web.json_response({"tablet_lan": s["tablet_lan"], "tablet_address": s["tablet_address"],
+                              "tablet_units": s["tablet_units"], "port": app["port"],
+                              "this_address": await t(this_address), **app["lan"].status()})
+
+
 # -- PC: measurement requests (spec §7.3; an agent posts them with brainhub-request) --------
 def _request_view(r: dict, hidden: set[str]) -> dict:
     return {**r, "hidden": r["id"] in hidden}
@@ -338,6 +364,7 @@ async def me(request: web.Request) -> web.Response:
 
 def add_tablet_routes(app: web.Application) -> None:
     app.add_routes([
+        web.get("/api/tablet-lan", tablet_lan),
         web.post("/api/devices/pairing-code", pairing_code),
         web.get("/api/devices", list_devices),
         web.delete("/api/devices/{device_id}", delete_device),
