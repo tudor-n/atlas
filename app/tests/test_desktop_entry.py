@@ -68,9 +68,11 @@ def test_install_writes_the_entry_and_the_icon(tmp_path):
     lines = desktop.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "[Desktop Entry]"
     for line in ("Type=Application", "Name=BrainHub", f'Exec="{exe}" --open', "Icon=dev.brainhub.desktop",
-                 "StartupWMClass=brainhub-desktop", "Categories=Office;Utility;", "StartupNotify=true",
+                 "StartupWMClass=brainhub-desktop", "Categories=Office;Utility;", "StartupNotify=false",
                  "Terminal=false"):
         assert line in lines
+    # A second launch exits at once and would never complete a startup notification.
+    assert "StartupNotify=true" not in lines
     assert any(line.startswith("Comment=") for line in lines)
     assert b"\r" not in desktop.read_bytes()
     assert icon.read_bytes() == de.ICON_SOURCE.read_bytes()

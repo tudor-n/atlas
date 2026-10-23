@@ -65,7 +65,11 @@ def desktop_file(exe: str) -> str:
         f"Icon={APP_ID}",
         f"StartupWMClass={WM_CLASS}",
         "Categories=Office;Utility;",
-        "StartupNotify=true",
+        # false: the usual click is a second launch (the shell already runs from autostart), which
+        # hands `--open` to the running shell and exits at once, before any window of its own. It
+        # never completes a startup notification, so `true` left a busy cursor spinning until
+        # the desktop's timeout.
+        "StartupNotify=false",
         "Terminal=false",
         "",
     ])

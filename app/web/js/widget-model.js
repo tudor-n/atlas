@@ -23,6 +23,27 @@ export function openPlan(name, view, invoke) {
   return { invoke: typeof invoke === 'function' ? invoke : null, view: v, body: v ? { target: 'app', view: v } : { target: 'app' } };
 }
 
+// How long the widget waits for the shell's `open_main` before it falls back to POST /api/open.
+export const OPEN_MAIN_TIMEOUT_MS = 3000;
+
+// Race the shell's `open_main` call against a timeout: 'shell' when it resolved (the main window
+// is showing), 'fallback' when it rejected (an older shell, or one that could not show the
+// window) or did not answer within `ms` (a stuck main thread). Never rejects. `wait` is
+// injectable for tests (default: setTimeout).
+export async function openOutcome(call, ms = OPEN_MAIN_TIMEOUT_MS, wait = (t, f) => setTimeout(f, t)) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = wait(ms, () => resolve('fallback')); });
+  let attempt;
+  try {
+    attempt = Promise.resolve(call()).then(() => 'shell', () => 'fallback');
+  } catch (_) {
+    attempt = Promise.resolve('fallback');
+  }
+  const outcome = await Promise.race([attempt, timeout]);
+  if (timer !== undefined && typeof clearTimeout === 'function') clearTimeout(timer);
+  return outcome;
+}
+
 // The shell's command bridge on a window-like object, or null (a browser, or a shell without it).
 export function tauriInvoke(win) {
   try {
@@ -122,7 +143,9 @@ export function popupRows(name, w) {
     case 'agents':
       rows = ((w.agents || {}).rows || []).map((r) => ({
         text: [r.project_name, r.part].filter(Boolean).join(' · ') || '(unknown)',
-        meta: [r.status, r.where, r.next_time ? 'next time' : ''].filter(Boolean).join(' · '),
+        // "unknown" (no entrypoint seen) and empty parts say nothing: left out.
+        meta: [r.status, r.where === 'unknown' ? '' : r.where, r.next_time ? 'next time' : '']
+          .map((m) => String(m || '').trim()).filter(Boolean).join(' · '),
       }));
       break;
     case 'people':

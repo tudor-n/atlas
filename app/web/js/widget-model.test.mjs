@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome, OPEN_MAIN_TIMEOUT_MS } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -135,4 +135,30 @@ test('tauriInvoke finds the shell bridge or nothing', () => {
   assert.deepEqual(core.calls, [['open_main', { view: 'agents' }]]);
   const trap = { get __TAURI__() { throw new Error('denied'); } };
   assert.equal(tauriInvoke(trap), null);
+});
+
+test('agents popup meta leaves out "unknown" and empty parts', () => {
+  const rows = (r) => popupRows('agents', W({ agents: { rows: [r] } }))[0].meta;
+  assert.equal(rows({ project_name: 'P', status: 'waiting', where: 'unknown', next_time: true }), 'waiting · next time');
+  assert.equal(rows({ project_name: 'P', status: 'running', where: 'terminal', next_time: false }), 'running · terminal');
+  assert.equal(rows({ project_name: 'P', status: 'idle', where: '', next_time: false }), 'idle');
+  assert.equal(rows({ project_name: 'P', status: ' ', where: null }), '');
+  assert.equal(rows({ project_name: 'P', status: 'finished', where: 'IDE', next_time: true }), 'finished · IDE · next time');
+});
+
+test('openOutcome: the shell when open_main resolves, else the fallback (rejected, thrown, too slow)', async () => {
+  assert.equal(OPEN_MAIN_TIMEOUT_MS, 3000);
+  const never = (_t, _f) => 0; // a timer that never fires
+  assert.equal(await openOutcome(() => Promise.resolve(null), 3000, never), 'shell');
+  assert.equal(await openOutcome(() => 'sync value', 3000, never), 'shell');
+  assert.equal(await openOutcome(() => Promise.reject(new Error('could not show the main window')), 3000, never), 'fallback');
+  assert.equal(await openOutcome(() => { throw new Error('no bridge'); }, 3000, never), 'fallback');
+  // No answer: the timer decides, with the timeout it was given.
+  let asked;
+  const now = (t, f) => { asked = t; f(); return 0; };
+  assert.equal(await openOutcome(() => new Promise(() => {}), 1234, now), 'fallback');
+  assert.equal(asked, 1234);
+  // A real (short) timer, and an answer that comes in time.
+  assert.equal(await openOutcome(() => new Promise(() => {}), 10), 'fallback');
+  assert.equal(await openOutcome(() => new Promise((r) => setTimeout(r, 1)), 200), 'shell');
 });

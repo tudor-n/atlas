@@ -9,13 +9,14 @@ pub mod voice;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
+use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, Theme, WebviewUrl, WebviewWindow,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, RunEvent, Runtime, Theme, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, Window, WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -165,7 +166,7 @@ pub fn valid_view(view: &str) -> bool {
     };
     let tail_ok =
         |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-    !head.is_empty() && head.bytes().all(|b| b.is_ascii_lowercase()) && tail.map_or(true, tail_ok)
+    !head.is_empty() && head.bytes().all(|b| b.is_ascii_lowercase()) && tail.is_none_or(tail_ok)
 }
 
 /// The hub page for the main window, at `#/<view>` when the view is valid.
@@ -201,72 +202,222 @@ pub fn wants_main<S: AsRef<str>>(args: &[S]) -> Option<Option<String>> {
     None
 }
 
-/// The main window's navigation state, shared by `show_main` (the main thread) and the watch
-/// thread.
-struct MainNav {
-    /// Navigated to the hub page at least once; it is never reloaded after that (see
-    /// `needs_navigate`).
-    navigated: bool,
-    /// A view asked for before the window was on the hub page: the first navigation takes it.
+/// How long a navigation may go without its window reaching the hub page's URL before the shell
+/// tries again (the load never started). A load that started and failed is caught sooner, by
+/// `on_page_load` (see `after_load`).
+const LOAD_GRACE: Duration = Duration::from_secs(20);
+
+/// Where a hub window (the widget, the main window) stands with its hub page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Page {
+    /// On its starting page, or the last load of the hub page failed (the web view's "could not
+    /// connect" page, whose URL is the hub's): go to the hub page once the hub answers.
+    Start,
+    /// Sent to the hub page at this instant; its load hasn't finished yet.
+    Loading(Instant),
+    /// The hub page finished loading while the hub answered. It is never reloaded after that: the
+    /// page rides out a hub restart by itself (5 s retry, WebSocket reconnect), and a reload would
+    /// drop what the owner was typing.
+    Loaded,
+}
+
+/// What to do with a hub window (`next_step`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// On the hub page: leave it (a view goes there by its hash).
+    OnHub,
+    /// Not there yet, but nothing to do now (the hub is down, or a load is under way).
+    Wait,
+    /// Point it at the hub page.
+    Navigate,
+}
+
+/// The next step for a window in state `page`, whose URL is `current` (when it can be read), on a
+/// hub that answered at the last tick (`up`). `target` is the hub page's URL, or a prefix of every
+/// URL that counts as on it. A loaded page whose URL is somehow off the hub's is sent back; so is
+/// a load that still isn't on the hub's URL after `LOAD_GRACE`.
+pub fn next_step(up: bool, page: Page, now: Instant, current: Option<&str>, target: &str) -> Step {
+    let off = current.is_some_and(|u| !u.starts_with(target));
+    let go = if up { Step::Navigate } else { Step::Wait };
+    match page {
+        Page::Start => go,
+        Page::Loaded if !off => Step::OnHub,
+        Page::Loaded => go,
+        Page::Loading(since) if off && now.saturating_duration_since(since) >= LOAD_GRACE => go,
+        Page::Loading(_) => Step::Wait,
+    }
+}
+
+/// The state after a hub page finished loading (`PageLoadEvent::Finished` at the hub's URL) and the
+/// hub did or didn't answer right after (`answered`). The web views (WebKitGTK, WebView2) report
+/// a failed load as finished, at the URL that failed, so a hub that doesn't answer means the
+/// window shows the "could not connect" page: back to `Start`, to load again once the hub is up.
+/// After a failure a finished load stays `Start`: it is the error page itself, or a stale event,
+/// never one of the shell's navigations (those set `Loading`).
+pub fn after_load(page: Page, answered: bool) -> Page {
+    match (page, answered) {
+        (Page::Start, _) => Page::Start,
+        (_, true) => Page::Loaded,
+        (_, false) => Page::Start,
+    }
+}
+
+/// The view in a main-window URL (`http://127.0.0.1:<port>/#/<view>`), if it is a valid one: a
+/// load that failed keeps the view it was going to.
+pub fn view_in(url: &str, port: u16) -> Option<String> {
+    let view = url.strip_prefix(&main_url(port, None))?.strip_prefix("#/")?;
+    valid_view(view).then(|| view.to_string())
+}
+
+/// A hub window's navigation state. Read and changed on the main thread only (`show_main`, the
+/// watch tick's `steer`, `load_settled`), so a requested view can't be lost to a navigation that
+/// races it; the lock is there for `Sync`.
+struct HubNav {
+    page: Page,
+    /// A view asked for before the main window was on the hub page: the next navigation takes it,
+    /// or (if a load is under way) its hash once that load has finished.
     pending: Option<String>,
-    /// Bumped on every navigation, so the watch thread can tell that `show_main` navigated
-    /// between its reading the URL and taking the lock (it then waits for the next tick).
-    epoch: u64,
 }
 
-/// Managed state for the main window.
-struct MainWindow {
-    port: u16,
-    /// The hub answered at the last watch tick.
-    up: AtomicBool,
-    nav: Mutex<MainNav>,
-    /// `nav.epoch` mirrored outside the lock, read before the URL.
-    epoch: AtomicU64,
+/// One window the hub serves a page to.
+struct HubWindow {
+    label: &'static str,
+    /// The hub page's URL (the widget), or the prefix of its every view (the main window).
+    target: String,
+    nav: Mutex<HubNav>,
+    /// Bumped by every navigation, so a load result that a newer navigation overtook is dropped.
+    /// Outside the lock: `page_finished` reads it from the web view's callback, which must never
+    /// wait for a lock the main thread may hold around a navigation.
+    loads: AtomicU64,
 }
 
-impl MainWindow {
-    fn new(port: u16) -> Self {
-        MainWindow {
-            port,
-            up: AtomicBool::new(false),
-            nav: Mutex::new(MainNav { navigated: false, pending: None, epoch: 0 }),
-            epoch: AtomicU64::new(0),
-        }
+impl HubWindow {
+    fn new(label: &'static str, target: String) -> Self {
+        let nav = Mutex::new(HubNav { page: Page::Start, pending: None });
+        HubWindow { label, target, nav, loads: AtomicU64::new(0) }
     }
 
-    fn lock(&self) -> MutexGuard<'_, MainNav> {
+    fn lock(&self) -> MutexGuard<'_, HubNav> {
         self.nav.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn target(&self) -> String {
-        main_url(self.port, None)
+    fn step(&self, up: bool, w: &WebviewWindow, nav: &HubNav) -> Step {
+        let current = w.url().ok().map(|u| u.to_string());
+        next_step(up, nav.page, Instant::now(), current.as_deref(), &self.target)
     }
 
-    /// Point `w` at the hub page (with the pending view), under the lock.
-    fn navigate(&self, w: &WebviewWindow, nav: &mut MainNav) {
-        if let Ok(url) = main_url(self.port, nav.pending.as_deref()).parse() {
+    /// Point `w` at the hub page (the main window: with the pending view).
+    fn navigate(&self, port: u16, w: &WebviewWindow, nav: &mut HubNav) {
+        let url = if self.label == MAIN { main_url(port, nav.pending.as_deref()) } else { self.target.clone() };
+        if let Ok(url) = url.parse() {
             if w.navigate(url).is_ok() {
-                nav.navigated = true;
+                nav.page = Page::Loading(Instant::now());
                 nav.pending = None;
-                nav.epoch += 1;
-                self.epoch.store(nav.epoch, Ordering::SeqCst);
+                self.loads.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
 }
 
-/// A `size` that fits in the work area (both physical pixels), or None when it already does: the
-/// main window's 1440×900 is taller than a 1080p screen at 125 % (864 logical pixels).
-pub fn fit_into_work_area(size: (u32, u32), area_size: (u32, u32)) -> Option<(u32, u32)> {
-    let fitted = (size.0.min(area_size.0), size.1.min(area_size.1));
-    (fitted != size && fitted.0 > 0 && fitted.1 > 0).then_some(fitted)
+/// Managed state: the hub's port, whether it answered at the last tick, and both hub windows.
+struct Hub {
+    port: u16,
+    up: AtomicBool,
+    widget: HubWindow,
+    main: HubWindow,
 }
+
+impl Hub {
+    fn new(port: u16) -> Self {
+        Hub {
+            port,
+            up: AtomicBool::new(false),
+            widget: HubWindow::new(WIDGET, format!("http://127.0.0.1:{port}/widget")),
+            main: HubWindow::new(MAIN, main_url(port, None)),
+        }
+    }
+
+    fn window(&self, label: &str) -> Option<&HubWindow> {
+        [&self.widget, &self.main].into_iter().find(|w| w.label == label)
+    }
+}
+
+/// Each watch tick, on the main thread: point the widget and the main window (if it was opened)
+/// at their hub pages when `next_step` says so.
+fn steer(app: &AppHandle) {
+    let Some(hub) = app.try_state::<Hub>() else { return };
+    let up = hub.up.load(Ordering::SeqCst);
+    for hw in [&hub.widget, &hub.main] {
+        if let Some(w) = app.get_webview_window(hw.label) {
+            let mut nav = hw.lock();
+            if hw.step(up, &w, &nav) == Step::Navigate {
+                hw.navigate(hub.port, &w, &mut nav);
+            }
+        }
+    }
+}
+
+/// `on_page_load` for both windows (the main thread): a load at the hub page's URL finished. Ask
+/// the hub whether it answers (off the main thread), then settle the window's state on the main
+/// thread. The page itself is never asked: the main window has no IPC.
+fn page_finished(w: &WebviewWindow, url: &tauri::Url) {
+    let app = w.app_handle().clone();
+    let Some(hub) = app.try_state::<Hub>() else { return };
+    let Some(hw) = hub.window(w.label()) else { return };
+    let url = url.to_string();
+    if !url.starts_with(&hw.target) {
+        return; // its starting page
+    }
+    let (port, label, loads) = (hub.port, hw.label, hw.loads.load(Ordering::SeqCst));
+    std::thread::spawn(move || {
+        let answered = supervisor::hub_up(port);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || load_settled(&handle, label, loads, answered, &url));
+    });
+}
+
+/// The main-thread half of `page_finished`: the new state (`after_load`), the main window's pending
+/// view by its hash once its page has loaded, and a failed load's view kept for the next try.
+fn load_settled(app: &AppHandle, label: &str, loads: u64, answered: bool, url: &str) {
+    let Some(hub) = app.try_state::<Hub>() else { return };
+    let Some(hw) = hub.window(label) else { return };
+    let mut nav = hw.lock();
+    if hw.loads.load(Ordering::SeqCst) != loads {
+        return; // a newer navigation: its own load decides
+    }
+    let was = nav.page;
+    nav.page = after_load(was, answered);
+    match nav.page {
+        Page::Start if was != Page::Start => {
+            if label == MAIN && nav.pending.is_none() {
+                nav.pending = view_in(url, hub.port);
+            }
+            eprintln!("brainhub-desktop: the {label} window could not load the hub page; again once the hub answers");
+        }
+        Page::Loaded => {
+            if let (Some(view), Some(w)) = (nav.pending.take(), app.get_webview_window(label)) {
+                let _ = w.eval(hash_script(&view));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The margin `prevent_overflow_with_margin` keeps free below the main window's requested inner
+/// size (logical pixels). On Windows tauri adds the title bar itself; on Linux it doesn't, and
+/// KWin's title bar and frame are about 30 px, so 40 leaves room for them.
+#[cfg(target_os = "linux")]
+const OVERFLOW_MARGIN: (f64, f64) = (0.0, 40.0);
+#[cfg(not(target_os = "linux"))]
+const OVERFLOW_MARGIN: (f64, f64) = (0.0, 0.0);
 
 /// The main window, built on first use (phase 4.5, design §6): decorated, resizable, in the taskbar
 /// and Alt+Tab, black from the first frame, hidden until `show_main` shows it. It starts on
-/// `main.html` ("STARTING THE HUB…"); the watch thread or `show_main` takes it to the hub page.
-/// The window-state plugin restores its position, size and maximised state as it is built.
-/// Call it on the main thread.
+/// `main.html` ("STARTING THE HUB…"); the watch tick or `show_main` takes it to the hub page.
+/// Its 1440×900 is shrunk to the primary monitor's work area before it is built (tauri works it
+/// out from the requested size, scale-aware: the unmapped window can't be measured on Linux); the
+/// window-state plugin then restores the remembered position, size and maximised state, which
+/// win. Call it on the main thread, outside a sent message (`open_main_later`).
 fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
     if let Some(w) = app.get_webview_window(MAIN) {
         return Some(w);
@@ -275,6 +426,7 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
         .title("BrainHub")
         .inner_size(1440.0, 900.0)
         .min_inner_size(900.0, 600.0)
+        .prevent_overflow_with_margin(LogicalSize::new(OVERFLOW_MARGIN.0, OVERFLOW_MARGIN.1))
         // First open only: window-state replaces it with the remembered position.
         .center()
         .decorations(true)
@@ -283,13 +435,15 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
         .theme(Some(Theme::Dark))
         .background_color(Color(0, 0, 0, 255))
         .visible(false)
+        .on_page_load(|w, p| {
+            if p.event() == PageLoadEvent::Finished {
+                page_finished(&w, p.url());
+            }
+        })
         .build();
     match built {
         Ok(w) => {
-            let window = w.as_ref().window();
-            if !w.is_maximized().unwrap_or(false) {
-                fit_on_screen(&window);
-            }
+            keep_on_screen(&w.as_ref().window());
             Some(w)
         }
         Err(e) => {
@@ -299,71 +453,80 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
     }
 }
 
-/// Shrink a window that is bigger than its monitor's work area to fit it, then keep it on screen.
-fn fit_on_screen<R: Runtime>(window: &Window<R>) {
-    let monitor = match window.current_monitor() {
-        Ok(Some(m)) => Some(m),
-        _ => window.primary_monitor().ok().flatten(),
-    };
-    if let (Ok(size), Some(monitor)) = (window.outer_size(), monitor) {
-        let area = monitor.work_area();
-        if let Some((w, h)) = fit_into_work_area((size.width, size.height), (area.size.width, area.size.height)) {
-            // outer → inner: take off the frame the window manager adds.
-            let inner = window.inner_size().unwrap_or(size);
-            let (dw, dh) = (size.width.saturating_sub(inner.width), size.height.saturating_sub(inner.height));
-            let _ = window.set_size(PhysicalSize::new(w.saturating_sub(dw), h.saturating_sub(dh)));
-        }
-    }
-    keep_on_screen(window);
-}
-
 /// Open the main window (design §6): build it if needed; on the hub page already, go to `view` by
 /// its hash (no reload); otherwise remember `view` and go to the hub page now if the hub answers
-/// (else the watch thread does, once it does). Then unminimise, show and focus it. A view that
-/// isn't `valid_view` is dropped. Call it on the main thread (`open_main_later` gets there).
-fn show_main(app: &AppHandle, view: Option<String>) {
+/// (else the watch tick does, once it does; a load under way takes it by its hash when it has
+/// finished). Then unminimise, show and focus it. A view that isn't `valid_view` is dropped.
+/// True when the window is showing. Call it on the main thread (`open_main_later` gets there).
+fn show_main(app: &AppHandle, view: Option<String>) -> bool {
     let view = view.filter(|v| valid_view(v));
-    let Some(main) = app.try_state::<MainWindow>() else { return };
-    let Some(w) = ensure_main(app) else { return };
-    let current = w.url().ok().map(|u| u.to_string());
+    let Some(hub) = app.try_state::<Hub>() else { return false };
+    let Some(w) = ensure_main(app) else { return false };
     {
-        let mut nav = main.lock();
-        let on_hub = !needs_navigate(true, nav.navigated, current.as_deref(), &main.target());
-        if on_hub {
-            if let Some(v) = &view {
-                let _ = w.eval(hash_script(v));
+        let hw = &hub.main;
+        let mut nav = hw.lock();
+        match hw.step(hub.up.load(Ordering::SeqCst), &w, &nav) {
+            Step::OnHub => {
+                if let Some(v) = &view {
+                    let _ = w.eval(hash_script(v));
+                }
             }
-        } else {
-            if view.is_some() {
-                nav.pending = view;
-            }
-            if main.up.load(Ordering::SeqCst) {
-                main.navigate(&w, &mut nav);
+            step => {
+                if view.is_some() {
+                    nav.pending = view;
+                }
+                if step == Step::Navigate {
+                    hw.navigate(hub.port, &w, &mut nav);
+                }
             }
         }
     }
     let _ = w.unminimize();
-    let _ = w.show();
+    let shown = w.show().is_ok();
     let _ = w.set_focus();
+    shown
 }
 
-/// `show_main` on the main thread, from anywhere (the `open_main` command, the single-instance
-/// callback): building a window and reading its URL both need it, and a window built from a
-/// command's thread can deadlock on Windows.
+/// `show_main` on the main thread, from anywhere (the single-instance callback): building a window
+/// and reading its URL both need it. Always from a new thread: `run_on_main_thread` runs the task
+/// inline when it is called on the main thread (tauri-runtime-wry's `send_user_message`), and on
+/// Windows the single-instance callback runs on the main thread inside the plugin's WM_COPYDATA
+/// window procedure, a sent message where WebView2 can't be built. From another thread the task is
+/// posted to the event loop and runs after that message has returned.
 fn open_main_later(app: &AppHandle, view: Option<String>) {
-    let handle = app.clone();
-    if let Err(e) = app.run_on_main_thread(move || show_main(&handle, view)) {
-        eprintln!("brainhub-desktop: could not open the main window: {e}");
-    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let handle = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            show_main(&handle, view);
+        }) {
+            eprintln!("brainhub-desktop: could not open the main window: {e}");
+        }
+    });
 }
+
+/// How long `open_main` waits for the main thread (the widget gives up after 3 s anyway).
+const OPEN_WAIT: Duration = Duration::from_secs(5);
 
 /// The widget's tiles open the main window at a view: `window.__TAURI__.core.invoke('open_main',
 /// {view})`. Granted only to the widget (`allow-open-main` in `capabilities/widget.json`). Async,
-/// so it never runs on the main thread itself (the Windows deadlock when a command builds a
-/// window).
+/// so it runs on the async runtime, never on the main thread (the Windows deadlock when a command
+/// builds a window): `run_on_main_thread` posts `show_main`, and the command waits for its answer.
+/// An error when the window could not be shown (no state, the build failed, no answer in time), so
+/// the widget falls back to POST /api/open.
 #[tauri::command]
-async fn open_main(app: AppHandle, view: Option<String>) {
-    open_main_later(&app, view);
+async fn open_main(app: AppHandle, view: Option<String>) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(show_main(&handle, view));
+    })
+    .map_err(|e| format!("could not reach the main thread: {e}"))?;
+    match tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(OPEN_WAIT)).await {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err("could not show the main window".into()),
+        _ => Err("the main window did not answer in time".into()),
+    }
 }
 
 /// The default browser at `url`, via `cmd /C start "" <url>` without a console flash.
@@ -395,16 +558,6 @@ fn toggle_autostart(app: &AppHandle, item: &CheckMenuItem<Wry>) {
     let enabled = auto.is_enabled().unwrap_or(false);
     let _ = if enabled { auto.disable() } else { auto.enable() };
     let _ = item.set_checked(auto.is_enabled().unwrap_or(false));
-}
-
-/// Should the watch loop point a window (the widget, or the main window) at its hub page (`target`
-/// is that page's URL, or a prefix of every URL that counts as on it)? Only when the port answers
-/// and the window is not already there. Once on the hub's page it stays: the page rides out a hub restart
-/// by itself (5 s retry, WebSocket reconnect), and a reload would drop what the owner was typing.
-/// `current` is the window's URL when it can be read; it catches a window that is somehow not on
-/// the hub page after the first navigation.
-pub fn needs_navigate(up: bool, navigated: bool, current: Option<&str>, target: &str) -> bool {
-    up && (!navigated || current.is_some_and(|u| !u.starts_with(target)))
 }
 
 /// The window position that keeps a `size` window inside the monitor's work area (all physical
@@ -485,54 +638,33 @@ impl TrayNotice {
 }
 
 /// Every 2 s: let the supervisor act, point the widget and the main window (if it was opened) at
-/// their hub pages once the port answers (see `needs_navigate`: never again after that), and keep
-/// "Restart hub" and the tray notice in sync.
+/// their hub pages once the port answers (`steer`, on the main thread: see `next_step`), and keep
+/// "Restart hub" and the tray notice in sync. This thread never waits for the main thread: `steer`
+/// is posted to it, where `show_main` runs too, so neither can undo the other's navigation.
 /// In runtime mode a start first runs claude-sync and the update step (up to 150 s): that runs
 /// here, without the supervisor's lock, so the tray's Restart and Quit never wait for it.
-fn watch(app: AppHandle, sup: Shared, port: u16, restart_item: MenuItem<Wry>, mut notice: TrayNotice) {
-    std::thread::spawn(move || {
-        let target = format!("http://127.0.0.1:{port}/widget");
-        let mut navigated = false;
-        let main = app.state::<MainWindow>();
-        let main_target = main.target();
-        loop {
-            let prep = sup.lock().tick();
-            if let Some(prep) = prep {
-                // Say what is already known (a widget update from the last step) before the wait.
-                let known = sup.lock().notice();
-                notice.show(&app, known);
-                prep.run();
-                sup.lock().start_prepared(prep);
-            }
-            let (up, owns, now) = {
-                let mut s = sup.lock();
-                (s.last_up(), s.owns_child(), s.notice())
-            };
-            notice.show(&app, now);
-            if let Some(w) = app.get_webview_window(WIDGET) {
-                let current = w.url().ok().map(|u| u.to_string());
-                if needs_navigate(up, navigated, current.as_deref(), &target) {
-                    if let Ok(url) = target.parse() {
-                        if w.navigate(url).is_ok() {
-                            navigated = true;
-                        }
-                    }
-                }
-            }
-            main.up.store(up, Ordering::SeqCst);
-            if let Some(w) = app.get_webview_window(MAIN) {
-                // The URL first (it waits for the main thread), then the lock (`show_main` holds it
-                // on the main thread). A navigation in between bumps the epoch: wait a tick.
-                let epoch = main.epoch.load(Ordering::SeqCst);
-                let current = w.url().ok().map(|u| u.to_string());
-                let mut nav = main.lock();
-                if nav.epoch == epoch && needs_navigate(up, nav.navigated, current.as_deref(), &main_target) {
-                    main.navigate(&w, &mut nav);
-                }
-            }
-            let _ = restart_item.set_enabled(owns);
-            std::thread::sleep(TICK);
+fn watch(app: AppHandle, sup: Shared, restart_item: MenuItem<Wry>, mut notice: TrayNotice) {
+    std::thread::spawn(move || loop {
+        let prep = sup.lock().tick();
+        if let Some(prep) = prep {
+            // Say what is already known (a widget update from the last step) before the wait.
+            let known = sup.lock().notice();
+            notice.show(&app, known);
+            prep.run();
+            sup.lock().start_prepared(prep);
         }
+        let (up, owns, now) = {
+            let mut s = sup.lock();
+            (s.last_up(), s.owns_child(), s.notice())
+        };
+        notice.show(&app, now);
+        if let Some(hub) = app.try_state::<Hub>() {
+            hub.up.store(up, Ordering::SeqCst);
+        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || steer(&handle));
+        let _ = restart_item.set_enabled(owns);
+        std::thread::sleep(TICK);
     });
 }
 
@@ -564,7 +696,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![open_main])
         .setup(move |app| {
-            app.manage(MainWindow::new(port));
+            app.manage(Hub::new(port));
             let widget = WebviewWindowBuilder::new(app, WIDGET, WebviewUrl::App("index.html".into()))
                 .title("BrainHub")
                 .inner_size(520.0, 44.0)
@@ -578,6 +710,11 @@ pub fn run() {
                 .shadow(false)
                 // Shown below, once its window type is set.
                 .visible(false)
+                .on_page_load(|w, p| {
+                    if p.event() == PageLoadEvent::Finished {
+                        page_finished(&w, p.url());
+                    }
+                })
                 .build()?;
             // D1: a utility window stays out of KWin's Alt+Tab. The type counts only if it is set
             // before the window is first shown.
@@ -622,8 +759,12 @@ pub fn run() {
             let login_item = login.clone();
             let mut tray = TrayIconBuilder::with_id(TRAY).tooltip("BrainHub").menu(&menu).on_menu_event(
                 move |app, e| match e.id.as_ref() {
-                    // The menu runs on the main thread: show_main can build the window here.
-                    "open" => show_main(app, None),
+                    // The menu runs on the main thread, from tauri's own posted event (muda's handler
+                    // only forwards it to the event loop), never inside a sent message: show_main can
+                    // build the window here.
+                    "open" => {
+                        show_main(app, None);
+                    }
                     "browser" => open_browser(&format!("http://127.0.0.1:{port}/")),
                     "toggle" => toggle_widget(app),
                     "login" => toggle_autostart(app, &login_item),
@@ -659,9 +800,10 @@ pub fn run() {
             if let Some(w) = claude_watch {
                 w.spawn();
             }
-            watch(handle.clone(), sup.clone(), port, restart, TrayNotice { menu, line: notice_line, shown: None });
+            watch(handle.clone(), sup.clone(), restart, TrayNotice { menu, line: notice_line, shown: None });
             // Started by the launcher (`--open[=view]`): the main window too, not only the widget.
-            let args: Vec<String> = std::env::args().collect();
+            // args_os: `std::env::args` panics on an argument that isn't UTF-8.
+            let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
             if let Some(view) = wants_main(&args) {
                 show_main(handle, view);
             }
@@ -708,39 +850,107 @@ mod tests {
 
     const T: &str = "http://127.0.0.1:8099/widget";
 
+    fn at(secs: u64) -> (Instant, Instant) {
+        let t0 = Instant::now();
+        (t0, t0 + Duration::from_secs(secs))
+    }
+
     #[test]
     fn navigates_once_when_the_hub_answers() {
-        assert!(!needs_navigate(false, false, Some("http://tauri.localhost/index.html"), T));
-        assert!(needs_navigate(true, false, Some("http://tauri.localhost/index.html"), T));
-        assert!(needs_navigate(true, false, None, T));
-        // Already on the hub page: a hub restart (down, then up) must not reload it.
-        assert!(!needs_navigate(true, true, Some(T), T));
-        assert!(!needs_navigate(true, true, Some("http://127.0.0.1:8099/widget#x"), T));
-        assert!(!needs_navigate(true, true, None, T));
-        // Somehow not on the hub page any more: point it back.
-        assert!(needs_navigate(true, true, Some("http://tauri.localhost/index.html"), T));
-        assert!(!needs_navigate(false, true, Some("http://tauri.localhost/index.html"), T));
+        let (t0, now) = at(1);
+        let start = Some("http://tauri.localhost/index.html");
+        assert_eq!(next_step(false, Page::Start, now, start, T), Step::Wait);
+        assert_eq!(next_step(true, Page::Start, now, start, T), Step::Navigate);
+        assert_eq!(next_step(true, Page::Start, now, None, T), Step::Navigate);
+        // A load under way: wait for it (its URL may still be the starting page's for a moment).
+        assert_eq!(next_step(true, Page::Loading(t0), now, start, T), Step::Wait);
+        assert_eq!(next_step(true, Page::Loading(t0), now, Some(T), T), Step::Wait);
+        // On the hub page: a hub restart (down, then up) must not reload it.
+        assert_eq!(next_step(true, Page::Loaded, now, Some(T), T), Step::OnHub);
+        assert_eq!(next_step(false, Page::Loaded, now, Some(T), T), Step::OnHub);
+        assert_eq!(next_step(true, Page::Loaded, now, Some("http://127.0.0.1:8099/widget#x"), T), Step::OnHub);
+        assert_eq!(next_step(true, Page::Loaded, now, None, T), Step::OnHub);
+        // Somehow not on the hub page any more: point it back, once the hub answers.
+        assert_eq!(next_step(true, Page::Loaded, now, start, T), Step::Navigate);
+        assert_eq!(next_step(false, Page::Loaded, now, start, T), Step::Wait);
+    }
+
+    #[test]
+    fn a_load_that_never_reaches_the_hub_url_is_tried_again() {
+        let start = Some("tauri://localhost/main.html");
+        let (t0, late) = at(LOAD_GRACE.as_secs());
+        assert_eq!(next_step(true, Page::Loading(t0), late, start, T), Step::Navigate);
+        assert_eq!(next_step(false, Page::Loading(t0), late, start, T), Step::Wait);
+        // At the hub's URL it is the web view's own business (a failure comes back as Start).
+        assert_eq!(next_step(true, Page::Loading(t0), late, Some(T), T), Step::Wait);
+        let (t0, early) = at(LOAD_GRACE.as_secs() - 1);
+        assert_eq!(next_step(true, Page::Loading(t0), early, start, T), Step::Wait);
+        // A clock read before the navigation's own (never negative).
+        assert_eq!(next_step(true, Page::Loading(early), t0, start, T), Step::Wait);
+    }
+
+    #[test]
+    fn a_failed_load_goes_back_to_start() {
+        let t0 = Instant::now();
+        // The shell's navigation finished while the hub answered: loaded, never reloaded.
+        assert_eq!(after_load(Page::Loading(t0), true), Page::Loaded);
+        // It finished on the "could not connect" page (the hub didn't answer): try again later.
+        assert_eq!(after_load(Page::Loading(t0), false), Page::Start);
+        // The page reloaded itself: fine while the hub answers, the error page when it doesn't.
+        assert_eq!(after_load(Page::Loaded, true), Page::Loaded);
+        assert_eq!(after_load(Page::Loaded, false), Page::Start);
+        // After a failure, the error page's own load (or a stale event) never counts as loaded.
+        assert_eq!(after_load(Page::Start, true), Page::Start);
+        assert_eq!(after_load(Page::Start, false), Page::Start);
+        // The cycle: down → Start → navigate once up → Loading → Loaded.
+        let page = after_load(Page::Loading(t0), false);
+        assert_eq!(next_step(true, page, t0, Some("http://127.0.0.1:8099/"), "http://127.0.0.1:8099/"), Step::Navigate);
+    }
+
+    #[test]
+    fn failed_loads_keep_their_view() {
+        assert_eq!(view_in("http://127.0.0.1:8099/#/agents", 8099), Some("agents".to_string()));
+        assert_eq!(view_in("http://127.0.0.1:8099/#/settings/tablet", 8099), Some("settings/tablet".to_string()));
+        assert_eq!(view_in("http://127.0.0.1:8099/", 8099), None);
+        assert_eq!(view_in("http://127.0.0.1:8099/#/Agents", 8099), None);
+        assert_eq!(view_in("http://127.0.0.1:8099/#agents", 8099), None);
+        assert_eq!(view_in("http://127.0.0.1:8090/#/agents", 8099), None);
+        assert_eq!(view_in("http://127.0.0.1:8099/widget", 8099), None);
     }
 
     #[test]
     fn main_window_navigates_independently_of_the_widget() {
+        let now = Instant::now();
         let m = main_url(8099, None);
         assert_eq!(m, "http://127.0.0.1:8099/");
         // First page: go to the hub once it answers.
-        assert!(!needs_navigate(false, false, Some("tauri://localhost/main.html"), &m));
-        assert!(needs_navigate(true, false, Some("tauri://localhost/main.html"), &m));
-        assert!(needs_navigate(true, false, Some("http://tauri.localhost/main.html"), &m));
+        assert_eq!(next_step(false, Page::Start, now, Some("tauri://localhost/main.html"), &m), Step::Wait);
+        assert_eq!(next_step(true, Page::Start, now, Some("tauri://localhost/main.html"), &m), Step::Navigate);
+        assert_eq!(next_step(true, Page::Start, now, Some("http://tauri.localhost/main.html"), &m), Step::Navigate);
+        // A failed load sits at the hub's URL: it is Start, so it loads again.
+        assert_eq!(next_step(true, Page::Start, now, Some("http://127.0.0.1:8099/#/agents"), &m), Step::Navigate);
         // On the hub page, at any view: never again (a hub restart must not reload it).
-        assert!(!needs_navigate(true, true, Some("http://127.0.0.1:8099/"), &m));
-        assert!(!needs_navigate(true, true, Some("http://127.0.0.1:8099/#/agents"), &m));
-        assert!(!needs_navigate(true, true, Some("http://127.0.0.1:8099/#/settings/tablet"), &m));
-        assert!(!needs_navigate(true, true, None, &m));
+        for u in ["http://127.0.0.1:8099/", "http://127.0.0.1:8099/#/agents", "http://127.0.0.1:8099/#/settings/tablet"]
+        {
+            assert_eq!(next_step(true, Page::Loaded, now, Some(u), &m), Step::OnHub, "{u}");
+        }
+        assert_eq!(next_step(true, Page::Loaded, now, None, &m), Step::OnHub);
         // Somehow off it (the starting page, another port): back to the hub.
-        assert!(needs_navigate(true, true, Some("tauri://localhost/main.html"), &m));
-        assert!(needs_navigate(true, true, Some("http://127.0.0.1:8090/"), &m));
+        assert_eq!(next_step(true, Page::Loaded, now, Some("tauri://localhost/main.html"), &m), Step::Navigate);
+        assert_eq!(next_step(true, Page::Loaded, now, Some("http://127.0.0.1:8090/"), &m), Step::Navigate);
         // The widget's own target is unaffected by the main window's.
-        assert!(!needs_navigate(true, true, Some("http://127.0.0.1:8099/widget"), T));
-        assert!(needs_navigate(true, true, Some("http://127.0.0.1:8099/#/today"), T));
+        assert_eq!(next_step(true, Page::Loaded, now, Some("http://127.0.0.1:8099/widget"), T), Step::OnHub);
+        assert_eq!(next_step(true, Page::Loaded, now, Some("http://127.0.0.1:8099/#/today"), T), Step::Navigate);
+    }
+
+    #[test]
+    fn hub_windows_have_their_own_targets() {
+        let hub = Hub::new(8099);
+        assert_eq!(hub.window(WIDGET).map(|w| w.target.as_str()), Some("http://127.0.0.1:8099/widget"));
+        assert_eq!(hub.window(MAIN).map(|w| w.target.as_str()), Some("http://127.0.0.1:8099/"));
+        assert!(hub.window("other").is_none());
+        assert_eq!(hub.main.lock().page, Page::Start);
+        assert!(!hub.up.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -793,17 +1003,8 @@ mod tests {
         assert_eq!(wants_main(&["brainhub-desktop", "open"]), None);
         // The first --open… decides; other arguments don't matter.
         assert_eq!(wants_main(&["x", "--verbose", "--open=today", "--open"]), Some(Some("today".to_string())));
-        assert_eq!(wants_main(&vec!["x".to_string(), "--open".to_string()]), Some(None));
-    }
-
-    #[test]
-    fn fit_shrinks_only_what_is_too_big() {
-        // 1920x1080 at 125 %: 1440x900 logical is 1800x1125 physical; the work area is 1920x1020.
-        assert_eq!(fit_into_work_area((1800, 1125), (1920, 1020)), Some((1800, 1020)));
-        assert_eq!(fit_into_work_area((1440, 900), (1920, 1020)), None);
-        assert_eq!(fit_into_work_area((2000, 1200), (1920, 1020)), Some((1920, 1020)));
-        // An unknown (zero) work area changes nothing.
-        assert_eq!(fit_into_work_area((1440, 900), (0, 0)), None);
+        let owned: Vec<String> = ["x", "--open"].iter().map(|a| a.to_string()).collect();
+        assert_eq!(wants_main(&owned), Some(None));
     }
 
     #[test]

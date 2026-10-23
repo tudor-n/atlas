@@ -2,7 +2,7 @@
 // in the arm language (phase 4.5 design §7; layout in widget.css).
 import { get, post, put, onEvent } from './api.js';
 import { el, clear } from './dom.js';
-import { TILE_LABEL, tileSummary, popupRows, synopsisText, loadDraft, saveDraft, openPlan, tauriInvoke } from './widget-model.js';
+import { TILE_LABEL, tileSummary, popupRows, synopsisText, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome } from './widget-model.js';
 import { widgetVoice } from './views/voice-model.js';
 
 const WIDTH = 520;
@@ -129,17 +129,13 @@ function renderBar() {
 }
 
 // In the desktop shell a view opens in the main window (`open_main`); in a browser, or if the shell
-// refuses, POST /api/open opens it in the browser. The arm tile always posts its own target.
+// refuses (an older shell, a window it could not show) or doesn't answer within 3 s, POST /api/open
+// opens it in the browser. The arm tile always posts its own target.
 async function openInApp(name, view) {
   popupError = '';
   const plan = openPlan(name, view, tauriInvoke(window));
   try {
-    if (plan.invoke) {
-      try {
-        await plan.invoke('open_main', { view: plan.view });
-        return;
-      } catch (_) { /* an older shell without the command: the browser instead */ }
-    }
+    if (plan.invoke && await openOutcome(() => plan.invoke('open_main', { view: plan.view })) === 'shell') return;
     await post('/api/open', plan.body);
   } catch (e) {
     popupError = e.message || 'Could not open';
