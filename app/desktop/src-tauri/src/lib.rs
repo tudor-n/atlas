@@ -4,13 +4,14 @@
 pub mod claude_watch;
 pub mod config;
 pub mod supervisor;
+pub mod voice;
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, RunEvent, Runtime, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent, Wry,
@@ -356,7 +357,15 @@ pub fn run() {
             let restart = MenuItem::with_id(handle, "restart", "Restart hub", false, None::<&str>)?;
             let quit = MenuItem::with_id(handle, "quit", "Quit", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(handle)?;
-            let menu = Menu::with_items(handle, &[&open, &toggle, &login, &restart, &sep, &quit])?;
+            // Phase 4: pause the voice (the spec's "pause notifications": it's the one audible channel).
+            let voice_items = voice::ITEMS
+                .iter()
+                .map(|(id, label, _)| MenuItem::with_id(handle, *id, *label, true, None::<&str>))
+                .collect::<Result<Vec<_>, _>>()?;
+            let voice_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
+                voice_items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<Wry>).collect();
+            let pause_voice = Submenu::with_items(handle, "Pause voice", true, &voice_refs)?;
+            let menu = Menu::with_items(handle, &[&open, &toggle, &pause_voice, &login, &restart, &sep, &quit])?;
             // The notice line (no slot, widget update): shown at the top only while it applies.
             let notice_line = MenuItem::with_id(handle, "notice", "", false, None::<&str>)?;
 
@@ -372,7 +381,16 @@ pub fn run() {
                         sup_menu.lock().stop();
                         app.exit(0);
                     }
-                    _ => {}
+                    id => {
+                        if let Some(body) = voice::body_for(id) {
+                            // Off the menu thread: a slow or stopped hub never freezes the tray.
+                            std::thread::spawn(move || {
+                                if let Err(e) = voice::post_pause(port, body) {
+                                    eprintln!("brainhub-desktop: pause voice: {e}");
+                                }
+                            });
+                        }
+                    }
                 },
             );
             if let Some(icon) = app.default_window_icon() {
