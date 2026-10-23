@@ -363,6 +363,19 @@ Recall (Haiku, `recall_top_n` 12): first text after 1.4–3.2 s, `done` after 2.
 - **Haiku for filing is no fix.** It was not reliably faster, and it filed worse: it added `(from e-…)` to every proposal text, and for `buy coffee` it wrote no note because "personal/ does not exist yet". Sonnet created `personal/errands.md`.
 - **Usage meter (rulings 20–21):** with no status line at all, `/api/usage` read 7 % (5 h) and 9 % (weekly) from the hub's own runs, the filings' schema runs included. Each run's `rate_limit_event` agreed with the previous probes. No `~/.claude/projects/` folder was created.
 
+**After the speed fixes** (same day, same three entries and two questions; rulings 22–23 in `phase2-decisions.md`):
+
+| Stage | Before | After |
+|---|---|---|
+| `claude` start-up to `system/init` | 0.54–0.94 s | 0.22–0.26 s |
+| Process exit after its `result` line | 0.5–0.9 s | 0.01–0.03 s |
+| Capture → `done`, Sonnet (robot arm / paper / coffee) | 10.7–11.2 / 11.4–21.5 / 9.8–12.4 s | 21.2 / 8.1 / 8.2 s |
+| Recall `done` | 2.5–4.2 s | 2.3–2.7 s |
+
+- Every run saves about 1.2–1.6 s. The rest is the model, and it varies a lot: the robot arm entry spent 13 s between its last write and `wrapping up`, composing four proposals.
+- **Live progress,** as a WebSocket client saw it for the robot arm entry: `filing.started` at 0.03 s, then `looking for projects/robotarm/**` (2.3 s), `looking for general/**` (2.8 s), `writing projects/robotarm/notes.md` (7.2 s), `writing general/andrei.md` (8.2 s), `wrapping up` (21.1 s), `filing.done` (21.2 s). `GET /api/filings/<id>` mid-filing carried `progress` (`started`, `step`), and `null` once done. The real tool names were `Glob`, `Write` and `StructuredOutput`.
+- The meter still updated from the runs (11 % and 10 %), so the env var doesn't hide `rate_limit_event`. No `~/.claude/projects/` folder was created.
+
 ## Not built yet
 - **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests. On the dual boot it must reach the hub at one fixed address whichever OS is booted, and its pairing tokens go in shared `data/` (dual-boot design §8.3).
 - **Phase 4:** voice, and the tray's "pause notifications" with it.

@@ -5,7 +5,7 @@ A short pointer, updated 2026-10-23. It is no longer the only thing carried betw
 ## Where things stand
 - **Phases 1 and 2 and the dual-boot port** (plan Tasks 1–12, PR #3) are merged into `master` (2026-10-22). CI runs on Ubuntu and Windows.
 - **What remains:**
-  1. **The owner's feedback from the Linux test drive** (below): the usage meter is fixed on branch `test-drive-fixes`; the slowness is measured, and the owner picks the fixes.
+  1. **The owner's feedback from the Linux test drive** (below): fixed on branch `test-drive-fixes` (usage meter, speed). The owner merges it; then the next test drive checks the meter against claude.ai and the filing card's live progress.
   2. The Windows half of the Claude Code memory spike (ruling D2), at a reboot into Windows. Work in a fresh Windows clone, never in `D:\BrainHub`.
   3. The Windows-side checks: the widget, built hidden and then shown, behaves as before (D1); claude-sync's junctions, drive-letter keys and `D:\` defaults work for real (so far only CI ran them).
   4. The rollout, with the owner: plan → Rollout (`docs/superpowers/plans/2026-10-22-brainhub-dual-boot.md`). Kubuntu (live copy to master, `runtime init`, the shell, the integration and its entrypoint checks, `claude-sync` and labelling one-OS notes, the setup wizard on the real root), then Windows, then design §10's verification (`app/README.md` → Verification), which also covers D1's open desktop checks.
@@ -23,7 +23,8 @@ A throwaway test drive on Kubuntu: the hub and widget from the dev copy on a scr
    - Recall: first text after 1.4–3.2 s, done after 2.5–4.2 s. That's faster than phase 1's numbers.
    - Haiku for filing is no fix: not reliably faster, and worse filings.
    - The filing card shows a static "Filing…" for the whole wait.
-   - **Options for the owner to pick from:** (a) live progress on the filing card (the agent's steps: "reading projects/robotarm/notes.md", "writing …", elapsed seconds); (b) end each run at its `result` line instead of waiting for the CLI to exit (about 0.9 s off recall's "done", about 0.5 s off filing); (c) fewer agent turns, e.g. a listing of the brain's existing notes in the filing prompt so the agent needn't search first (calibration territory: `prompts/filing.md`).
+   - **The owner picked (2026-10-23), built on `test-drive-fixes`:** live progress on the filing card ("Filing… writing personal/errands.md · 5 s", ruling 23), and the CLI's slow exit and start-up are gone (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, ruling 22: about 1.2–1.6 s off every run; recall is done in 2.3–2.7 s).
+   - Not picked, still open: fewer agent turns (e.g. a listing of the brain's existing notes in the filing prompt, so the agent needn't search first). That's calibration territory (`prompts/filing.md`): measure before and after.
 3. Confirmed working in the same session:
    - **The "D: went missing" drill passed.** The banner showed, the folder was never created, and a capture was held. Recovery took about 7 s after the folder came back (exit 75, then a restart). The capture landed with its original timestamp.
    - A VS Code session showed **Where = IDE**, so that entrypoint value is right.

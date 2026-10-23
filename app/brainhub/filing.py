@@ -88,6 +88,46 @@ def build_filing_prompt(entry: Entry, m: BrainMap, open_items: list[Item],
     return "\n".join(lines)
 
 
+# -- live progress -----------------------------------------------------------
+_STEP_VERBS = {"Read": "reading", "Write": "writing", "Edit": "editing", "MultiEdit": "editing",
+               "Glob": "looking for", "Grep": "searching for"}
+_STEP_BARE = {"Glob": "looking for files", "Grep": "searching"}
+STEP_MAX = 80
+
+
+def _note_path(raw: str, cwd: Path) -> str:
+    p = Path(raw)
+    if not p.is_absolute():
+        return p.as_posix()
+    for base in (cwd, cwd.resolve()):
+        try:
+            return p.relative_to(base).as_posix()
+        except ValueError:
+            pass
+    return p.name
+
+
+def step_label(tool: str, tool_input, cwd: Path) -> str:
+    """A short line for the filing card about what the agent is doing now, from one of its tool
+    calls: "reading projects/robotarm/notes.md". Agent text: the page sets it with textContent."""
+    if tool == "StructuredOutput":  # how --json-schema hands back the result: the last step
+        return "wrapping up"
+    verb = _STEP_VERBS.get(tool)
+    if verb is None:
+        return "working"
+    args = tool_input if isinstance(tool_input, dict) else {}
+    pattern = args.get("pattern") if isinstance(args.get("pattern"), str) else ""
+    if tool == "Grep":
+        target = f'"{pattern}"' if pattern else ""
+    elif tool == "Glob":
+        target = pattern
+    else:
+        fp = args.get("file_path")
+        target = _note_path(fp, cwd) if isinstance(fp, str) and fp else ""
+    label = f"{verb} {target}" if target else _STEP_BARE.get(tool, verb)
+    return label if len(label) <= STEP_MAX else label[:STEP_MAX - 1] + "…"
+
+
 # -- parsing -----------------------------------------------------------------
 def valid_date(value) -> bool:
     if not isinstance(value, str):
@@ -255,6 +295,9 @@ class FilingWorker:
         self.on_commit = on_commit
         self.queue: asyncio.Queue = asyncio.Queue()
         self._lock = asyncio.Lock()  # one filing or correction at a time
+        # entry id -> {"started", "step"} while it is being filed: a card opened mid-filing shows
+        # the agent's latest step at once (memory only; filing.progress carries each new one).
+        self.progress: dict[str, dict] = {}
 
     def _remove_worktree(self, path: Path) -> None:
         """Unregister and delete a worktree, including a plain leftover folder git doesn't know."""
@@ -357,6 +400,7 @@ class FilingWorker:
             await t(self.store.delete_proposals, entry_id)
             filing.attempts += 1
             await t(self.store.upsert_filing, filing)
+            self.progress[entry_id] = {"started": datetime.now().isoformat(timespec="seconds"), "step": None}
             await self.broadcast("filing.started", {"entry_id": entry_id})
             # 4. isolated worktree at main HEAD
             if wt_path.exists():
@@ -367,12 +411,18 @@ class FilingWorker:
             # 5. run the agent
             open_items = await t(self.store.list_items, status=["open", "to_read"])
             settings = await t(load_settings, self.paths)
+
+            async def on_step(tool: str, tool_input) -> None:
+                step = step_label(tool, tool_input, wt_path)
+                self.progress[entry_id]["step"] = step
+                await self.broadcast("filing.progress", {"entry_id": entry_id, "step": step})
+
             raw = await self.runner.run_json(
                 build_filing_prompt(entry, m, open_items, correction, previous, fix_in_place),
                 cwd=wt_path, model=settings["filing_model"],
                 system_prompt_file=self.paths.prompts / "filing.md",
                 allowed_tools=ALLOWED_TOOLS, json_schema=FILING_SCHEMA,
-                max_turns=MAX_TURNS, timeout_s=settings["filing_timeout_s"])
+                max_turns=MAX_TURNS, timeout_s=settings["filing_timeout_s"], on_step=on_step)
             synopsis, files, proposals = parse_filing_result(raw, m, {i.id for i in open_items})
             # 6. undo any edit to protected paths, in the worktree only
             changed = await t(wt.changed_paths)
@@ -406,6 +456,7 @@ class FilingWorker:
             await t(self.store.upsert_filing, filing)
             await self.broadcast("filing.failed", {"entry_id": entry_id, "error": filing.error})
         finally:
+            self.progress.pop(entry_id, None)
             # 9. always clean up the worktree; mirror pending proposals into brain/_items
             try:
                 await t(self._remove_worktree, wt_path)

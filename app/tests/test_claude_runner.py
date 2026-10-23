@@ -339,3 +339,40 @@ async def test_failed_run_names_the_clis_own_error(tmp_path):
     with pytest.raises(ClaudeError, match="exited 1.*overloaded"):
         [c async for c in ClaudeRunner(cli).stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
                                                         timeout_s=20, **_KW)]
+
+
+# -- speed (owner feedback 2026-10-22) -------------------------------------------------------------
+def test_child_env_skips_nonessential_traffic(monkeypatch):
+    """Measured with 2.1.309: start-up 0.5-0.9 s -> 0.2 s, and the exit after the result 0.7-0.9 s
+    -> 0.02 s (no telemetry flush, update check or error reporting in the hub's headless runs)."""
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", raising=False)
+    assert child_env()["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+
+
+async def test_run_json_reports_each_tool_step(tmp_path):
+    steps = []
+
+    async def on_step(tool, tool_input):
+        steps.append((tool, tool_input))
+
+    msg = {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Let me look."},
+        {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/w/a.md"}},
+        {"type": "tool_use", "id": "t2", "name": "Glob", "input": {"pattern": "**/*.md"}}]}}
+    odd = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": 3}, "x"]}}
+    cli = _fake_cli(tmp_path, _lines(msg, odd, {"type": "assistant"},
+                                     {"type": "result", "structured_output": {"n": 1}}))
+    out = await ClaudeRunner(cli).run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                           json_schema={}, timeout_s=20, on_step=on_step, **_KW)
+    assert out == {"n": 1}
+    assert steps == [("Read", {"file_path": "/w/a.md"}), ("Glob", {"pattern": "**/*.md"})]
+
+
+async def test_a_failing_step_callback_never_breaks_a_filing(tmp_path):
+    async def on_step(tool, tool_input):
+        raise RuntimeError("socket gone")
+
+    msg = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {}}]}}
+    cli = _fake_cli(tmp_path, _lines(msg, {"type": "result", "structured_output": {"n": 1}}))
+    assert await ClaudeRunner(cli).run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                            json_schema={}, timeout_s=20, on_step=on_step, **_KW) == {"n": 1}

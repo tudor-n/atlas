@@ -335,7 +335,8 @@ async def get_filing(request: web.Request) -> web.Response:
     filing = await t(app["store"].get_filing, eid)
     proposals = await t(app["store"].list_proposals, entry_id=eid)
     return web.json_response({"filing": asdict(filing) if filing else None,
-                              "proposals": [asdict(p) for p in proposals]})
+                              "proposals": [asdict(p) for p in proposals],
+                              "progress": app["worker"].progress.get(eid)})
 
 
 async def _in_progress(app, eid: str) -> bool:

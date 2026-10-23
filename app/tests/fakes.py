@@ -1,11 +1,12 @@
 class FakeRunner:
     """Test double for ClaudeRunner. Records every call in `.calls`."""
 
-    def __init__(self, json_result=None, stream_chunks=(), on_run=None, raise_error=None):
+    def __init__(self, json_result=None, stream_chunks=(), on_run=None, raise_error=None, steps=()):
         self.json_result = json_result
         self.stream_chunks = stream_chunks
         self.on_run = on_run
         self.raise_error = raise_error
+        self.steps = steps  # (tool, input) pairs run_json plays through on_step, as the agent works
         self.calls: list[dict] = []
 
     def _begin(self, prompt, kwargs):
@@ -17,6 +18,9 @@ class FakeRunner:
 
     async def run_json(self, prompt, **kwargs):
         self._begin(prompt, kwargs)
+        for tool, tool_input in self.steps:
+            if kwargs.get("on_step"):
+                await kwargs["on_step"](tool, tool_input)
         return self.json_result
 
     async def stream_text(self, prompt, **kwargs):

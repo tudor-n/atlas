@@ -616,3 +616,12 @@ async def test_own_claude_runs_feed_the_usage_meter(app_paths, aiohttp_client):
     assert msg["type"] == "usage.changed" and msg["data"]["five_hour"]["used"] == 7.0
     assert (await (await client.get("/api/usage")).json())["five_hour"]["used"] == 7.0
     await app["runner"].on_rate_limit({"status": "allowed"})  # no windows: nothing to record
+
+
+async def test_filing_card_carries_live_progress(ready_client, app):
+    eid = (await (await ready_client.post("/api/entries", json={"text": "x", "source": "pc"})).json())["entry_id"]
+    app["worker"].progress[eid] = {"started": "2026-10-23T10:00:00", "step": "reading a.md"}
+    card = await (await ready_client.get(f"/api/filings/{eid}")).json()
+    assert card["progress"] == {"started": "2026-10-23T10:00:00", "step": "reading a.md"}
+    del app["worker"].progress[eid]
+    assert (await (await ready_client.get(f"/api/filings/{eid}")).json())["progress"] is None

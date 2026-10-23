@@ -2,6 +2,7 @@
 // "Confirm all", "Tell it what's wrong", and Retry for failed filings.
 import * as api from '../api.js';
 import { el, clear, fmtWhen } from '../dom.js';
+import { filingStatus } from './filing-status.js';
 
 // -- map cache (project options) ------------------------------------------------------------
 let mapCache = null;
@@ -69,6 +70,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
   const root = el('section', { class: 'card', 'aria-label': 'Filing review' });
   const s = {
     data: null, map: null, items: {}, loadError: '', notice: '', busy: false,
+    progress: null,  // while filing: {started, step}, from the card's load and filing.progress
     draft: draftFor(entryId),
   };
   const unsubs = [];
@@ -78,6 +80,11 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
   unsubs.push(api.onEvent('filing.done', (ev) => { if (mine(ev)) { s.notice = ''; reload(); } }));
   unsubs.push(api.onEvent('filing.failed', (ev) => { if (mine(ev)) { s.notice = ''; reload(); } }));
   unsubs.push(api.onEvent('filing.started', (ev) => { if (mine(ev)) reload(); }));
+  unsubs.push(api.onEvent('filing.progress', (ev) => {
+    if (!mine(ev)) return;
+    s.progress = { ...(s.progress || {}), step: ev.data.step };
+    tick();
+  }));
   unsubs.push(api.onEvent('ws.open', () => reload()));
 
   async function reload() {
@@ -86,6 +93,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       const [data, map] = await Promise.all([api.get(`/api/filings/${encodeURIComponent(entryId)}`), loadMap().catch(() => null)]);
       s.data = data;
       s.map = map;
+      s.progress = data.progress || null;
       s.loadError = '';
       if (data.proposals.some((p) => p.status === 'proposed' && p.ptype === 'update')) {
         try {
@@ -322,8 +330,28 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       btn, err);
   }
 
+  // -- filing status line (ticks once a second while filing) ---------------------------------
+  let statusEl = null;
+  let ticker = null;
+  function tick() {
+    if (!statusEl || !s.data || !s.data.filing) return;
+    const { text, elapsed } = filingStatus(s.data.filing.status, s.progress, Date.now());
+    if (statusEl.text.textContent !== text) statusEl.text.textContent = text;
+    statusEl.elapsed.textContent = elapsed ? ` · ${elapsed}` : '';
+  }
+  function syncTicker() {
+    if (statusEl && !ticker) ticker = setInterval(tick, 1000);
+    if (!statusEl && ticker) { clearInterval(ticker); ticker = null; }
+  }
+
   // -- render -------------------------------------------------------------------------------
   function render() {
+    statusEl = null;
+    draw();
+    syncTicker();
+  }
+
+  function draw() {
     clear(root);
     const title = el('div', { class: 'card-title' }, el('span', {}, 'Filing review'),
       onClose ? el('button', { class: 'icon', type: 'button', 'aria-label': 'Close card', title: 'Close', onclick: onClose }, '×') : null);
@@ -335,7 +363,10 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     if (s.notice) root.appendChild(el('p', { class: 'status', role: 'status' }, s.notice));
     if (filing.status === 'failed') { root.appendChild(retryBox(filing)); return; }
     if (filing.status === 'queued' || filing.status === 'running') {
-      root.appendChild(el('p', { class: 'status', role: 'status' }, 'Filing…'));
+      // Only the step is announced; the seconds tick quietly beside it.
+      statusEl = { text: el('span', {}), elapsed: el('span', { 'aria-hidden': 'true' }) };
+      root.appendChild(el('p', { class: 'status', role: 'status' }, statusEl.text, statusEl.elapsed));
+      tick();
       return;
     }
     root.appendChild(el('div', {},
@@ -369,6 +400,11 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
   reload();
 
   root.reload = reload;
-  root.destroy = () => { destroyed = true; for (const u of unsubs) u(); };
+  root.destroy = () => {
+    destroyed = true;
+    for (const u of unsubs) u();
+    statusEl = null;
+    syncTicker();
+  };
   return root;
 }

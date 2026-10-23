@@ -2,7 +2,7 @@
 
 A local "second brain" for one person (the owner), on a dual-boot laptop: Kubuntu 26.04 (the daily driver, where development happens) and Windows 11. The owner writes freely. A headless Claude Code agent files each entry into a git-versioned Markdown brain and proposes tasks and dates. The owner confirms them. Later the owner asks questions and gets their own words back, with citations. Phase 2 adds a usage meter, an Agents panel fed by the owner's Claude Code hooks, a desktop widget and a Tauri desktop shell. The dual-boot port makes it one lifeline on both OSes: the same master commit, one shared root on `D:`, the same features, and Claude Code memory, skills and settings shared through `claude-sync`.
 
-**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. Next: the owner's test-drive feedback (the usage meter is fixed, rulings 20–21 in `phase2-decisions.md`; filing speed is measured, see `app/README.md` → Measured), the Windows half of the memory spike (ruling D2), the Windows-side checks, then the rollout with the owner (plan → Rollout).**
+**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. Next: the owner's test-drive fixes (branch `test-drive-fixes`, rulings 20–23 in `phase2-decisions.md`) get merged and checked in the next test drive, then the Windows half of the memory spike (ruling D2), the Windows-side checks, then the rollout with the owner (plan → Rollout).**
 
 > `../NEXT-SESSION.md` is a short pointer: where things stand and the standing rules.
 
@@ -35,6 +35,7 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
    - `ANTHROPIC_API_KEY` is stripped from the environment, and `--bare` is never used.
    - The agents run isolated: `--tools` with an explicit set, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`. See `claude_runner.py`. (`--setting-sources ""` is also why the hub's own agents never fire BrainHub's hooks.)
    - Auto memory is disabled for the hub's runs (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in `child_env()`, D11): the isolation flags don't turn it off, and every filing used to leave a `~/.claude/projects/<key>/memory/` folder.
+   - Non-essential traffic is off too (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, ruling 22): about 1.2–1.6 s faster per run.
    - `claude_path` is a bare command name, never a path (it lives in shared settings); each OS resolves it with `shutil.which`, then `~/.local/bin`.
 8. **Commits: plain messages, NO `Co-Authored-By` or `Claude-Session` trailers.** This is the owner's explicit preference.
 9. **Never run the hub against the real root while testing:** `/mnt/data/BrainHub` on Kubuntu, `D:\BrainHub` on Windows. They are the same folder: the owner's real brain and the live copy. Use a temp root and a temp state folder (`BRAINHUB_STATE_DIR=/tmp/bh-state-x … --root /tmp/bh-test-x`; on Windows under `%TEMP%`) and delete both afterwards. Never write under the real root; the only exception is read-only git inspection of the live copy (`git -c safe.directory=/mnt/data/BrainHub …`).
@@ -126,8 +127,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `brainhub/store.py` | SQLite: entries, filings, proposals, items, agents and the FTS5 index; `user_version` migrations; read-only open. Exports `_items/items.json` and `proposals.json`. |
 | `brainhub/gitrepo.py` | `BrainRepo`: commit, revert, worktrees, cherry-pick, stale lock clearing and the non-interactive push; `safe.directory` and per-OS `core.ignorecase` on every call. |
 | `brainhub/brainmap.py` | The map: load, validate, save (LF), `os_folders`, `path_os`, `folders_for`. |
-| `brainhub/filing.py` | Filing prompt, result parsing, Windows path guard, `FilingWorker` (queue, worktree flow, corrections, rebuild recovery). |
-| `brainhub/claude_runner.py` | `ClaudeRunner`: the isolated `claude -p` call (always `stream-json`), `child_env()`, process-group kill on timeout, each run's `rate_limit_event` to `on_rate_limit`. |
+| `brainhub/filing.py` | Filing prompt, result parsing, Windows path guard, `step_label` (live progress), `FilingWorker` (queue, worktree flow, corrections, rebuild recovery, `progress`). |
+| `brainhub/claude_runner.py` | `ClaudeRunner`: the isolated `claude -p` call (always `stream-json`, read line by line), `child_env()`, process-group kill on timeout, each run's `rate_limit_event` to `on_rate_limit`, filing's tool calls to `on_step`. |
 | `brainhub/review.py` | Confirm, dismiss and edit for proposals and items. |
 | `brainhub/recall.py` | FTS query building, quick cited answer and dig deeper. |
 | `brainhub/today.py` | Today sections, plus the catch-all "other". |
@@ -145,6 +146,7 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `brainhub/claude_sync.py` | claude-sync: pairing, memory merge and pointing, skills, settings sync, store backup. |
 | `brainhub/prompts/*.md` + `schemas/filing.schema.json` | Agent prompts. **`prompts/filing.md` is the main calibration knob.** |
 | `web/` | UI: `js/api.js`, `app.js` (hash router plus view registry, drive banner), `dom.js`, `drive.js` (banner text), `components/`, `views/`. |
+| `web/js/components/confirm-card.js`, `filing-status.js` | The filing card; its live status line ("Filing… <step> · N s", pure helper, tested). |
 | `web/js/views/usage.js`, `agents.js`, `agents-model.js` | Usage meters; Agents table with inline part/Where edits and "link to …"; their pure helpers (tested). |
 | `web/js/views/settings.js`, `runtime-model.js`, `claude-sync.js`, `claude-sync-model.js` | Settings, with the Runtime line and the Claude Code sync section (per-OS keys, quiet notes). |
 | `web/widget.html`, `widget.css`, `js/widget.js`, `js/widget-model.js` | The widget page; `widget-model.js` holds the pure synopsis/tile/popup logic (tested). |
@@ -153,7 +155,7 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 ## Where things stand
 - **Phases 1 and 2 are merged** into master (phase 2 via PR #2).
 - **The dual-boot port is merged** (plan Tasks 1–12, PR #3, 2026-10-22); CI runs on both OSes.
-- **The owner's Linux test drive** (2026-10-22): the usage meter lag is fixed (rulings 20–21). Filing and recall speed is measured (`app/README.md` → Measured → Test-drive follow-up); the speed fixes are still to pick with the owner (`../NEXT-SESSION.md`).
+- **The owner's Linux test drive** (2026-10-22), fixed on branch `test-drive-fixes`: the usage meter lag (rulings 20–21), and filing/recall speed (rulings 22–23: no non-essential traffic in the hub's runs, live filing progress). Numbers in `app/README.md` → Measured → Test-drive follow-up.
 - **Next:**
   1. The Windows half of the memory spike (D2), at a scheduled reboot, and the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real).
   2. The rollout with the owner (plan → Rollout): live copy to master, `runtime init`, the shell, the integration, `claude-sync`, then the setup wizard on the real root, on Kubuntu and then Windows. It includes the phase 2 checks (Where and the status line for terminal and VS Code sessions on both OSes; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and design §10's verification.

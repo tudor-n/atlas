@@ -458,3 +458,53 @@ def test_leftover_worktree_from_the_other_os_is_removed(env):
 def test_case_clash_uses_ntfs_folding():
     """NTFS uppercases per character: a dotless ı matches i there, which str.lower() misses."""
     assert invalid_windows_paths(["general/ınfo.md"], ["general/info.md"])
+
+
+# -- live progress (owner feedback 2026-10-22: filing felt slow behind a static "Filing…") --------
+def test_step_label(tmp_path):
+    from brainhub.filing import step_label
+    wt = tmp_path / "data" / "worktrees" / "e-1"
+    assert step_label("Read", {"file_path": str(wt / "projects" / "robotarm" / "notes.md")}, wt) == \
+        "reading projects/robotarm/notes.md"
+    assert step_label("Write", {"file_path": str(wt / "personal" / "errands.md")}, wt) == "writing personal/errands.md"
+    assert step_label("Edit", {"file_path": "general/a.md"}, wt) == "editing general/a.md"
+    assert step_label("MultiEdit", {"file_path": str(wt / "b.md")}, wt) == "editing b.md"
+    assert step_label("Read", {"file_path": str(tmp_path / "elsewhere" / "x.md")}, wt) == "reading x.md"
+    assert step_label("Read", {}, wt) == "reading"
+    assert step_label("Read", "nope", wt) == "reading"
+    assert step_label("Glob", {"pattern": "**/*.md"}, wt) == "looking for **/*.md"
+    assert step_label("Grep", {"pattern": "servo"}, wt) == 'searching for "servo"'
+    assert step_label("StructuredOutput", {"synopsis": "s"}, wt) == "wrapping up"
+    assert step_label("Bash", {"command": "ls"}, wt) == "working"
+    long = step_label("Grep", {"pattern": "x" * 200}, wt)
+    assert len(long) == 80 and long.endswith("…")
+
+
+async def test_filing_reports_its_steps_and_clears_them(env):
+    sent = []
+
+    async def broadcast(type_, data):
+        sent.append((type_, data))
+
+    during = []
+
+    def check(cwd):
+        during.append(dict(worker.progress[env.entry.id]))
+
+    runner = FakeRunner(json_result=GOOD_RESULT, on_run=check, steps=[
+        ("Read", {"file_path": "projects/robotarm/notes.md"}), ("StructuredOutput", {})])
+    worker = FilingWorker(env.paths, env.store, env.repo, runner, broadcast,
+                          on_commit=commit_hook(env.store, env.paths.brain, env.repo))
+    await worker.file_entry(env.entry.id)
+    assert during[0]["step"] is None and datetime.fromisoformat(during[0]["started"])
+    progress = [d for t, d in sent if t == "filing.progress"]
+    assert progress == [{"entry_id": env.entry.id, "step": "reading projects/robotarm/notes.md"},
+                        {"entry_id": env.entry.id, "step": "wrapping up"}]
+    assert env.entry.id not in worker.progress
+    assert [t for t, _ in sent].index("filing.started") < [t for t, _ in sent].index("filing.progress")
+
+
+async def test_failed_filing_clears_its_progress(env):
+    worker = env.worker(FakeRunner(raise_error=ClaudeError("boom")))
+    await worker.file_entry(env.entry.id)
+    assert env.store.get_filing(env.entry.id).status == "failed" and worker.progress == {}

@@ -63,6 +63,10 @@ def child_env() -> dict:
     # 2.1.308), so every run would be told about, and create, ~/.claude/projects/<key>/memory for
     # its cwd: a folder outside the filing worktree, and a stray one per filing.
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    # No telemetry, error reports or update checks in the hub's headless runs. Measured with 2.1.309:
+    # start-up 0.5-0.9 s -> 0.2 s, and the exit after the result line 0.7-0.9 s -> 0.02 s, so each
+    # filing and answer is done about 1.2-1.6 s sooner (owner feedback: they felt slow).
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
     return env
 
 
@@ -231,9 +235,22 @@ class ClaudeRunner:
                 await self._kill(proc)
             drain_task.cancel()
 
+    @staticmethod
+    async def _steps(ev: dict, on_step: Callable[[str, dict], Awaitable[None]]) -> None:
+        """Each tool call in a finished assistant message, as (tool name, its input)."""
+        msg = ev.get("message")
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("name"), str):
+                try:
+                    await on_step(block["name"], block.get("input"))
+                except Exception:  # progress must never break a filing
+                    log.warning("could not report a claude step", exc_info=True)
+
     async def run_json(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
                        allowed_tools: list[str], json_schema: dict, max_turns: int,
-                       timeout_s: int) -> dict:
+                       timeout_s: int,
+                       on_step: Callable[[str, dict], Awaitable[None]] | None = None) -> dict:
         args = build_args(model=model, system_prompt_file=system_prompt_file,
                           allowed_tools=allowed_tools, max_turns=max_turns,
                           json_schema=json_schema, stream=False)
@@ -243,6 +260,8 @@ class ClaudeRunner:
                 seen = True
                 if ev.get("type") == "result":
                     data = ev  # the last one counts
+                elif ev.get("type") == "assistant" and on_step is not None:
+                    await self._steps(ev, on_step)
         if not seen:
             raise ClaudeError("unparsable claude output: no JSON object")
         if data is None:
