@@ -17,8 +17,25 @@ export function mountCapture(root, { onSaved }) {
     onkeydown: (ev) => {
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); save(); }
     },
-    oninput: fit, onfocus: fit, onblur: fit,
+    oninput: fit, onfocus: fit, onblur: () => { if (pressing) collapseLater = true; else fit(); },
   });
+  // A press elsewhere blurs the field at pointer-down. Shrinking it then would move the tray (right above
+  // the bar) before the click, and the press would land on something else, so it shrinks after the click
+  // (a touch's click can come a little after pointer-up; 400 ms covers a press that makes none).
+  let pressing = false;
+  let collapseLater = false;
+  const released = () => {
+    pressing = false;
+    if (!collapseLater) return;
+    collapseLater = false;
+    let done = false;
+    const go = () => { if (!done) { done = true; fit(); } };
+    document.addEventListener('click', () => setTimeout(go, 0), { capture: true, once: true });
+    setTimeout(go, 400);
+  };
+  document.addEventListener('pointerdown', () => { pressing = true; }, true);
+  document.addEventListener('pointerup', released, true);
+  document.addEventListener('pointercancel', released, true);
   const status = el('span', { class: 'st', role: 'status' });
   const error = el('span', { class: 'err', role: 'alert' });
   const button = uiButton('SAVE', { primary: true, onclick: save });

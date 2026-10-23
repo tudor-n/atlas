@@ -60,7 +60,7 @@ html, body { height: 100%; overflow: hidden; }
 .top.compact .stat .sl .short { display: inline; }
 @media (max-width: 1099px) {
   .brand { min-width: 0; padding: 0 14px; }
-  .top .tab, .top.tight .tab { padding: 0 10px; letter-spacing: .08em; }
+  .top .tab, .top.tight .tab { padding: 0 8px; letter-spacing: .08em; }
   .top .tab.set { min-width: 0; padding: 0 14px; }
   .stat, .top.tight .stat { gap: 10px; padding: 0 10px; }
   .spacer { min-width: 4px; }

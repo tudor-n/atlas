@@ -47,8 +47,12 @@ export function mountTopbar({ shell }) {
   let voice = null;     // GET /api/voice, or null
   let offline = false;  // the last /api/widget failed for want of a connection
   let lastMode = null;
+  // Until the app's first /api/state answer (or failure) the mode is only a guess, so nothing is fetched
+  // or painted: a reduced or setup hub would answer the fetches with errors.
+  let known = false;
 
   function render() {
+    if (!known) return;
     paint();
     fit();
   }
@@ -76,9 +80,8 @@ export function mountTopbar({ shell }) {
     modeBox.textContent = s.mode === 'setup' ? 'SETUP' : '';
     statusBox.hidden = s.mode === 'setup';
     if (s.mode !== lastMode) {
-      const was = lastMode;
       lastMode = s.mode;
-      if (full && was !== null) { refresh(); refreshVoice(); }  // back from setup or reduced
+      if (full) { refresh(); refreshVoice(); }  // the first known mode, or back from setup or reduced
     }
     if (s.mode === 'setup') return;
 
@@ -121,7 +124,7 @@ export function mountTopbar({ shell }) {
   let debounce = null;
 
   async function refresh() {
-    if (shell().mode !== 'full') { render(); return; }
+    if (!known || shell().mode !== 'full') { render(); return; }
     if (loading) { again = true; return; }
     loading = true;
     try {
@@ -141,7 +144,7 @@ export function mountTopbar({ shell }) {
   }
 
   async function refreshVoice() {
-    if (shell().mode !== 'full') return;
+    if (!known || shell().mode !== 'full') return;
     try { voice = await api.get('/api/voice'); } catch (_) { voice = null; }
     render();
   }
@@ -183,8 +186,6 @@ export function mountTopbar({ shell }) {
     else settingsTab.removeAttribute('aria-current');
   }
 
-  render();
-  refresh();
-  refreshVoice();
-  return { render, refresh, setRoute };
+  // The app calls render() once it knows the mode; the first full paint fetches the cluster's data.
+  return { render: () => { known = true; render(); }, refresh, setRoute };
 }
