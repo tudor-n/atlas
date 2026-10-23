@@ -374,6 +374,12 @@ def _wait(cond, secs=15):
     return cond()
 
 
+def _log(tmp_path):
+    """The worker's stderr log, for a failure message."""
+    f = tmp_path / "state" / "voice-worker.log"
+    return f.read_text(encoding="utf-8", errors="replace")[-4000:] if f.exists() else "(no voice-worker.log)"
+
+
 def _said(tmp_path):
     f = tmp_path / "said.jsonl"
     return [json.loads(x) for x in f.read_text(encoding="utf-8").splitlines()] if f.exists() else []
@@ -384,12 +390,12 @@ def test_speaker_speaks_lines_in_order_and_kills_the_idle_worker(tmp_path):
     try:
         sp.say(_line("one"))
         sp.say(_line("two"))
-        assert _wait(lambda: sp.spoken == 2)
+        assert _wait(lambda: sp.spoken == 2), _log(tmp_path)
         assert [s["parts"] for s in _said(tmp_path)] == [["one"], ["two"]]
         pid = _said(tmp_path)[0]["pid"]
         assert _wait(lambda: sp._proc is None and not _alive(pid), 10)  # idle: the worker is gone
         sp.say(_line("three"))  # and comes back on demand
-        assert _wait(lambda: sp.spoken == 3)
+        assert _wait(lambda: sp.spoken == 3), _log(tmp_path)
     finally:
         sp.close()
 
@@ -413,7 +419,7 @@ def test_speaker_keeps_the_error_and_goes_on(tmp_path):
     sp = _speaker(tmp_path)
     try:
         sp.say(_line("FAIL-SYNTH"))
-        assert _wait(lambda: sp.last_error is not None)
+        assert _wait(lambda: sp.last_error is not None), _log(tmp_path)
         assert "fake synthesis failure" in sp.last_error
         sp.say(_line("fine"))
         assert _wait(lambda: sp.spoken == 1) and sp.last_error is None
@@ -426,10 +432,10 @@ def test_speaker_drops_stale_lines_and_keeps_the_newest_five(tmp_path):
     try:
         sp.say(_line("old", created=datetime.now() - timedelta(seconds=v.STALE_S + 5)))
         sp.say(_line("first"))
-        assert _wait(lambda: any(s["parts"] == ["first"] for s in _said(tmp_path)) or sp.busy() is False)
+        assert _wait(lambda: any(s["parts"] == ["first"] for s in _said(tmp_path)) or sp.busy() is False), _log(tmp_path)
         for i in range(7):
             sp.say(_line(f"n{i}"))
-        assert _wait(lambda: sp.spoken >= 6, 30)
+        assert _wait(lambda: sp.spoken >= 6, 30), _log(tmp_path)
         got = [s["parts"][0] for s in _said(tmp_path)]
         assert "old" not in got and got[0] == "first"
         assert got[-5:] == ["n2", "n3", "n4", "n5", "n6"]
@@ -442,10 +448,10 @@ def test_speaker_stop_empties_the_queue_and_cuts_the_line(tmp_path):
     try:
         sp.say(_line("long"))
         sp.say(_line("never"))
-        assert _wait(lambda: sp._proc is not None)
+        assert _wait(lambda: sp._proc is not None), _log(tmp_path)
         time.sleep(1.5)  # "long" is playing, "never" waits behind it
         sp.stop()
-        assert _wait(lambda: sp.spoken == 1, 10)
+        assert _wait(lambda: sp.spoken == 1, 10), _log(tmp_path)
         assert [s["parts"] for s in _said(tmp_path)] == [["long"]] and _said(tmp_path)[0]["stopped"]
     finally:
         sp.close()
@@ -455,7 +461,7 @@ def test_speaker_survives_a_worker_that_cannot_start(tmp_path):
     sp = v.Speaker(tmp_path / "state", command=lambda: [str(tmp_path / "no-such-python")])
     try:
         sp.say(_line("x"))
-        assert _wait(lambda: sp.last_error is not None)
+        assert _wait(lambda: sp.last_error is not None), _log(tmp_path)
     finally:
         sp.close()
 
@@ -463,7 +469,7 @@ def test_speaker_survives_a_worker_that_cannot_start(tmp_path):
 def test_speaker_close_kills_the_worker(tmp_path):
     sp = _speaker(tmp_path, delay="20")
     sp.say(_line("long"))
-    assert _wait(lambda: bool(_said(tmp_path)) or sp._proc is not None)
+    assert _wait(lambda: bool(_said(tmp_path)) or sp._proc is not None), _log(tmp_path)
     proc = sp._proc
     sp.close()
     assert proc is None or proc.poll() is not None

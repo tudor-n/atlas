@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    timeout-minutes: 30
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
