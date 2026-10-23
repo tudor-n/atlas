@@ -199,3 +199,13 @@ async def test_progress_events_dont_wake_the_tablet(client):
     v = app["feed"].version
     await app["broadcast"]("filing.progress", {"entry_id": "e", "step": "reading"})
     assert app["feed"].version == v
+
+
+async def test_the_page_and_its_files(client):
+    r = await client.get("/tablet")
+    assert r.status == 200 and "text/html" in r.headers["Content-Type"] and "tablet.js" in await r.text()
+    r = await client.get("/tablet/tablet.js")
+    assert r.status == 200 and r.headers["Cache-Control"] == "no-cache"
+    assert r.headers["Content-Type"] == "application/javascript; charset=utf-8"
+    for bad in ("/tablet/server.py", "/tablet/..%2Fwidget.html", "/tablet/tablet.test.mjs", "/tablet/nope.js"):
+        assert (await client.get(bad)).status == 404, bad

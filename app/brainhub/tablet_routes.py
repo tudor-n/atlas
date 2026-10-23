@@ -177,7 +177,8 @@ async def tablet_state(request: web.Request) -> web.Response:
         return {"today": _today(app), "requests": requests, "hidden_requests": store.hidden_refs("request"),
                 "notes": store.list_entries(source="tablet", limit=50), "hidden_notes": store.hidden_refs("note"),
                 "answered": {r["answer_entry"]: r["title"] for r in requests if r.get("answer_entry")},
-                "agents": app["agents"].rows(), "usage": _usage_view(app), "arm_url": settings["arm_url"]}
+                "agents": app["agents"].rows(), "usage": _usage_view(app), "arm_url": settings["arm_url"],
+                "units": settings["tablet_units"]}
     data = await t(gather)
     reachable = await app["arm"].reachable(data["arm_url"])
     return web.json_response(build_tablet_state(
@@ -303,6 +304,22 @@ async def restore_tablet_note(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+# -- the page (served to the LAN without pairing: it holds no data) -------------------------------
+ASSETS = {"index.html": "text/html", "tablet.css": "text/css", "tablet.js": "application/javascript",
+          "kb.js": "application/javascript", "logic.js": "application/javascript"}
+
+
+async def tablet_page(request: web.Request) -> web.StreamResponse:
+    name = request.match_info.get("name", "index.html")
+    path = request.app["paths"].web / "tablet" / name
+    if name not in ASSETS or not path.is_file():
+        raise web.HTTPNotFound()
+    # Fully Kiosk caches hard: always revalidate (a 304 is cheap). The charset is explicit: the old
+    # WebKit would read UTF-8 text in a script as Latin-1 otherwise.
+    return web.FileResponse(path, headers={"Cache-Control": "no-cache",
+                                           "Content-Type": f"{ASSETS[name]}; charset=utf-8"})
+
+
 async def pair(request: web.Request) -> web.Response:
     body = await body_dict(request)
     app = request.app
@@ -330,6 +347,8 @@ def add_tablet_routes(app: web.Application) -> None:
         web.post("/api/requests/{request_id}/restore", restore_request),
         web.post("/api/tablet/pair", pair),
         web.get("/api/tablet/me", me),
+        web.get("/tablet", tablet_page),
+        web.get("/tablet/{name}", tablet_page),
         web.get("/api/tablet/state", tablet_state),
         web.get("/api/tablet/wait", tablet_wait),
         web.post("/api/tablet/notes", tablet_note),

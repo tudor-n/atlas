@@ -112,7 +112,7 @@ def robot_url(arm_url: str, host: str) -> str:
 def build_tablet_state(*, version: int, device: dict | None, today: dict, requests: list[dict],
                        hidden_requests: set[str], notes: list, hidden_notes: set[str],
                        answered: dict[str, str], agents: list[dict], usage: dict, arm_reachable: bool,
-                       arm_url: str, host: str, now: datetime) -> dict:
+                       arm_url: str, host: str, now: datetime, units: list[str]) -> dict:
     groups = today_groups(today, now)
     reqs = request_rows(requests, hidden_requests, now)
     due_today = sum(len(g["rows"]) + g["more"] for g in groups if g["title"] in ("OVERDUE", "DUE TODAY"))
@@ -134,4 +134,5 @@ def build_tablet_state(*, version: int, device: dict | None, today: dict, reques
         "agents": agents_rows,
         "usage": usage_rows(usage, now),
         "robot_url": robot_url(arm_url, host),
+        "units": list(units),
     }
