@@ -51,7 +51,10 @@ ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 
 @web.middleware
 async def local_only(request: web.Request, handler):
-    """Outermost guard: blocks DNS rebinding (Host) and cross-site requests (Origin)."""
+    """Blocks DNS rebinding (Host) and cross-site requests (Origin) on loopback. A request on the
+    tablet's LAN site was already checked by tablet.lan_guard, the outermost middleware."""
+    if request.get("lan"):
+        return await handler(request)
     if request.url.host not in ALLOWED_HOSTS:
         return err(403, "forbidden host")
     origin = request.headers.get("Origin")
@@ -254,7 +257,10 @@ async def get_settings(request: web.Request) -> web.Response:
 
 
 async def put_settings(request: web.Request) -> web.Response:
-    return web.json_response(await t(save_settings, request.app["paths"], await body_dict(request)))
+    saved = await t(save_settings, request.app["paths"], await body_dict(request))
+    if "lan" in request.app:
+        await request.app["lan"].sync()  # "Tablet over Wi-Fi" takes effect now, not in 15 s
+    return web.json_response(saved)
 
 
 async def backup_push(request: web.Request) -> web.Response:
