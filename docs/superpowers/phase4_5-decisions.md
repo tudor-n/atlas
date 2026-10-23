@@ -125,3 +125,13 @@ Rulings made while building phase 4.5, as amendments to the design (`specs/2026-
 - **D-3 Clicking elsewhere shrinks the capture box only after the click lands** (`components/capture.js`). The focused textarea has at least 3 rows (B9). Pressing a tray button blurred it at pointer-down, so it shrank to 1 row and moved the tray down 44px before pointer-up. The click then landed on whatever was underneath. Example: after Ctrl+Enter, the first REVIEW on the new tray card did nothing. A blur during a press now waits for the click (or 400 ms, when the press makes no click) before shrinking. A keyboard blur still shrinks at once.
 - **D-4 The tablet page carries `<link rel="icon" href="data:,">`** (`web/tablet/index.html`), as `index.html` and `widget.html` do. Without it, every load requested `/favicon.ico` and logged a 404 (a 403 over the LAN).
 - Residual (found in wave D, backend, out of scope): a read-only root opens `hub.db` with `immutable=1`, which ignores a WAL that wasn't checkpointed. After an unclean shutdown on NTFS, rows still in the WAL would be invisible in read-only mode until the root is writable again. Worth a look in a later phase.
+
+## Review fixes: guard tests
+- **R-T1 The tablet page may place elements from JS, geometry only.** `web/tablet/tablet.js` writes `left`, `top`, `width`, `height`, `fontSize`, `lineHeight`, `textAlign` and `transform`, as the arm UI does, for its fixed 1024×600 layout on Android 4.2. The page has no CSP. Any other style write, there or anywhere else, fails the guard.
+- **R-T2 The guard is stricter than in wave A.**
+  - It catches style writes in every form, every HTML sink, and external loads in HTML and JS (four allow-listed URLs, each with a reason).
+  - It knows all 148 named colours and the `-webkit-` effect and animation spellings.
+  - The only transition it allows is the switch knob, exactly.
+  - It covers `style=` in every HTML page.
+  - Each check is proven by its own self-test.
+  - `tablet.css` stays under its own ES5 lint, because its `-webkit-tap-highlight-color: rgba(0,0,0,0)` is needed on the device.

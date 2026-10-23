@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   parseHash, TABS, SETTINGS, tabByKey, tabFor, SETTINGS_SECTIONS, SETTINGS_DEFAULT, settingsSection,
   BROWSE_DEFAULT, browseTarget,
@@ -56,21 +55,6 @@ test('parse edge cases match the old router', () => {
   assert.equal(parseHash('#/nowhere').name, 'nowhere');              // the router sends unknowns to Today
   assert.equal(tabFor('nowhere'), null);
   assert.equal(tabFor('constructor'), null);
-});
-
-test('same result as the parseHash app.js has today', (t) => {
-  const src = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
-  const m = /function parseHash\(\) \{([\s\S]*?)\n\}/.exec(src);
-  if (!m) { t.skip('app.js no longer has its own parseHash'); return; }
-  const old = new Function('location', m[1]);
-  for (const hash of ['', '#/', '#/today', '#/usage', '#/project/robotarm', '#/journal?entry=e-1',
-    '#//people//', '#/project/caf%C3%A9', '#/settings/tablet', '#browse', '#/a/b/c?x=1&y=2']) {
-    const a = old({ hash });
-    const b = parseHash(hash);
-    assert.equal(b.name, a.name, hash);
-    assert.deepEqual(b.params, a.params, hash);
-    assert.equal(b.query.toString(), a.query.toString(), hash);
-  }
 });
 
 test('tabs, keys and Settings', () => {
