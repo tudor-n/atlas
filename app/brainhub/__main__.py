@@ -200,8 +200,14 @@ def run_voice_worker(argv: list[str]) -> None:
     sys.exit(voice_worker.main(argv))
 
 
+def run_desktop_entry(argv: list[str]) -> None:
+    from . import desktop_entry
+    sys.exit(desktop_entry.main(argv))
+
+
 COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config, "runtime": run_runtime,
-            "claude-sync": run_claude_sync, "voice-worker": run_voice_worker}
+            "claude-sync": run_claude_sync, "voice-worker": run_voice_worker,
+            "desktop-entry": run_desktop_entry}
 
 
 def main() -> None:

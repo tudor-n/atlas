@@ -22,10 +22,12 @@ def store(paths):
 @pytest.fixture(autouse=True)
 def _isolate_claude_dirs(tmp_path, monkeypatch):
     """Keep tests away from the owner's real Claude config, local app data, the per-OS
-    state and config folders and the shared Claude store (claude-sync)."""
+    state and config folders, the shared Claude store (claude-sync) and the XDG data home
+    (desktop-entry's launcher files; its tests also pass --data-home)."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     monkeypatch.setenv("BRAINHUB_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("BRAINHUB_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("BRAINHUB_SHARED_DIR", str(tmp_path / "claude-shared"))
     monkeypatch.setenv("BRAINHUB_BIN_DIR", str(tmp_path / "bin"))  # brainhub-request (phase 3)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))  # desktop-entry (phase 4.5)

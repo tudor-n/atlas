@@ -822,7 +822,12 @@ def test_update_json_records_the_check(w):
     assert w.update()["shell_source"] == first
     w.commit({"app/desktop/src-tauri/src/tray.rs": "// tray\n"})
     w.step()
-    assert w.update()["shell_source"] != first
+    second = w.update()["shell_source"]
+    assert second != first
+    # Phase 4.5: the starting pages count too (app/desktop/dist).
+    w.commit({"app/desktop/dist/main.html": "<p>main</p>\n"})
+    w.step()
+    assert w.update()["shell_source"] not in (first, second)
 
 
 def test_usage_error_exits_2(tmp_path):
@@ -960,8 +965,32 @@ def test_shell_source_name_not_utf8(tmp_path):
     assert us.shell_source(str(tmp_path)) == SHELL_VECTOR_NOT_UTF8
 
 
+SHELL_TREE_DIST = {
+    **SHELL_TREE,
+    "../dist/index.html": b"<p>widget</p>\n",
+    "../dist/main.html": b"<p>main</p>\n",
+    "../README.md": b"not hashed\n",
+}
+
+
+SHELL_VECTOR_DIST = "abd1a8ac9744ae9d72c269f9488be0b036d83090bebdad8a8bd29b3731076a21"  # shell_source.rs too
+
+
+def test_shell_source_includes_dist(tmp_path):
+    """Phase 4.5: the starting pages in `app/desktop/dist` count, as `../dist/<name>` (relative
+    to src-tauri, so they sort first); the desktop folder's other files don't."""
+    _shell_tree(tmp_path, SHELL_TREE_DIST)
+    h = hashlib.sha256()
+    for rel in ("../dist/index.html", "../dist/main.html", "Cargo.lock", "Cargo.toml", "build.rs",
+                "capabilities/widget.json", "src/main.rs", "src/sub/tray.rs", "tauri.conf.json"):
+        data = SHELL_TREE_DIST[rel]
+        h.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode("ascii") + b"\0" + data)
+    assert us.shell_source(str(tmp_path)) == h.hexdigest() == SHELL_VECTOR_DIST
+
+
 @pytest.mark.parametrize("rel", ["build.rs", "tauri.conf.json", "capabilities/widget.json",
-                                 "capabilities/new.json", "src/sub/tray.rs", "Cargo.lock"])
+                                 "capabilities/new.json", "src/sub/tray.rs", "Cargo.lock",
+                                 "../dist/index.html", "../dist/main.html", "../dist/sub/new.css"])
 def test_shell_source_covers(tmp_path, rel):
     base = _shell_tree(tmp_path, SHELL_TREE)
     first = us.shell_source(str(tmp_path))
@@ -975,6 +1004,7 @@ def test_shell_source_ignores_other_files(tmp_path):
     first = us.shell_source(str(tmp_path))
     (base / "icons" / "icon.png").write_bytes(b"other")
     (base / "README.md").unlink()
+    (base.parent / "README.md").write_bytes(b"the desktop README\n")  # beside dist/, not in it
     assert us.shell_source(str(tmp_path)) == first
     (base / "build.rs").unlink()
     assert us.shell_source(str(tmp_path)) not in (first, None)

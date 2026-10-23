@@ -6,8 +6,9 @@
 //!
 //! The algorithm must stay exactly the Python one (its docstring): under `src-tauri`, the files
 //! are `Cargo.toml`, `Cargo.lock`, `build.rs` and `tauri.conf.json` (each one that exists) and
-//! every file under `src/` and `capabilities/`, at any depth. Each file, in order of its
-//! `/`-separated path relative to `src-tauri` (compared as bytes), adds
+//! every file under `src/`, `capabilities/` and `../dist/` (the starting pages, phase 4.5), at any
+//! depth. Each file, in order of its `/`-separated path relative to `src-tauri` (compared as
+//! bytes; a starting page's path is `../dist/<name>`), adds
 //! `<path> NUL <byte length in decimal> NUL <bytes>` to one sha256; the result is its lowercase
 //! hex digest. Like `os.walk`, a link to a folder is not followed; a link to a file is read.
 //!
@@ -22,7 +23,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const FILES: [&str; 4] = ["Cargo.toml", "Cargo.lock", "build.rs", "tauri.conf.json"];
-const FOLDERS: [&str; 2] = ["capabilities", "src"];
+/// `../dist` is the starting pages (`frontendDist`), beside `src-tauri`; its files count as
+/// `../dist/<name>`, the path Python's `os.path.relpath` gives them.
+const FOLDERS: [&str; 3] = ["../dist", "capabilities", "src"];
 
 /// A file name's bytes, as the Python side hashes them (see the module doc).
 fn name_bytes(name: &OsStr) -> io::Result<&[u8]> {
@@ -110,15 +113,33 @@ mod tests {
     ];
     const VECTOR: &str = "b191da605ebed435390a547458d0f400d62249d6e58a43e51ebcfa89c114acb0";
 
-    fn tree(name: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        for (rel, data) in TREE {
+    /// `SHELL_TREE_DIST` and `SHELL_VECTOR_DIST`: the starting pages beside `src-tauri`.
+    const DIST: [(&str, &[u8]); 3] = [
+        ("../dist/index.html", b"<p>widget</p>\n"),
+        ("../dist/main.html", b"<p>main</p>\n"),
+        ("../README.md", b"not hashed\n"), // beside dist/, not in it
+    ];
+    const VECTOR_DIST: &str = "abd1a8ac9744ae9d72c269f9488be0b036d83090bebdad8a8bd29b3731076a21";
+
+    /// `<temp>/<name>-<pid>/src-tauri` with `TREE` in it (and `../dist` beside it when asked).
+    fn tree_with(name: &str, extra: &[(&str, &[u8])]) -> PathBuf {
+        let top = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&top);
+        let base = top.join("src-tauri");
+        for (rel, data) in TREE.iter().chain(extra) {
             let f = base.join(rel);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(f, data).unwrap();
         }
         base
+    }
+
+    fn tree(name: &str) -> PathBuf {
+        tree_with(name, &[])
+    }
+
+    fn remove(base: &Path) {
+        let _ = std::fs::remove_dir_all(base.parent().unwrap());
     }
 
     #[test]
@@ -132,7 +153,26 @@ mod tests {
         assert_ne!(digest(&base).unwrap(), VECTOR);
         std::fs::remove_dir_all(base.join("src")).unwrap();
         assert!(digest(&base).is_err());
-        let _ = std::fs::remove_dir_all(&base);
+        remove(&base);
+    }
+
+    #[test]
+    fn starting_pages_count_as_dot_dot_dist() {
+        let base = tree_with("bh-shell-source-dist", &DIST);
+        assert_eq!(digest(&base).unwrap(), VECTOR_DIST);
+        // A file beside dist/ doesn't count; a new or changed starting page does.
+        std::fs::write(base.parent().unwrap().join("README.md"), b"other").unwrap();
+        assert_eq!(digest(&base).unwrap(), VECTOR_DIST);
+        std::fs::write(base.join("../dist/main.html"), b"<p>changed</p>\n").unwrap();
+        let changed = digest(&base).unwrap();
+        assert_ne!(changed, VECTOR_DIST);
+        std::fs::create_dir_all(base.join("../dist/sub")).unwrap();
+        std::fs::write(base.join("../dist/sub/new.css"), b"").unwrap();
+        assert_ne!(digest(&base).unwrap(), changed);
+        // No dist/ at all is the old digest.
+        std::fs::remove_dir_all(base.join("../dist")).unwrap();
+        assert_eq!(digest(&base).unwrap(), VECTOR);
+        remove(&base);
     }
 
     #[cfg(target_os = "linux")]
@@ -143,7 +183,7 @@ mod tests {
         std::fs::write(base.join("src").join(OsStr::from_bytes(b"caf\xe9.rs")), b"// not UTF-8\n").unwrap();
         // `SHELL_VECTOR_NOT_UTF8` in app/tests/test_update_step.py: the update step's digest.
         assert_eq!(digest(&base).unwrap(), "a173d86857aa60db6a95b186b37800a8f0413f89f70053eb317a6bdcec3e4270");
-        let _ = std::fs::remove_dir_all(&base);
+        remove(&base);
     }
 
     #[test]
