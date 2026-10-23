@@ -420,6 +420,9 @@ def test_status_changes_reach_the_voice_callback(store, paths, now):
                    ("waiting", "finished", None)]
     assert all(t["session_id"] == "s1" and t["project_name"] == "proj" for t in seen)
     assert all("Allow" not in str(t) for t in seen)  # the session's own text never reaches the voice
+    tr.handle(ev("UserPromptSubmit"))
+    tr.handle(ev("StopFailure", error_type="rate_limit"))
+    assert (seen[-1]["after"], seen[-1]["kind"]) == ("waiting", "stop_failure")
 
 
 def test_a_failing_voice_callback_never_costs_an_event(store, paths, now):

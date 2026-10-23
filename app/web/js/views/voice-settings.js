@@ -34,7 +34,7 @@ export async function renderVoiceSettings(box, isDead) {
   function draw() {
     clear(box);
     const line = statusLine(v);
-    box.appendChild(el('p', { class: line.kind }, line.text));
+    box.appendChild(el('p', { class: line.kind, 'aria-live': 'polite' }, line.text));
     if (!v.available) return;
 
     // -- the one-time download
@@ -49,16 +49,17 @@ export async function renderVoiceSettings(box, isDead) {
     const sass = el('input', { type: 'checkbox', id: 'voice-sass', checked: s.voice_sass || null });
     const sassRb = el('input', { type: 'checkbox', id: 'voice-sass-rb', checked: s.voice_sass_readback || null });
     const events = EVENT_LABELS.map(([key, text]) => ({ key, box: el('input', { type: 'checkbox', id: `voice-ev-${key}`, checked: s.voice_events[key] || null }), text }));
-    const finishMin = el('input', { type: 'number', id: 'voice-finish', min: '0', max: '60', step: '1', value: String(Math.round(s.voice_finish_min_s / 60)) });
+    const finishMin = el('input', { type: 'number', id: 'voice-finish', min: '0', max: '60', step: 'any', value: String(+(s.voice_finish_min_s / 60).toFixed(2)) });
 
     // -- the blend
     const rows = blendRows(s.voice_blend);
     const rowsBox = el('div', {});
     const editors = [];
     function addRow(id, pct) {
-      const select = el('select', { 'aria-label': 'Voice' }, el('option', { value: '' }, '(none)'),
+      const n = editors.length + 1;
+      const select = el('select', { 'aria-label': `Voice ${n}` }, el('option', { value: '' }, '(none)'),
         v.voices.map((x) => el('option', { value: x, selected: x === id || null }, voiceName(x))));
-      const share = el('input', { type: 'number', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': 'Share in %' });
+      const share = el('input', { type: 'number', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': `Voice ${n}: share in %` });
       const row = el('div', { class: 'voice-line' }, select, share, el('span', { class: 'meta' }, '%'));
       editors.push({ select, share });
       rowsBox.appendChild(row);
@@ -69,7 +70,7 @@ export async function renderVoiceSettings(box, isDead) {
     const speed = el('input', { type: 'range', id: 'voice-speed', min: '0.5', max: '2', step: '0.05', value: String(s.voice_speed) });
     const speedOut = el('span', { class: 'meta' }, `${s.voice_speed}×`);
     speed.oninput = () => { speedOut.textContent = `${speed.value}×`; };
-    const volume = el('input', { type: 'range', id: 'voice-volume', min: '0', max: '100', step: '5', value: String(s.voice_volume) });
+    const volume = el('input', { type: 'range', id: 'voice-volume', min: '0', max: '100', step: '1', value: String(s.voice_volume) });
     const volOut = el('span', { class: 'meta' }, `${s.voice_volume} %`);
     volume.oninput = () => { volOut.textContent = `${volume.value} %`; };
     const model = el('select', { id: 'voice-model' },
@@ -81,11 +82,11 @@ export async function renderVoiceSettings(box, isDead) {
       const b = readBlend(editors.map((e) => ({ id: e.select.value, pct: e.share.value })));
       if (b.error) throw new Error(b.error);
       const mins = Number(finishMin.value);
-      if (!Number.isInteger(mins) || mins < 0 || mins > 60) throw new Error('Long run: a whole number of minutes, 0 to 60.');
+      if (finishMin.value.trim() === '' || !Number.isFinite(mins) || mins < 0 || mins > 60) throw new Error('Long run: minutes, 0 to 60.');
       return {
         voice_enabled: on.checked, voice_sass: sass.checked, voice_sass_readback: sassRb.checked,
         voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.checked])),
-        voice_finish_min_s: mins * 60, voice_blend: b.blend, voice_speed: Number(speed.value),
+        voice_finish_min_s: Math.round(mins * 60), voice_blend: b.blend, voice_speed: Number(speed.value),
         voice_volume: Number(volume.value), voice_model: model.value,
       };
     }
@@ -128,20 +129,26 @@ export async function renderVoiceSettings(box, isDead) {
   }
 
   await load();
-  // A download's progress, or a change made elsewhere (the widget, the tray, another Settings
-  // save): redraw the form only when its shape changes, so unsaved edits here survive.
+  // A download's progress, or a change made elsewhere (the widget, the tray, another tab): the
+  // form is redrawn only when its shape or the saved voice settings change, so unsaved edits here
+  // survive a mere status change. A failed first load tries again on the next event.
+  const shape = (x, set) => JSON.stringify([x.available, x.installed, x.enabled, x.paused_until, x.quote_problems,
+    (x.download || {}).running, Object.entries(set || {}).filter(([k]) => k.startsWith('voice_'))]);
   return api.onEvent('voice.changed', async ({ data }) => {
-    if (isDead() || !v) return;
-    if (data && data.download) {
-      v.download = data.download;
-      if (data.download.running) { box.firstChild.textContent = statusLine(v).text; return; }
-    }
-    let next;
-    try { next = await api.get('/api/voice'); } catch (_) { return; }
     if (isDead()) return;
-    const shape = (x) => JSON.stringify([x.available, x.installed, x.enabled, x.paused_until, x.quote_problems, (x.download || {}).running]);
-    if (shape(next) !== shape(v)) { await load(); return; }
-    v = next;
+    if (!v || !s) { await load(); return; }
+    if (data && data.download) {
+      const next = { ...v, download: data.download };
+      if (shape(next, s) !== shape(v, s)) { await load(); return; }  // a download started or ended
+      v = next;
+      box.firstChild.textContent = statusLine(v).text;
+      return;
+    }
+    let nv, ns;
+    try { [nv, ns] = await Promise.all([api.get('/api/voice'), api.get('/api/settings')]); } catch (_) { return; }
+    if (isDead()) return;
+    if (shape(nv, ns) !== shape(v, s)) { await load(); return; }
+    v = nv;
     const line = statusLine(v);
     box.firstChild.textContent = line.text;
     box.firstChild.className = line.kind;

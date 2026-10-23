@@ -262,8 +262,8 @@ def test_reminder_off_or_quiet_silences_the_catch_up(env):
 # -- readbacks, merge, sass -------------------------------------------------------------------------------
 def test_readbacks(env):
     env.a.readback_note("buy m3 screws")
-    env.a.readback_answer(["ID 3 to ID 7"], {0: "412 mm"})
-    assert env.sink.said == [["Note saved. buy m3 screws."], ["ID 3 to ID 7. 412 millimetres. Saved."]]
+    env.a.readback_answer({0: "412 mm"})
+    assert env.sink.said == [["Note saved. buy m3 screws."], ["412 millimetres. Saved."]]
 
 
 def test_lines_of_one_kind_merge(env):
@@ -467,3 +467,81 @@ def test_speaker_close_kills_the_worker(tmp_path):
     proc = sp._proc
     sp.close()
     assert proc is None or proc.poll() is not None
+
+
+
+# -- found in review ------------------------------------------------------------------------------------
+def test_a_snooze_that_ran_out_lets_the_later_times_speak(env):
+    q = ["23:00", "08:00"]
+    it = item("s", "Pay rent", status="snoozed", snooze_until="2026-10-20T09:00", remind_at="2026-10-22T10:00",
+              due="2026-10-24T14:00")
+    assert [r for r, _ in v.reminder_times(it, q)] == ["2026-10-20T09:00", "2026-10-22T10:00", "2026-10-24T14:00"]
+    early = item("e", status="snoozed", snooze_until="2026-10-25T09:00", remind_at="2026-10-22T10:00",
+                 due="2026-10-24T14:00")
+    assert [r for r, _ in v.reminder_times(early, q)] == ["2026-10-25T09:00"]  # nothing while it's snoozed
+    assert v.reminder_times(item("x", status="snoozed", snooze_until="junk", due="2026-10-24"), q) == []
+
+
+def test_odd_dates_are_skipped_not_fatal_for_the_others(env):
+    q = ["23:00", "08:00"]
+    assert v.reminder_times(item("n", due=12345), q) == []
+    aware = v.reminder_times(item("a", due="2026-10-23T15:01+00:00"), q)
+    assert aware and aware[0][1].tzinfo is None
+    env.items = [item("bad", due="2026-10-23T15:00:30+99:99"), item("odd", due=7),
+                 item("good", "Feed the cat", due="2026-10-23T15:01")]
+    env.a.tick()
+    env.now.t = T0 + timedelta(seconds=90)
+    env.a.tick()
+    assert env.sink.said == [["A reminder. Feed the cat. It's due today at 3 oh 1 pm."]]
+
+
+def test_an_error_stop_ends_the_turn(env):
+    env.a.agent_transition(_tr("s1", "idle", "running", T0))
+    env.a.agent_transition(_tr("s1", "running", "waiting", T0 + timedelta(seconds=30), kind="stop_failure"))
+    env.a.agent_transition(_tr("s1", "waiting", "running", T0 + timedelta(hours=2)))
+    env.a.agent_transition(_tr("s1", "running", "finished", T0 + timedelta(hours=2, seconds=20)))
+    assert env.sink.said == [["Robot arm needs you."]]  # the 20 s turn is under the threshold
+
+
+def test_a_long_sleep_is_a_catch_up_and_a_day_counts_as_none(env):
+    env.items = [item("a", "One", due="2026-10-23T16:00"), item("b", "Two", due="2026-10-23T17:00")]
+    env.a.tick()
+    env.now.t = T0 + timedelta(hours=3)  # the laptop slept; the same hub process wakes up
+    env.a.tick()
+    assert env.sink.said == [["You have two reminders from while I was off."]]
+    env.items = [item("c", "Three", due="2026-10-24T12:00")]
+    env.now.t = T0 + timedelta(days=3)
+    env.a.tick()
+    assert len(env.sink.said) == 1
+
+
+def test_one_sessions_lines_merge_into_its_latest(env):
+    a = env.make(merge_s=60)
+    a.agent_transition(_tr("s1", "running", "waiting", T0, kind="permission_prompt"))
+    a.agent_transition(_tr("s1", "running", "waiting", T0 + timedelta(seconds=1), kind="permission_prompt"))
+    a.flush("agent_waiting")
+    assert env.sink.said == [["Robot arm needs you. It's asking for permission."]]
+    a.close()
+
+
+def test_the_tick_keeps_its_window_when_the_items_cannot_be_read(env):
+    env.items = [item("a", "One", due="2026-10-23T15:01")]
+    env.a.tick()
+    good = env.a._items
+
+    def broken():
+        raise RuntimeError("database is locked")
+    env.a._items = broken
+    env.now.t = T0 + timedelta(seconds=90)
+    env.a.tick()
+    env.a._items = good
+    env.now.t = T0 + timedelta(seconds=120)
+    env.a.tick()
+    assert env.sink.said == [["A reminder. One. It's due today at 3 oh 1 pm."]]
+
+
+def test_speaker_drops_a_line_stopped_before_it_was_sent(tmp_path):
+    sp = v.Speaker(tmp_path / "state", command=lambda: ["unused"])
+    sp._stops = 1
+    assert sp._write({"op": "say"}, gen=0) is None  # stopped after it left the queue: never sent
+    sp.close()

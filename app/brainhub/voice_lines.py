@@ -174,10 +174,17 @@ def readback_note(text: str) -> str:
     return "Note saved. " + cap(sentence(text), CAP - 12)
 
 
-def readback_answer(items: list[str], answers: dict[int, str]) -> str:
-    """'ID 3 to ID 7. 412 millimetres. Saved.': one short sentence per answered item."""
-    parts = [f"{sentence(items[i])} {sentence(unit_words(answers[i]))}" for i in sorted(answers)
-             if 0 <= i < len(items)]
+_ORDINALS = ("First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth")
+
+
+def readback_answer(answers: dict[int, str]) -> str:
+    """'412 millimetres. Saved.', or 'First, 412 millimetres. Third, 98 millimetres. Saved.' Only
+    the owner's values are read: the item labels were written by an agent (brainhub-request)."""
+    keys = sorted(answers)
+    if len(keys) == 1:
+        return cap(sentence(unit_words(answers[keys[0]])), CAP - 7) + " Saved."
+    parts = [f"{_ORDINALS[i] if i < len(_ORDINALS) else 'Item ' + number_words(i + 1)}, "
+             f"{sentence(unit_words(answers[i]))}" for i in keys]
     return cap(" ".join(parts), CAP - 7) + " Saved."
 
 

@@ -37,6 +37,8 @@ async def client(aiohttp_client, paths, said):
     app["opened"] = opened
     c = await aiohttp_client(app)
     assert (await c.post("/api/setup", json={"map": MAP, "backup_remote": None})).status == 200
+    # no quiet hours: these tests speak whatever the clock says (CI runs at any hour, in UTC)
+    assert (await c.put("/api/settings", json={"quiet_hours": ["00:00", "00:00"]})).status == 200
     return c
 
 
@@ -109,7 +111,7 @@ async def test_tablet_note_and_answer_are_read_back(client, paths, said):
     time.sleep(0.5)
     got = _lines(said, 2)
     # the resend that had already landed is not read twice
-    assert [x["parts"] for x in got] == [["Note saved. buy m3 screws."], ["Width of the desk. 1200 millimetres. Saved."]]
+    assert [x["parts"] for x in got] == [["Note saved. buy m3 screws."], ["1200 millimetres. Saved."]]
 
 
 async def test_pause_resume_and_bad_bodies(client):
@@ -137,6 +139,8 @@ async def test_switching_the_voice_off_stops_it(client):
     await client.put("/api/settings", json={"voice_volume": 50})
     assert stops == []
     await client.put("/api/settings", json={"voice_enabled": False})
+    assert stops == [1]
+    await client.put("/api/settings", json={"voice_volume": 60})  # already off: a sample isn't cut
     assert stops == [1]
 
 

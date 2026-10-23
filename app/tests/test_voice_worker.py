@@ -100,9 +100,12 @@ def test_short_espeak_data_falls_back_to_the_temp_folder(tmp_path, monkeypatch):
     deep = tmp_path / ("d" * 170) / "espeak-ng-data"
     deep.mkdir(parents=True)
     (deep / "phontab").write_bytes(b"x")
+    (tmp_path / "t").mkdir()
     monkeypatch.setattr(vw.tempfile, "gettempdir", lambda: str(tmp_path / "t"))
     got = vw.short_espeak_data(str(deep), tmp_path / ("s" * 170))
-    assert got == str(tmp_path / "t" / "brainhub-voice" / "espeak-ng-data")
+    folder = Path(got).parent
+    assert folder.parent == tmp_path / "t" and folder.name.startswith("bh-espeak-")  # private, per run
+    assert (Path(got) / "phontab").read_bytes() == b"x"
 
 
 def test_to_wav_scales_by_volume(tmp_path):
@@ -143,7 +146,7 @@ def test_player_stop_kills_a_real_player_process(tmp_path):
     import threading
     threading.Timer(0.5, player.stop).start()
     t0 = time.monotonic()
-    player.play(wav, 1.0)  # a stopped player is not an error
+    player.play(wav, 1.0, 0)  # a stopped player is not an error
     assert time.monotonic() - t0 < 5
 
 
@@ -155,7 +158,7 @@ def test_player_reports_a_failing_player(tmp_path):
     wav = tmp_path / "a.wav"
     vw.to_wav(wav, [0.0] * 10, 80)
     with pytest.raises(RuntimeError, match="no such device"):
-        vw.Player((str(script),)).play(wav, 1.0)
+        vw.Player((str(script),)).play(wav, 1.0, 0)
 
 
 MODEL_DIR = os.environ.get("BRAINHUB_VOICE_TEST_MODELS")
@@ -198,3 +201,41 @@ def test_the_hub_going_away_ends_a_line_mid_play(tmp_path):
     time.sleep(0.2)
     with pytest.raises(OSError):
         os.kill(pid, 0)  # the player is gone too (reaped by communicate)
+
+
+class SlowEngine(vw.FakeEngine):
+    def synth(self, req):
+        time.sleep(1.0)
+        return super().synth(req)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX players")
+def test_a_stop_during_synthesis_cancels_the_line(tmp_path):
+    """Found in review: stop (or pause, or voice off) arriving while a line is still being
+    synthesised used to be forgotten, and the line played in full."""
+    import io
+    import threading
+    played = tmp_path / "played"
+    script = tmp_path / "play"
+    script.write_text(f"#!/bin/sh\necho x >> {played}\n", encoding="utf-8")
+    script.chmod(0o755)
+    r, w = os.pipe()
+    inp, wr = os.fdopen(r, "r", encoding="utf-8"), os.fdopen(w, "w", encoding="utf-8")
+    out = io.StringIO()
+    done = threading.Event()
+    threading.Thread(target=lambda: (vw.serve(tmp_path / "state", inp, out, engine=SlowEngine(),
+                                              player=vw.Player((str(script),))), done.set()), daemon=True).start()
+    wr.write(json.dumps(_say("a", "Cut me.")) + "\n")
+    wr.flush()
+    time.sleep(0.3)  # synthesising
+    wr.write(json.dumps({"op": "stop"}) + "\n")
+    wr.write(json.dumps(_say("b", "After the stop.")) + "\n")
+    wr.flush()
+    deadline = time.monotonic() + 10
+    while out.getvalue().count("\n") < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    wr.close()
+    assert done.wait(10)
+    replies = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert replies == [{"id": "a", "ok": True}, {"id": "b", "ok": True}]
+    assert played.read_text().count("x") == 1  # only the line after the stop played

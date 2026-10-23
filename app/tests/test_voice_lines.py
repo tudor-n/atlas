@@ -45,10 +45,11 @@ def test_unit_words(value, spoken):
     assert v.unit_words(value) == spoken
 
 
-def test_readback_answer_is_one_sentence_per_item_then_saved():
-    items = ["ID 3 to ID 7", "Height of the desk", "Skipped one"]
-    assert v.readback_answer(items, {0: "412 mm", 1: "74 cm"}) == \
-        "ID 3 to ID 7. 412 millimetres. Height of the desk. 74 centimetres. Saved."
+def test_readback_answer_reads_only_the_owners_values():
+    # the item labels come from an agent (brainhub-request): never spoken
+    assert v.readback_answer({0: "412 mm"}) == "412 millimetres. Saved."
+    assert v.readback_answer({0: "412 mm", 2: "74 cm"}) == "First, 412 millimetres. Third, 74 centimetres. Saved."
+    assert v.readback_answer({11: "1 mm", 12: "2 mm"}).startswith("Item twelve, 1 millimetre. Item thirteen,")
 
 
 def test_readback_note_and_cap():
@@ -101,6 +102,6 @@ def test_lines_have_no_colons_or_dashes_between_words():
     now = datetime(2026, 10, 23, 9, 0)
     lines = [v.agent_waiting_line("BrainHub", "permission_prompt"), v.agent_finished_line("x", 4000),
              v.reminder_line("Pay rent", "2026-10-24T09:00", now), v.catch_up_line(2),
-             v.readback_answer(["Width"], {0: "3 mm"})]
+             v.readback_answer({0: "3 mm", 1: "4 mm"})]
     for line in lines:
         assert ":" not in line and " - " not in line and "—" not in line

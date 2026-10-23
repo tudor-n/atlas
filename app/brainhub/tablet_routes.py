@@ -274,7 +274,10 @@ async def _readback(app: web.Application, method: str, *args) -> None:
     landed returns before this, so a line is never read twice."""
     voice = app.get("voice")
     if voice is not None:
-        await t(getattr(voice, method), *args)
+        try:  # what was typed is saved: a voice problem must never turn that into an error
+            await t(getattr(voice, method), *args)
+        except Exception:
+            log.exception("voice: the readback failed")
 
 
 async def tablet_answer(request: web.Request) -> web.Response:
@@ -317,7 +320,7 @@ async def _answer(request: web.Request, app: web.Application, body: dict) -> web
             await _tablet_changed(app, "requests.changed")
         except Exception:
             log.exception("answer %s to %s is in the raw log, but closing the request failed", entry_id, req["id"])
-    await _readback(app, "readback_answer", req["items"], answers)
+    await _readback(app, "readback_answer", answers)
     return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
 
 

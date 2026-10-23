@@ -16,10 +16,10 @@ from aiohttp import web
 
 from . import osdirs
 from . import voice_files as vf
-from .config import load_settings, validate_setting
+from .config import VOICE_IDS, load_settings, validate_setting
 from .quotes import quotes_path
 from .routes import body_dict
-from .voice import TICK_S, VOICE_IDS, Announcer, Speaker
+from .voice import TICK_S, Announcer, Speaker
 
 log = logging.getLogger(__name__)
 t = asyncio.to_thread

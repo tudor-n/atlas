@@ -34,7 +34,12 @@ DEFAULT_SETTINGS: dict = {
 
 VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback")
 VOICE_MODELS: tuple[str, ...] = ("int8", "fp32")
-_VOICE_ID = re.compile(r"^[a-z]{2}_[a-z]{2,20}$")  # Kokoro's ids: bm_george, af_heart, …
+# The English voices in voices-v1.0.bin (a = American, b = British; f/m): the blend editor's list.
+VOICE_IDS: tuple[str, ...] = (
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river",
+    "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable",
+    "bm_george", "bm_lewis")
 
 # Code locations come from the installed package, never from the data root (--root may be any folder).
 _PKG = Path(__file__).resolve().parent
@@ -142,10 +147,10 @@ def validate_setting(key: str, value) -> None:
         return
     if key == "voice_blend":
         ok = (isinstance(value, dict) and 1 <= len(value) <= 3
-              and all(isinstance(k, str) and _VOICE_ID.match(k) for k in value)
+              and all(k in VOICE_IDS for k in value)
               and all(_finite_number(v) and v > 0 for v in value.values()))
         if not ok:
-            raise ValueError("voice_blend must be 1-3 Kokoro voices (like bm_george) with weights above 0")
+            raise ValueError("voice_blend must be 1-3 of the English Kokoro voices (like bm_george) with weights above 0")
         return
     if key == "voice_speed":
         if not (_finite_number(value) and 0.5 <= value <= 2.0):

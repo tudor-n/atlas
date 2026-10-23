@@ -200,7 +200,8 @@ def test_voice_blend_accepts(paths, blend):
 
 
 @pytest.mark.parametrize("blend", [{}, {"bm_george": 0}, {"bm_george": -1}, {"bm_george": True},
-                                   {"a": 1, "b": 1, "c": 1, "d": 1}, {"BM_GEORGE": 1}, {"../x": 1},
+                                   {"af_heart": 1, "bm_lewis": 1, "bf_emma": 1, "bm_george": 1}, {"BM_GEORGE": 1},
+                                   {"../x": 1}, {"zz_nobody": 1},
                                    {"bm_george": "1"}, ["bm_george"], {"bm_george": float("nan")},
                                    {"bm_george": float("inf")}])
 def test_voice_blend_rejects(paths, blend):

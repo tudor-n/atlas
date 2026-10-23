@@ -384,10 +384,10 @@ pub fn run() {
                     id => {
                         if let Some(body) = voice::body_for(id) {
                             // Off the menu thread: a slow or stopped hub never freezes the tray.
-                            std::thread::spawn(move || {
-                                if let Err(e) = voice::post_pause(port, body) {
-                                    eprintln!("brainhub-desktop: pause voice: {e}");
-                                }
+                            std::thread::spawn(move || match voice::post_pause(port, body) {
+                                Ok(status) if (200..300).contains(&status) => {}
+                                Ok(status) => eprintln!("brainhub-desktop: pause voice: the hub answered {status}"),
+                                Err(e) => eprintln!("brainhub-desktop: pause voice: {e}"),
                             });
                         }
                     }

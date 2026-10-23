@@ -3,7 +3,7 @@
 Rulings made while building phase 4, as amendments to the plan (`plans/2026-10-23-brainhub-phase4.md`) and the design (`specs/2026-10-23-brainhub-phase4-design.md`). Numbered V1….
 
 - **V1 (Task 1) `voice_speed` takes ints and floats.** The generic rule rejects a value whose type differs from its default. A slider or JSON can send `1` for `1.0`, so `voice_speed` and the blend weights accept any finite non-bool number. NaN and infinity are refused.
-- **V2 (Task 1) Voice ids are checked by shape only** (`bm_george`: two letters, `_`, a name). The voices file may not be downloaded yet when Settings saves, so an id that the file lacks is reported by the worker when it speaks ("unknown voice"), not refused by the settings.
+- **V2 (Task 1, superseded by V35) Voice ids are checked by shape only** (`bm_george`: two letters, `_`, a name). The voices file may not be downloaded yet when Settings saves, so an id that the file lacks is reported by the worker when it speaks ("unknown voice"), not refused by the settings.
 - **V3 (Task 3) `_voice/` is skipped by the notes index too**, not only protected from the filing agent. Otherwise recall could quote the quips as if they were the owner's notes.
 - **V4 (Task 3) The quote file is seeded twice:** in setup's own commit (a new brain), and as a startup step with its own commit, "add the voice quotes" (a brain set up before phase 4). It's never overwritten, whatever its state.
 - **V5 (Task 3) The seed has 107 quotes** (30 agent_finished, 30 agent_waiting, 25 reminder, 12 readback, 10 catch_up), in a roughly even mix of the three styles, and they follow the wording rules. A test enforces at least 100, plus no colons or dashes.
@@ -26,7 +26,7 @@ Rulings made while building phase 4, as amendments to the plan (`plans/2026-10-2
 - **V22 (Task 7) Every voice POST takes a JSON body**, `{}` included: stop and edit-quotes too. That's rule 5's CSRF stance, and the tray sends `{}`.
 - **V23 (Task 7) Edit quotes opens the file with the OS** (`xdg-open`; `os.startfile` on Windows) in the owner's default app for `.md` files. Tests inject `app["file_opener"]`.
 - **V24 (Task 7) `voice.changed` doesn't wake the tablet's long-poll** (`TabletFeed.QUIET`): the tablet shows nothing of the voice.
-- Residual: `test_api_tablet.py::test_state_on_the_pc` fails while something listens on 127.0.0.1:8080, such as the owner's own arm server. That's the test's own assumption, from phase 3, and unrelated to the voice.
+- Residual, fixed in review: `test_api_tablet.py::test_state_on_the_pc` failed while something listened on 127.0.0.1:8080 (the owner's own arm server). The test now stubs the arm probe.
 - **V25 (Task 8) The `tablet_*` and `voice_*` keys left the generic Preferences list.** They have their own sections, and dict-valued keys (`voice_events`, `voice_blend`) can't be edited as text. Phase 3's tablet keys appeared there as plain text fields, `tablet_lan` included, and saving one of those would have sent a string.
 - **V26 (Task 8) Live updates don't wipe unsaved edits.** Settings → Voice redraws its form only when its shape changes (installed, on/off, pause, quote problems, a download starting or ending). Otherwise only the status line follows `voice.changed`. Download progress updates just that line.
 - **V27 (Task 8) The widget's speaker is hidden until the voice is installed.** A click switches the voice off or on, or ends a pause. It shows muted during quiet hours, and it re-reads the voice once a minute, because quiet hours and a pause running out send no event.
@@ -39,3 +39,37 @@ Rulings made while building phase 4, as amendments to the plan (`plans/2026-10-2
   - the worker stops the player itself the moment its stdin closes. That covers a hub that crashed (SIGKILL) as well as one that stopped.
   
   Its stderr goes to a temp file, not a pipe, so a player that leaves a child behind can't hold up the wait. Checked by hand: SIGTERM and SIGKILL of the hub mid-sentence both leave no process behind. There's a regression test.
+
+
+## The reviews (Task 12)
+Three subagents reviewed the branch: the backend, security and robustness, and the UI and tray. Every finding below is fixed and has a test where one fits.
+- **V33 Stop wins over synthesis.** Found by both the backend and the security review.
+  - **The bug:** a stop, pause or "voice off" that arrived while a line was still being synthesised was lost (`Player.play` cleared the stop flag), so the whole line played. On the first line, which also loads the model, that window is several seconds.
+  - **The worker fix:** a stop counter (`_Stoppable`). Each "say" is stamped with the count when it arrives. A stop bumps the count, so the stamped line is skipped after synthesis, and the player is never started once the count has moved. The check and the start happen under the same lock that `stop()` takes after its bump. Closing stdin (a hub that died) is a stop too, which makes V32 true during synthesis as well.
+  - **The hub twin:** a line already taken off the Speaker's queue but not yet written is dropped if a stop came in between (the Speaker's own counter, checked under the write lock).
+- **V34 Answer readbacks read only the owner's values** ("412 millimetres. Saved.", or "First, 412 millimetres. Third, 74 centimetres. Saved."). The item labels are written by an agent (`brainhub-request`), and the design says the voice never reads agent text. This drops the parent spec's example, "ID 3 to ID 7, 412 millimetres", on purpose.
+  - Residual: an unmapped project is still spoken by its folder name (design §4.1). It's filtered to letters, digits and spaces and capped at 40 characters. Mapping the project in the setup wizard replaces it with the owner's name.
+- **V35 Blend voices must be one of the 28 English Kokoro voices** (`config.VOICE_IDS`), not any id-shaped string. The editor can show every saved value, and the worker never meets an unknown voice.
+- **V36 Reminders.**
+  - An expired snooze speaks again at a later `remind_at` or `due`.
+  - A date that isn't plain local time is converted (an offset) or skipped (garbage, a non-string). It never stops the other items.
+  - `last_tick` moves only after the items were read, so a locked store loses no window.
+  - A tick more than 5 minutes late (the laptop slept) is a catch-up like a start, and a gap of more than 24 h counts as none, while running too.
+- **V37 An error stop (StopFailure) ends the turn**: the next prompt's "finished" time starts fresh. A permission prompt mid-turn still doesn't restart it (V11).
+- **V38 One session's lines merge into its latest one.** A quick succession of permission prompts is not "two agents".
+- **V39 Readbacks can't fail a save**: a voice error after a note or answer was saved is logged, and the tablet gets its normal answer. Quip values from the owner's text are capped at 120 characters.
+- **V40 Small ones.**
+  - "Voice off" stops the voice only when it is switched off, not on every save while off, so a sample isn't cut.
+  - A worker that finishes starting after `close()` is killed.
+  - `voice-worker.log` rotates at 1 MB.
+  - A clip left by a killed worker is removed by the next one.
+  - The espeak data copy is redone after an `espeakng-loader` upgrade, and the long-path fallback is a private per-run temp folder, never a shared fixed one.
+  - The tray logs a hub answer that isn't 2xx.
+- **V41 Settings → Voice:**
+  - After a failed download, the Download button comes back.
+  - A download started elsewhere redraws the form.
+  - A failed first load retries on the next event.
+  - A change saved elsewhere (another tab, the widget) redraws the form, so its Save can't overwrite it.
+  - The long-run threshold keeps its exact value (fractional minutes), and the volume slider steps by 1.
+  - The status line is a live region, and the blend rows are labelled by number.
+- **V42 The voice API tests switch quiet hours off.** They failed between 23:00 and 08:00, and CI runs at every hour, in UTC.

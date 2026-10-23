@@ -38,14 +38,23 @@ def short_espeak_data(data_path: str, state: Path) -> str:
     folder: the state folder's voice/ when that's short enough, else the temp folder."""
     if len(data_path) <= ESPEAK_PATH_MAX:
         return data_path
-    for base in (state / "voice", Path(tempfile.gettempdir()) / "brainhub-voice"):
+    short = state / "voice" / "espeak-ng-data"
+    if len(str(short)) <= ESPEAK_PATH_MAX:
+        bases = [state / "voice"]
+    else:  # a private folder of this run's own: never one another user could have planted
+        bases = [Path(tempfile.mkdtemp(prefix="bh-espeak-"))]
+    for base in bases:
         target = base / "espeak-ng-data"
         if len(str(target)) > ESPEAK_PATH_MAX:
             continue
-        if not (target / "phontab").is_file():
+        stamp = target / ".source"
+        source = f"{data_path}\n{sum(f.stat().st_size for f in Path(data_path).rglob('*') if f.is_file())}"
+        fresh = (target / "phontab").is_file() and stamp.is_file() and stamp.read_text(encoding="utf-8") == source
+        if not fresh:  # missing, or an espeakng-loader upgrade since the copy
             tmp = base / "espeak-ng-data.tmp"
             shutil.rmtree(tmp, ignore_errors=True)
             shutil.copytree(data_path, tmp)
+            (tmp / ".source").write_text(source, encoding="utf-8")
             shutil.rmtree(target, ignore_errors=True)
             os.replace(tmp, target)
         return str(target)
@@ -113,28 +122,54 @@ class Engine:
         return np.concatenate(clips[:-1]) if clips else np.zeros(0, dtype=np.float32)
 
 
-class Player:
+class _Stoppable:
+    """A stop counter. Each line is stamped with the count when it arrives; a stop bumps it, so a
+    line stopped while it was still being synthesised (or waiting) never starts playing."""
+
+    def __init__(self):
+        self._cv = threading.Condition()
+        self.stops = 0
+
+    def cancelled(self, gen: int) -> bool:
+        return self.stops != gen
+
+    def _bump(self) -> None:
+        with self._cv:
+            self.stops += 1
+            self._cv.notify_all()
+
+    def _wait(self, gen: int, seconds: float) -> bool:
+        """Wait out a clip; True when a stop came first."""
+        with self._cv:
+            return self._cv.wait_for(lambda: self.stops != gen, seconds)
+
+
+class Player(_Stoppable):
     """Plays one WAV at a time; stop() cuts it short from another thread."""
 
     def __init__(self, cmd: tuple[str, ...]):
+        super().__init__()
         self._cmd = cmd
         self._proc: subprocess.Popen | None = None
-        self._stopped = threading.Event()
         self._lock = threading.Lock()
 
-    def play(self, path: Path, seconds: float) -> None:
-        self._stopped.clear()
+    def play(self, path: Path, seconds: float, gen: int) -> None:
         if self._cmd == ("winsound",):
             import winsound
-            winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            with self._cv:  # stop() bumps under this lock: it can't slip between the check and the start
+                if self.cancelled(gen):
+                    return
+                winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
             # SND_ASYNC returns at once: wait out the clip, unless stop() purges it first
-            self._stopped.wait(seconds + 0.2)
+            self._wait(gen, seconds + 0.2)
             return
         # stderr to a file, not a pipe: a player's leftover child can't hold the wait up. In the
         # worker's own process group (no new session): when the hub kills the worker's group,
         # the player goes with it, mid-sentence included.
         with tempfile.TemporaryFile() as err:
-            with self._lock:
+            with self._lock:  # stop() kills under this lock, after its bump: no start after a stop
+                if self.cancelled(gen):
+                    return
                 self._proc = subprocess.Popen([*self._cmd, str(path)], stdin=subprocess.DEVNULL,
                                               stdout=subprocess.DEVNULL, stderr=err)
             try:
@@ -145,24 +180,27 @@ class Player:
             finally:
                 with self._lock:
                     proc, self._proc = self._proc, None
-            if proc.returncode and not self._stopped.is_set():
+            if proc.returncode and not self.cancelled(gen):
                 err.seek(0)
                 msg = err.read().decode("utf-8", "replace").strip().splitlines()
                 raise RuntimeError(f"{self._cmd[0]} failed: {msg[-1] if msg else f'exit {proc.returncode}'}")
 
     def stop(self) -> None:
-        self._stopped.set()
         if self._cmd == ("winsound",):
             import winsound
-            winsound.PlaySound(None, 0)
+            with self._cv:
+                self.stops += 1
+                self._cv.notify_all()
+                winsound.PlaySound(None, 0)
             return
+        self._bump()
         with self._lock:
             proc = self._proc
-        if proc and proc.poll() is None:
-            try:
-                proc.kill()  # pw-play, paplay and aplay are single processes
-            except OSError:
-                pass
+            if proc and proc.poll() is None:
+                try:
+                    proc.kill()  # pw-play, paplay and aplay are single processes
+                except OSError:
+                    pass
 
 
 class FakeEngine:
@@ -175,24 +213,25 @@ class FakeEngine:
         return np.zeros(SAMPLE_RATE * len(req["parts"]), dtype=np.float32)
 
 
-class FakePlayer:
+class FakePlayer(_Stoppable):
     """BRAINHUB_VOICE_FAKE: records what would have played; BRAINHUB_VOICE_FAKE_DELAY seconds each."""
 
     def __init__(self, log: Path):
+        super().__init__()
         self._log = log
-        self._stopped = threading.Event()
         self._req: dict = {}
 
-    def play(self, path: Path, seconds: float) -> None:
-        self._stopped.clear()
+    def play(self, path: Path, seconds: float, gen: int) -> None:
+        if self.cancelled(gen):
+            return
         with wave.open(str(path), "rb") as w:
             frames = w.getnframes()
-        stopped = self._stopped.wait(float(os.environ.get("BRAINHUB_VOICE_FAKE_DELAY", "0")))
+        stopped = self._wait(gen, float(os.environ.get("BRAINHUB_VOICE_FAKE_DELAY", "0")))
         with open(self._log, "a", encoding="utf-8") as f:
             f.write(json.dumps({**self._req, "frames": frames, "stopped": stopped, "pid": os.getpid()}) + "\n")
 
     def stop(self) -> None:
-        self._stopped.set()
+        self._bump()
 
 
 def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
@@ -226,6 +265,7 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
                 if player:
                     player.stop()
             elif req.get("op") == "say":
+                req["_gen"] = player.stops if player else 0  # stamped on arrival (see _Stoppable)
                 says.put(req)
         # stdin closed: the hub is gone (or done with us). Stop talking at once, even mid-line.
         if player:
@@ -235,18 +275,25 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
     threading.Thread(target=reader, daemon=True).start()
     wav = state / "voice" / f"line-{os.getpid()}.wav"
     wav.parent.mkdir(parents=True, exist_ok=True)
+    for old in wav.parent.glob("line-*.wav"):  # left by a worker that was killed mid-line
+        try:
+            old.unlink()
+        except OSError:
+            pass
     try:
         while (req := says.get()) is not None:
             rid = req.get("id")
             try:
                 if player is None:
                     raise RuntimeError("no audio player (pw-play, paplay or aplay) was found")
+                gen = req.pop("_gen")
                 if isinstance(player, FakePlayer):
                     player._req = req
-                samples = engine.synth(req)
-                seconds = to_wav(wav, samples, int(req.get("volume", 80)))
-                if seconds > 0 and not math.isnan(seconds):
-                    player.play(wav, seconds)
+                if not player.cancelled(gen):
+                    samples = engine.synth(req)
+                    seconds = to_wav(wav, samples, int(req.get("volume", 80)))
+                    if seconds > 0 and not math.isnan(seconds):
+                        player.play(wav, seconds, gen)
                 reply({"id": rid, "ok": True})
             except Exception as e:  # one bad line never ends the worker
                 reply({"id": rid, "ok": False, "error": str(e) or type(e).__name__})

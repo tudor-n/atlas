@@ -38,14 +38,10 @@ QUEUE_MAX = 5
 STALE_S = 60  # a line older than this when its turn comes is dropped
 IDLE_S = 600  # the worker exits after this long with nothing to say
 REPLY_TIMEOUT_S = 120
-CATCH_UP_MAX = timedelta(hours=24)  # more missed than this counts as none: Today's Overdue has them
+LOG_MAX = 1_000_000  # bytes of voice-worker.log before it's rotated
+CATCH_UP_MAX = timedelta(hours=24)
+CATCH_UP_GAP = timedelta(minutes=5)  # a tick this late means the laptop slept: treat it as a start  # more missed than this counts as none: Today's Overdue has them
 DEFAULT_MORNING = time(8, 0)  # a date-only reminder when quiet hours are switched off
-# The English voices in voices-v1.0.bin (a = American, b = British; f/m), for the blend editor.
-VOICE_IDS: tuple[str, ...] = (
-    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river",
-    "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
-    "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable",
-    "bm_george", "bm_lewis")
 SAMPLE_TEXT = ("Good {time_of_day}. This is how I'll sound.", "Do let me know if I'm too loud.")
 
 
@@ -77,24 +73,32 @@ def next_morning(now: datetime, quiet: list[str]) -> datetime:
 
 
 def reminder_times(item, quiet: list[str]) -> list[tuple[str, datetime]]:
-    """(raw value, when it speaks) for an item: an open one at its remind_at and its due time, a
-    snoozed one at its snooze_until only. A date-only value speaks at the end of quiet hours."""
+    """(raw value, when it speaks) for an item: an open one at its remind_at and its due time; a
+    snoozed one at its snooze_until, then at a remind_at or due later than that (a snooze that ran
+    out leaves the item open, as Today shows it). A date-only value speaks at the end of quiet
+    hours. A value that isn't a plain local date or time is skipped, never fatal for the rest."""
     if item.status == "snoozed":
-        raws = [item.snooze_until]
+        raws = [item.snooze_until, item.remind_at, item.due]
     elif item.status == "open":
         raws = [item.remind_at, item.due]
     else:
         return []
     out: list[tuple[str, datetime]] = []
     for raw in raws:
-        if not raw or any(r == raw for r, _ in out):
+        if not isinstance(raw, str) or not raw or any(r == raw for r, _ in out):
             continue
         try:
             when = (datetime.combine(date.fromisoformat(raw), morning_time(quiet)) if len(raw) == 10
                     else datetime.fromisoformat(raw))
-        except ValueError:
+        except (TypeError, ValueError):
             continue
+        if when.tzinfo is not None:  # an offset from a hand-edited items.json: this machine's local time
+            when = when.astimezone().replace(tzinfo=None)
         out.append((raw, when))
+    if item.status == "snoozed" and out and out[0][0] == item.snooze_until:
+        out = [out[0]] + [x for x in out[1:] if x[1] > out[0][1]]
+    elif item.status == "snoozed":
+        out = []  # snoozed without a readable snooze_until: Today decides, the voice stays out
     return out
 
 
@@ -222,10 +226,12 @@ class Announcer:
         with self._lock:
             if after == "running" and before != "waiting":
                 self._turn_start[sid] = at  # a permission prompt mid-turn doesn't restart the clock
+            if after == "waiting" and t.get("kind") == "stop_failure":
+                self._turn_start.pop(sid, None)  # an error stop ends the turn: the next prompt starts a new one
             if after == "waiting":
                 key = ("agent_waiting", sid, t.get("at"))
                 line = vl.agent_waiting_line(t.get("project_name"), t.get("kind"))
-                self._submit("agent_waiting", line, {"project": t.get("project_name")}, key)
+                self._submit("agent_waiting", line, {"project": t.get("project_name"), "sid": sid}, key)
             elif after == "finished" and before in ("running", "waiting"):
                 start = self._turn_start.pop(sid, None) or _parse(t.get("since"))
                 if start is None:
@@ -234,17 +240,18 @@ class Announcer:
                 if seconds < self._settings()["voice_finish_min_s"]:
                     return
                 line = vl.agent_finished_line(t.get("project_name"), seconds)
-                self._submit("agent_finished", line, {"project": t.get("project_name"),
+                self._submit("agent_finished", line, {"project": t.get("project_name"), "sid": sid,
                                                       "duration": vl.duration_words(seconds)},
                              ("agent_finished", sid, t.get("at")))
 
     def readback_note(self, text: str) -> None:
         with self._lock:
-            self._submit("readback", vl.readback_note(text), {"text": text}, None)
+            self._submit("readback", vl.readback_note(text), {"text": vl.cap(text, 120)}, None)
 
-    def readback_answer(self, items: list[str], answers: dict[int, str]) -> None:
+    def readback_answer(self, answers: dict[int, str]) -> None:
+        """Only the owner's values: the item labels were written by an agent (brainhub-request)."""
         with self._lock:
-            self._submit("readback", vl.readback_answer(items, answers), {}, None)
+            self._submit("readback", vl.readback_answer(answers), {}, None)
 
     def tick(self) -> None:
         """Every TICK_S: speak the reminders whose time fell in (last tick, now]. The first tick of
@@ -259,13 +266,22 @@ class Announcer:
         quiet = self._settings()["quiet_hours"]
         with self._lock:
             last = self._state.get_time("last_tick")
-            first, self._ticked = not self._ticked, True
+            if last is None or last >= now or now - last > CATCH_UP_MAX:
+                # the very first run, a clock that went back, or too long ago to matter
+                self._ticked = True
+                self._state.set_time("last_tick", now)
+                self._state.save()
+                return
+            # Read the items before moving last_tick: if the store can't be read now (locked, the
+            # drive gone for a moment), the next tick covers this window again.
+            items = self._items()
+            # The first tick of a run, or one after a suspend: what fell due meanwhile is a catch-up.
+            first = not self._ticked or now - last > CATCH_UP_GAP
+            self._ticked = True
             self._state.set_time("last_tick", now)
             self._state.save()
-            if last is None or last >= now or (first and now - last > CATCH_UP_MAX):
-                return  # the very first run, a clock that went back, or too long ago to matter
             due = []
-            for item in self._items():
+            for item in items:
                 for raw, when in reminder_times(item, quiet):
                     if last < when <= now and ("reminder", item.id, raw) not in self._spoken:
                         due.append((item, raw))
@@ -277,7 +293,7 @@ class Announcer:
                 self._submit("catch_up", vl.catch_up_line(len(due)), {"count": vl.number_words(len(due))}, None)
                 return
             for item, raw in due:
-                self._submit("reminder", vl.reminder_line(item.text, item.due, now), {"text": item.text},
+                self._submit("reminder", vl.reminder_line(item.text, item.due, now), {"text": vl.cap(item.text, 120)},
                              ("reminder", item.id, raw))
 
     # -- the gates, the merge, the quip ---------------------------------------------------------
@@ -328,6 +344,11 @@ class Announcer:
         if files is None or not self._gate(lines[0].event, s, now):
             return  # switched off, paused or gone quiet while the lines waited to merge
         event = lines[0].event
+        if event.startswith("agent_"):  # one session's quick succession of lines counts once: its latest
+            latest: dict = {}
+            for ln in lines:
+                latest[ln.meta.get("sid")] = ln
+            lines = list(latest.values())
         info = vl.merge(event, [ln.meta for ln in lines])
         parts = [info]
         if s["voice_sass"] and (event != "readback" or s["voice_sass_readback"]):
@@ -335,6 +356,7 @@ class Announcer:
             values = {**lines[0].meta, "project": vl.spoken_project(lines[0].meta.get("project"))
                       if lines[0].meta.get("project") else None}
             values.pop("line", None)
+            values.pop("sid", None)
             quip = self._picker.pick(event, pool.get(event, []), values, now)
             self._state.save()
             if quip:
@@ -391,6 +413,7 @@ class Speaker:
         self._write_lock = threading.Lock()
         self._ids = itertools.count(1)
         self._closed = False
+        self._stops = 0  # bumped by stop(): a line taken off the queue before it is never sent
         self.last_error: str | None = None
         self.spoken = 0
         self._thread: threading.Thread | None = None  # started on the first line
@@ -409,9 +432,10 @@ class Speaker:
         return True
 
     def stop(self) -> None:
-        """Empty the queue and cut the line playing now."""
+        """Empty the queue and cut the line playing now (or being synthesised, or about to be sent)."""
         with self._cv:
             self._lines.clear()
+            self._stops += 1
         self._write({"op": "stop"})
 
     def close(self) -> None:
@@ -440,21 +464,25 @@ class Speaker:
                 else:
                     idle = False
                     line = self._lines.popleft()
+                    gen = self._stops
             if idle:
                 self._kill()  # nothing to say for IDLE_S: the model's memory goes back
                 continue
             if (self._now() - line.created).total_seconds() > STALE_S:
                 continue
             try:
-                self._speak(line)
+                self._speak(line, gen)
             except Exception as e:
                 self.last_error = str(e) or type(e).__name__
                 log.warning("voice: %s", self.last_error)
 
-    def _speak(self, line: Line) -> None:
+    def _speak(self, line: Line, gen: int) -> None:
         self._ensure_worker()
         rid = str(next(self._ids))
-        if not self._write({**line.request, "id": rid}):
+        sent = self._write({**line.request, "id": rid}, gen)
+        if sent is None:
+            return  # stopped between leaving the queue and now
+        if not sent:
             self._kill()
             raise RuntimeError("the voice worker stopped")
         while True:
@@ -479,7 +507,13 @@ class Speaker:
         if self._proc and self._proc.poll() is None:
             return
         self._state.mkdir(parents=True, exist_ok=True)
-        errlog = open(self._state / "voice-worker.log", "a", encoding="utf-8")
+        logfile = self._state / "voice-worker.log"
+        try:
+            if logfile.stat().st_size > LOG_MAX:
+                logfile.replace(logfile.with_name("voice-worker.log.1"))  # keep one old one
+        except OSError:
+            pass
+        errlog = open(logfile, "a", encoding="utf-8")
         kwargs: dict = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -493,6 +527,9 @@ class Speaker:
             errlog.close()
         self._replies = queue.Queue()
         threading.Thread(target=self._read, args=(self._proc, self._replies), daemon=True).start()
+        if self._closed:  # close() ran while the worker was starting
+            self._kill()
+            raise RuntimeError("the voice is closing")
 
     @staticmethod
     def _read(proc: subprocess.Popen, replies: queue.Queue) -> None:
@@ -508,8 +545,12 @@ class Speaker:
             pass
         replies.put(None)
 
-    def _write(self, obj: dict) -> bool:
+    def _write(self, obj: dict, gen: int | None = None) -> bool | None:
+        """True when sent; None when a stop came after `gen` (nothing sent). stop() bumps the
+        count before it takes this lock, so a line is either cut by it or never sent."""
         with self._write_lock:
+            if gen is not None and gen != self._stops:
+                return None
             proc = self._proc
             if not proc or proc.poll() is not None:
                 return False

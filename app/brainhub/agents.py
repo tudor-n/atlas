@@ -220,7 +220,8 @@ class AgentTracker:
                 transition = {"session_id": sid, "before": row["status"] if before is not None else None,
                               "after": status, "since": row["status_since"], "at": stamp,
                               "project_name": row["project_name"],
-                              "kind": _s(event.get("notification_type")) if name == "Notification" else None}
+                              "kind": (_s(event.get("notification_type")) if name == "Notification"
+                                       else "stop_failure" if name == "StopFailure" else None)}
             if status != row["status"]:
                 row["status"] = status
                 row["status_since"] = stamp
