@@ -1,7 +1,7 @@
 # BrainHub Phase 3: Workbench tablet (design)
 
 Date: 2026-10-23
-Status: **draft, awaiting the owner's approval.** Brainstormed with the owner on 2026-10-23; their answers are marked **(owner)**.
+Status: **approved by the owner (2026-10-23).** Brainstormed with the owner the same day; their answers are marked **(owner)**.
 Parent spec: `2026-10-20-brainhub-design.md` (§3.3, §7.3, §9, §12 item 3, §13.3). It is the authority; this document makes phase 3 concrete. The dual-boot design (`2026-10-21-brainhub-dual-boot-design.md` §8.3) adds the cross-OS requirements. Where this document departs from either, the departure is marked **(my call)**.
 
 ## 1. Scope
