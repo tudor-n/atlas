@@ -47,7 +47,7 @@ test('people, deadlines, review, projects, arm', () => {
   assert.deepEqual(tileSummary('people', W({ people: { waiting: [{}, {}], to_read: 0 } })), { value: '2', caption: 'waiting on others', warn: false });
   assert.deepEqual(tileSummary('deadlines', W({ deadlines: [{ due: '2026-10-25' }, { due: '2026-11-01' }] })), { value: '2', caption: 'next: 2026-10-25', warn: false });
   assert.deepEqual(tileSummary('deadlines', W()), { value: '0', caption: 'none', warn: false });
-  assert.deepEqual(tileSummary('review', W({ review: { proposals: 2, failed: 1 } })), { value: '3', caption: 'to confirm', warn: true });
+  assert.deepEqual(tileSummary('review', W({ review: { proposals: 2, failed: 1 } })), { value: '3', caption: 'entries to review', warn: true });
   assert.equal(tileSummary('review', W()).warn, false);
   const projects = [{ slug: 'a', open: 2 }, { slug: 'b', open: 0 }, { slug: 'c', open: 1 }];
   assert.deepEqual(tileSummary('projects', W({ projects })), { value: '2', caption: 'with open items', warn: false });

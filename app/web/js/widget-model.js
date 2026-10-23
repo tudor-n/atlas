@@ -110,8 +110,9 @@ export function tileSummary(name, w) {
     }
     case 'review': {
       const r = w.review || {};
-      const n = (r.proposals || 0) + (r.failed || 0);
-      return { value: String(n), caption: 'to confirm', warn: n > 0 };
+      // Entries, as Today's TO REVIEW counts them (older hubs: proposals + failed filings).
+      const n = Number.isFinite(r.entries) ? r.entries : (r.proposals || 0) + (r.failed || 0);
+      return { value: String(n), caption: n === 1 ? 'entry to review' : 'entries to review', warn: n > 0 };
     }
     case 'projects':
       return { value: String((w.projects || []).filter((p) => p.open > 0).length), caption: 'with open items', warn: false };
