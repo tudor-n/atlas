@@ -195,8 +195,13 @@ def run_claude_sync(argv: list[str]) -> None:
     sys.exit(claude_sync.main(argv))
 
 
+def run_voice_worker(argv: list[str]) -> None:
+    from . import voice_worker
+    sys.exit(voice_worker.main(argv))
+
+
 COMMANDS = {"integration": run_integration, "desktop-config": run_desktop_config, "runtime": run_runtime,
-            "claude-sync": run_claude_sync}
+            "claude-sync": run_claude_sync, "voice-worker": run_voice_worker}
 
 
 def main() -> None:
