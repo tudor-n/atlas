@@ -265,7 +265,16 @@ async def tablet_note(request: web.Request) -> web.Response:
     entry_id, held = await _capture(request, text, client_id)
     if not held:
         await request.app["broadcast"]("tablet.changed", {})
+    await _readback(request.app, "readback_note", text)
     return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
+
+
+async def _readback(app: web.Application, method: str, *args) -> None:
+    """The voice reads back what was just saved (phase 4 design §4.1). A resend that already
+    landed returns before this, so a line is never read twice."""
+    voice = app.get("voice")
+    if voice is not None:
+        await t(getattr(voice, method), *args)
 
 
 async def tablet_answer(request: web.Request) -> web.Response:
@@ -308,6 +317,7 @@ async def _answer(request: web.Request, app: web.Application, body: dict) -> web
             await _tablet_changed(app, "requests.changed")
         except Exception:
             log.exception("answer %s to %s is in the raw log, but closing the request failed", entry_id, req["id"])
+    await _readback(app, "readback_answer", req["items"], answers)
     return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
 
 

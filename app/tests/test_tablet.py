@@ -167,6 +167,7 @@ async def test_pairing_over_the_lan_sets_a_strict_cookie(hub):
     ("GET", "/widget"), ("POST", "/api/entries"), ("GET", "/api/ask?q=x"), ("GET", "/ws"),
     ("GET", "/api/tablet-notes"), ("GET", "/api/tablet-lan"), ("POST", "/api/tablet-notes/e-1/file"),
     ("GET", "/api/requests"), ("GET", "/api/tablet/../today"), ("GET", "/api/tablet%2F..%2Ftoday"),
+    ("GET", "/api/voice"), ("POST", "/api/voice/pause"), ("POST", "/api/voice/sample"),
 ])
 async def test_the_lan_reaches_only_the_tablet_even_when_paired(hub, method, path):
     app, http, pc, lan, _ = hub

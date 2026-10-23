@@ -40,6 +40,12 @@ IDLE_S = 600  # the worker exits after this long with nothing to say
 REPLY_TIMEOUT_S = 120
 CATCH_UP_MAX = timedelta(hours=24)  # more missed than this counts as none: Today's Overdue has them
 DEFAULT_MORNING = time(8, 0)  # a date-only reminder when quiet hours are switched off
+# The English voices in voices-v1.0.bin (a = American, b = British; f/m), for the blend editor.
+VOICE_IDS: tuple[str, ...] = (
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river",
+    "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx",
+    "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable",
+    "bm_george", "bm_lewis")
 SAMPLE_TEXT = ("Good {time_of_day}. This is how I'll sound.", "Do let me know if I'm too loud.")
 
 
@@ -387,13 +393,15 @@ class Speaker:
         self._closed = False
         self.last_error: str | None = None
         self.spoken = 0
-        self._thread = threading.Thread(target=self._run, name="voice-speaker", daemon=True)
-        self._thread.start()
+        self._thread: threading.Thread | None = None  # started on the first line
 
     def say(self, line: Line) -> bool:
         with self._cv:
             if self._closed:
                 return False
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="voice-speaker", daemon=True)
+                self._thread.start()
             if len(self._lines) >= QUEUE_MAX:
                 self._lines.popleft()  # the oldest goes: the newest news matters most
             self._lines.append(line)
@@ -412,7 +420,8 @@ class Speaker:
             self._lines.clear()
             self._cv.notify()
         self._kill()
-        self._thread.join(timeout=5)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
 
     def busy(self) -> bool:
         with self._cv:

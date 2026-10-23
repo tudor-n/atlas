@@ -262,6 +262,10 @@ async def put_settings(request: web.Request) -> web.Response:
     saved = await t(save_settings, request.app["paths"], await body_dict(request))
     if "lan" in request.app:
         await request.app["lan"].sync()  # "Tablet over Wi-Fi" takes effect now, not in 15 s
+    if request.app.get("voice") is not None:
+        if not saved["voice_enabled"]:
+            await t(request.app["voice"].stop)  # off means silent now, mid-sentence included
+        await request.app["broadcast"]("voice.changed", {})
     return web.json_response(saved)
 
 
