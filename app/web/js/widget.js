@@ -1,7 +1,8 @@
 // Desktop widget page: collapsed synopsis bar, expanded capture + tiles + popups (design §7.1).
-import { get, post, onEvent } from './api.js';
+import { get, post, put, onEvent } from './api.js';
 import { el, clear } from './dom.js';
 import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, loadDraft, saveDraft } from './widget-model.js';
+import { widgetVoice } from './views/voice-model.js';
 
 const WIDTH = 520;
 const OFFLINE = 'BrainHub offline · retrying';
@@ -41,7 +42,9 @@ const grip = el('span', { class: 'grip', 'aria-hidden': 'true', 'data-tauri-drag
 const dot = el('span', { class: 'dot', title: 'Needs your attention', hidden: true, 'data-tauri-drag-region': true });
 const synopsis = el('span', { class: 'synopsis', 'data-tauri-drag-region': true }, 'Loading…');
 const expandBtn = el('button', { class: 'expand', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
-const bar = el('div', { class: 'bar', 'data-tauri-drag-region': true }, grip, dot, synopsis, expandBtn);
+// The voice on/off (spec §2: reachable from the widget); hidden until the voice is installed.
+const voiceBtn = el('button', { class: 'voice', type: 'button', hidden: true, onclick: toggleVoice });
+const bar = el('div', { class: 'bar', 'data-tauri-drag-region': true }, grip, dot, synopsis, voiceBtn, expandBtn);
 
 const capture = el('input', { class: 'capture', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
 const captureStatus = el('div', { class: 'capture-status', role: 'status' });
@@ -184,8 +187,40 @@ function renderBody() {
 
 function render() {
   renderBar();
+  renderVoice();
   renderBody();
   fitWindow();
+}
+
+// -- the voice's speaker ---------------------------------------------------------------------
+let voice = null;
+let voiceBusy = false;
+
+function renderVoice() {
+  const w = widgetVoice(offline ? null : voice);
+  voiceBtn.hidden = !w.show;
+  if (!w.show) return;
+  voiceBtn.textContent = w.icon;
+  voiceBtn.title = w.title;
+  voiceBtn.setAttribute('aria-label', w.title);
+  voiceBtn.classList.toggle('muted', !!w.muted);
+}
+
+async function refreshVoice() {
+  try { voice = await get('/api/voice'); } catch (_) { voice = null; }
+  renderVoice();
+}
+
+async function toggleVoice() {
+  const w = widgetVoice(voice);
+  if (!w.show || voiceBusy) return;
+  voiceBusy = true;
+  try {
+    if (w.action === 'resume') await post('/api/voice/pause', { resume: true });
+    else await put('/api/settings', { voice_enabled: w.action === 'on' });
+  } catch (_) { /* the next refresh shows the truth */ }
+  voiceBusy = false;
+  refreshVoice();
 }
 
 // -- data refresh ----------------------------------------------------------------------------
@@ -210,6 +245,9 @@ function scheduleRefresh() {
 
 for (const type of REFRESH_EVENTS) onEvent(type, scheduleRefresh);
 onEvent('ws.open', scheduleRefresh);
+onEvent('ws.open', refreshVoice);
+onEvent('voice.changed', ({ data: d }) => { if (!(d && d.download && d.download.running)) refreshVoice(); });
+setInterval(refreshVoice, 60000);  // quiet hours begin and end, and a pause runs out, without an event
 setInterval(() => { if (!offline) refresh(); }, 60000);
 setInterval(() => { if (offline) refresh(); }, 5000);
 
@@ -220,3 +258,4 @@ if (draft) {
   setExpanded(true);
 }
 refresh();
+refreshVoice();
