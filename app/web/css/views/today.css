@@ -1,1 +1,122 @@
-/* TODAY view (phase 4.5 design §4): filled by wave C; the shell's layout hooks are in css/app.css. */
+/* TODAY view (phase 4.5 design §4) and the confirm card (.cc), which the tray (#tray, above the
+   capture bar) uses too: this file is linked globally in index.html. The shell's layout hooks
+   (.vw.split, .main, .side.w400, .actbar) are in css/app.css. */
+
+/* -- columns: two from 1100px, one below --------------------------------------------------- */
+.today .tdy-note { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.today .sec + .sec > .sect-h { border-top: 1px solid var(--line); }
+.today .sec > .empty { color: var(--faint); }
+@media (max-width: 1099px) {
+  .vw.split.today { display: block; height: auto; }
+  .vw.split.today > * { overflow: visible; }
+  .vw.today > .side, .vw.today > .side.w400 { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+}
+
+/* -- TO REVIEW: the queue (master) and the selected entry's card (detail) ------------------ */
+.rq .row.q { gap: 14px; }
+.rq .sq, .rq .sq0 { flex: none; width: 6px; height: 6px; margin: 0; top: 0; }
+.rq .n { flex: none; min-width: 20px; font-size: 13px; text-align: right; color: var(--dim); }
+.rq .syn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rq .dt { flex: none; font-size: 12px; color: var(--dim); }
+.rq .row.cur .sq0 { background: var(--text); }
+.rv-none .dot { margin-right: 12px; }
+.rv-card { padding: 16px 20px 20px; }
+.rv-card > .cc { border: 1px solid var(--line); border-radius: var(--r-card); }
+
+/* -- item rows: the done ring (.dn), text and a mono meta line, SNOOZE ---------------------- */
+.today .row.it { gap: 12px; padding: 6px 12px 6px 10px; }
+.dn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--r-btn); }
+.dn::before { content: ""; width: 20px; height: 20px; border-radius: 10px; border: 1px solid var(--dim); }
+@media (hover: hover) { .dn:hover::before { border-color: var(--text); } }
+.dn.prs::before, .dn.done::before { background: var(--green); border-color: var(--green); }
+.dn:disabled::before, .dn:disabled:hover::before { background: var(--ground); border-color: var(--line2); }
+.today .it .t { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.today .it .mt, .cc .mt {
+  margin-top: 3px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.today .it .mt .p { white-space: nowrap; }
+.today .nudge {
+  margin-left: 10px; font-weight: 600; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--amber); white-space: nowrap;
+}
+.today .it-err:empty { display: none; }
+.today .it-err { margin-top: 4px; font-size: 13px; line-height: 18px; }
+.today .row.it { flex-wrap: wrap; }
+.today .row.it > .grow { flex: 1 1 0; min-width: 0; }
+.snz { flex: none; display: flex; align-items: center; }
+.snz-pick { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 2px 0 4px 52px; }
+.snz-pick .seg > button { min-width: 56px; font-family: var(--mono); font-weight: 500; font-size: 12px; }
+.today .grp {
+  display: flex; align-items: center; height: var(--h40); padding: 0 20px; border-bottom: 1px solid var(--sub);
+  font-weight: 600; font-size: 11px; line-height: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+}
+.today .grp a { color: var(--text); text-decoration: none; }
+.today .grp a::after { content: " ›"; color: var(--dim); }
+@media (hover: hover) { .today .grp a:hover { text-decoration: underline; text-underline-offset: 3px; } }
+
+/* -- confirm card -------------------------------------------------------------------------- */
+.cc { background: var(--ground); }
+.cc-h { display: flex; align-items: center; gap: 14px; min-height: var(--h52); padding: 6px 12px 6px 20px; border-bottom: 1px solid var(--line); }
+.cc-h .dt { flex: none; font-size: 12px; color: var(--dim); }
+.cc-h .syn { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 15px; line-height: 20px; }
+.cc-h .cc-st, .cc-h .chip { flex: none; }
+.cc-h .b, .cc-min .b { flex: none; }
+.cc .b.x { min-width: 40px; padding: 0; font-size: 18px; font-weight: 400; letter-spacing: 0; }
+.cc-line { display: flex; align-items: center; min-height: var(--h40); padding: 8px 20px; border-bottom: 1px solid var(--sub); font-size: 14px; line-height: 20px; }
+.cc-line.m { font-size: 12px; line-height: 16px; }
+.cc-done .dot { margin-right: 12px; }
+.cc-files { display: flex; align-items: baseline; gap: 16px; padding: 12px 12px 12px 20px; border-bottom: 1px solid var(--sub); }
+.cc-files > .lb { flex: none; width: 104px; }
+.cc-files ul { display: flex; flex-wrap: wrap; gap: 4px 18px; min-width: 0; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); }
+.cc-files li { overflow-wrap: anywhere; }
+
+/* a proposal: 104px kind column, the text, ✓ EDIT ✕ */
+.pp { display: flex; align-items: flex-start; gap: 16px; min-height: var(--h52); padding: 6px 12px 6px 20px; border-bottom: 1px solid var(--sub); }
+.pp > .k { flex: none; width: 104px; line-height: 40px; white-space: normal; }
+.pp > .grow { flex: 1 1 auto; min-width: 0; padding: 10px 0 6px; }
+.pp .t { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.pp .warn { display: flex; align-items: baseline; margin-top: 4px; font-size: 13px; line-height: 18px; color: var(--amber); }
+.pp .warn > .sq { position: relative; top: -2px; }
+.pp > .acts { flex: none; display: flex; gap: 6px; }
+.pp > .acts .b { min-width: 40px; padding: 0 11px; }
+.pp > .acts .b.no.arm { padding: 0 10px; }
+/* the edit: a grid of fields (11px labels over 40px fields), SAVE and CANCEL */
+.pp.ed > .grow { padding: 8px 0 10px; }
+.eg { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.eg > .wide { grid-column: 1 / -1; }
+.fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fld > input, .fld > select { width: 100%; min-width: 0; }
+.eb { display: flex; gap: 8px; margin-top: 14px; }
+.cc-err:empty { display: none; }
+.cc-err { font-size: 13px; line-height: 18px; }
+.pp .cc-err { margin-top: 8px; }
+
+/* footer: CONFIRM ALL (the card's one primary), TELL IT WHAT'S WRONG, the folded correction */
+.cc .cc-bar { min-height: 64px; padding: 8px 12px 8px 20px; border-top: 0; }
+.cc-bar .err { font-size: 13px; line-height: 18px; text-align: right; }
+.cc-fix { display: flex; flex-direction: column; gap: 8px; padding: 6px 12px 16px 20px; }
+.cc-fix .fx { display: flex; align-items: flex-end; gap: 8px; }
+.cc-fix textarea { flex: 1 1 auto; min-width: 0; min-height: 88px; }
+.cc-fail { padding: 16px 20px 4px; }
+.cc-fail .err { font-size: 15px; line-height: 21px; overflow-wrap: anywhere; }
+.cc-fail .safe { margin-top: 6px; font-size: 14px; line-height: 20px; color: var(--dim); }
+.cc-fail .q { margin-top: 12px; padding-left: 14px; border-left: 1px solid var(--line2); color: var(--text); overflow-wrap: anywhere; }
+
+/* -- the tray: each card rests as one 52px row; REVIEW opens the full card ------------------ */
+#tray > .cc { border-bottom: 1px solid var(--line); }
+#tray > .cc:last-child { border-bottom: 0; }
+.cc-min { display: flex; align-items: center; gap: 14px; min-height: var(--h52); padding: 6px 12px 6px 20px; }
+.cc-min > .sq, .cc-min > .dot { margin: 0; top: 0; }
+.cc-min .syn { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-min .pg { flex: 0 1 auto; max-width: 42%; min-width: 0; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-min .pg.amb { color: var(--amber); }
+
+/* -- narrow: the kind label goes above the text -------------------------------------------- */
+@media (max-width: 759px) {
+  .pp { flex-wrap: wrap; gap: 4px 12px; }
+  .pp > .k { width: 100%; line-height: 20px; padding-top: 6px; }
+  .pp > .grow { padding-top: 0; }
+  .cc-files { flex-direction: column; gap: 8px; }
+  .snz-pick .seg > button { min-width: 48px; padding: 0 8px; }
+}
