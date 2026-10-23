@@ -59,7 +59,7 @@ export async function renderVoiceSettings(box, isDead) {
       const select = el('select', { 'aria-label': 'Voice' }, el('option', { value: '' }, '(none)'),
         v.voices.map((x) => el('option', { value: x, selected: x === id || null }, voiceName(x))));
       const share = el('input', { type: 'number', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': 'Share in %' });
-      const row = el('div', { class: 'edit-grid' }, select, el('label', { class: 'field' }, share, ' %'));
+      const row = el('div', { class: 'voice-line' }, select, share, el('span', { class: 'meta' }, '%'));
       editors.push({ select, share });
       rowsBox.appendChild(row);
     }
@@ -107,15 +107,15 @@ export async function renderVoiceSettings(box, isDead) {
       el('div', { class: 'pref' }, el('label', { class: 'check', for: 'voice-on' }, on, 'Voice on')),
       el('fieldset', {}, el('legend', {}, 'Speak when'),
         events.map((e) => el('label', { class: 'check', for: e.box.id }, e.box, e.text)),
-        el('label', { class: 'field', for: 'voice-finish' }, 'A long run is at least', finishMin, 'minutes')),
+        el('label', { class: 'voice-line', for: 'voice-finish' }, el('span', {}, 'A long run is at least'), finishMin, 'minutes')),
       el('fieldset', {}, el('legend', {}, 'Sass'),
         el('label', { class: 'check', for: 'voice-sass' }, sass, 'Add a quip after the information'),
         el('label', { class: 'check', for: 'voice-sass-rb' }, sassRb, 'Quips on tablet readbacks too'),
         el('div', { class: 'actions' }, el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/edit-quotes', {}), 'Opened the quote file.') }, 'Edit quotes'))),
       el('fieldset', {}, el('legend', {}, 'Voice'), rowsBox, el('div', { class: 'actions' }, addBtn),
-        el('label', { class: 'field', for: 'voice-speed' }, 'Speed', speed, speedOut),
-        el('label', { class: 'field', for: 'voice-volume' }, 'Volume', volume, volOut),
-        el('label', { class: 'field', for: 'voice-model' }, 'Model', model)),
+        el('label', { class: 'voice-line', for: 'voice-speed' }, el('span', {}, 'Speed'), speed, speedOut),
+        el('label', { class: 'voice-line', for: 'voice-volume' }, el('span', {}, 'Volume'), volume, volOut),
+        el('label', { class: 'voice-line', for: 'voice-model' }, el('span', {}, 'Model'), model)),
       el('div', { class: 'actions' },
         el('button', { type: 'button', class: 'primary', onclick: save }, 'Save'),
         el('button', { type: 'button', onclick: sample, disabled: !v.installed || null }, 'Play sample'),
