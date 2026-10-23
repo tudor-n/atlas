@@ -2,7 +2,7 @@
 
 A local "second brain" for one person (the owner), on a dual-boot laptop: Kubuntu 26.04 (the daily driver, where development happens) and Windows 11. The owner writes freely. A headless Claude Code agent files each entry into a git-versioned Markdown brain and proposes tasks and dates. The owner confirms them. Later the owner asks questions and gets their own words back, with citations. Phase 2 adds a usage meter, an Agents panel fed by the owner's Claude Code hooks, a desktop widget and a Tauri desktop shell. The dual-boot port makes it one lifeline on both OSes: the same master commit, one shared root on `D:`, the same features, and Claude Code memory, skills and settings shared through `claude-sync`.
 
-**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. The owner's test-drive fixes are merged too (rulings 20–23 in `phase2-decisions.md`). The Kubuntu rollout is done except the setup wizard, which the owner runs. **Phase 3 (the workbench tablet) is built on branch `phase-3`** (design and decisions: `specs/2026-10-23-brainhub-phase3-design.md`, `phase3-decisions.md`), and the arm UI's HOME link is on the arm repo's branch `brainhub-home`. Everything on Windows is on hold: the owner uses Kubuntu only for a while (2026-10-23).**
+**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. The owner's test-drive fixes are merged too (rulings 20–23 in `phase2-decisions.md`). The Kubuntu rollout is done except the setup wizard, which the owner runs. **Phase 3 is merged** (brain-hub#4, 6-dof-arm#3). **Phase 4 (voice and sass) is built on branch `phase-4`** (design and decisions: `specs/2026-10-23-brainhub-phase4-design.md`, `phase4-decisions.md`). Everything on Windows is on hold: the owner uses Kubuntu only for a while (2026-10-23).**
 
 > `../NEXT-SESSION.md` is a short pointer: where things stand and the standing rules.
 
@@ -13,7 +13,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `docs/superpowers/specs/2026-10-21-brainhub-phase2-design.md` | Phase 2 made concrete: hook client, installer, agent statuses, usage, widget, desktop shell. |
 | `docs/superpowers/specs/2026-10-21-brainhub-dual-boot-design.md` | Where it runs and how, on both OSes: shared vs per-OS data, live copy and updates, guards, Claude Code parity. Amends the spec's §4, §11, §13.1 and §14. |
 | `docs/superpowers/specs/2026-10-23-brainhub-phase3-design.md` | Phase 3, the workbench tablet: LAN access and pairing, the ES5 tablet page, measurement requests, tablet notes, the arm UI's HOME. |
-| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md`, `phase3-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12; phase 3: T1–T27), plus known residuals. Read them before changing core behaviour. |
+| `docs/superpowers/specs/2026-10-23-brainhub-phase4-design.md` | Phase 4, voice and sass: Kokoro in a worker process, when it speaks, the wording rules from the owner's listening test, quotes, controls. |
+| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md`, `phase3-decisions.md`, `phase4-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12; phase 3: T1–T27; phase 4: V1…), plus known residuals. Read them before changing core behaviour. |
 | `app/README.md` | How to set up, run and test on each OS, where data lives, the drive banner, verification drills, "Known limitations" and "Measured". |
 | `app/desktop/README.md` | Building, configuring and running the desktop shell (both OSes, runtime mode). |
 | `docs/superpowers/plans/2026-10-20-brainhub-phase1.md`, `…/2026-10-21-brainhub-phase2.md`, `…/2026-10-22-brainhub-dual-boot.md` | The plans as written. Rulings in the decisions docs override them. |
@@ -99,9 +100,9 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 **Kubuntu**, from `~/dev/BrainHub/app` (uv; Python 3.14 from `.python-version`):
 - **Setup:** `uv sync --locked --extra test` (makes `.venv`).
 - **Run:** `BRAINHUB_STATE_DIR=/tmp/bh-state-x uv run --no-sync python -m brainhub --root /tmp/bh-test-x [--port 8090]`, then open http://127.0.0.1:8090 (widget page: `/widget`).
-- **Python tests:** `uv run --no-sync python -m pytest -q` (966 passed, 18 skipped at the end of the phase 3 build and its reviews; the skips are the Windows-only halves). Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
-- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs` (62 passing). Check a file's syntax with `node --check <file>`.
-- **Rust (desktop shell):** in `desktop/src-tauri`: `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test` (39 passing) and `cargo build --release`. Never build into `src-tauri/target`.
+- **Python tests:** `uv run --no-sync python -m pytest -q` (about 1130 at the end of the phase 4 build; the skips are the Windows-only halves). `test_api_tablet.py::test_state_on_the_pc` fails while something (the owner's arm server) listens on 127.0.0.1:8080. Set `BRAINHUB_VOICE_TEST_MODELS` to a folder with the voice files to run the real-synthesis test. Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
+- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs` (68 passing). Check a file's syntax with `node --check <file>`.
+- **Rust (desktop shell):** in `desktop/src-tauri`: `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test` (44 passing) and `cargo build --release`. Never build into `src-tauri/target`.
 
 **Windows**, from the dev clone's `app` (uv, installed with `winget install astral-sh.uv`):
 - **Setup:** `uv sync --locked --extra test`.
@@ -159,7 +160,12 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `web/widget.html`, `widget.css`, `js/widget.js`, `js/widget-model.js` | The widget page; `widget-model.js` holds the pure synopsis/tile/popup logic (tested). |
 | `web/tablet/` | The tablet page: **ES5 only** for the SM-T110's Android 4.2 WebKit (`tests/test_tablet_es5.py` refuses newer syntax, missing APIs and CSS). `tablet.js` (screens, in-page keyboard, long-poll), `kb.js` and `logic.js` (pure, node-tested via `module.exports`), `tablet.css` (fixed 1024×600 layout). |
 | `web/js/views/tablet.js`, `tablet-settings.js`, `tablet-model.js` | The PC's Tablet view and Settings → Tablet; pure helpers (tested). |
-| `desktop/` | Tauri v2 shell: `src-tauri/src/lib.rs` (window, tray, autostart, XWayland, SIGTERM/SIGINT quit, `xdg-open`, watch loop, work-area clamp), `supervisor.rs` (hub start/restart with backoff, exit 75, SIGTERM stop, `hub.log` in the state folder; runtime mode: claude-sync at start, update step, slot spawn), `config.rs` (`desktop.json`, per-OS folders), `claude_watch.rs` (settings watch, 10-minute claude-sync), `shell_source.rs` + `build.rs` (shell source digest), `capabilities/widget.json`, `dist/` (the "Starting BrainHub…" page). |
+| `brainhub/voice.py` | Phase 4: `Announcer` (the gates: on, installed, event, quiet hours, pause, dedupe; agent transitions, the reminder tick and catch-up, merge, quips; per-OS `voice.json`) and `Speaker` (one thread, a bounded queue, the worker's lifecycle, idle exit). |
+| `brainhub/voice_lines.py`, `quotes.py` | What the voice says (the owner's wording rules: short sentences, no colons, numbers in words) and the quip file `brain/_voice/quotes.md` (seed, parser, cycling picker). |
+| `brainhub/voice_worker.py` | The child process: kokoro-onnx synthesis, the espeak data-path guard (160 characters), players per OS, JSON lines on stdin/stdout, `BRAINHUB_VOICE_FAKE` for tests. |
+| `brainhub/voice_files.py`, `voice_routes.py` | The pinned download into `data/voice/`; the app wiring and `/api/voice*` (PC only). |
+| `web/js/views/voice-settings.js`, `voice-model.js` | Settings → Voice and its pure helpers (tested); the widget's speaker uses `widgetVoice`. |
+| `desktop/` | Tauri v2 shell: `src-tauri/src/lib.rs` (window, tray, autostart, XWayland, SIGTERM/SIGINT quit, `xdg-open`, watch loop, work-area clamp), `supervisor.rs` (hub start/restart with backoff, exit 75, SIGTERM stop, `hub.log` in the state folder; runtime mode: claude-sync at start, update step, slot spawn), `config.rs` (`desktop.json`, per-OS folders), `claude_watch.rs` (settings watch, 10-minute claude-sync), `voice.rs` (the tray's Pause voice POST, std TCP), `shell_source.rs` + `build.rs` (shell source digest), `capabilities/widget.json`, `dist/` (the "Starting BrainHub…" page). |
 
 ## Where things stand
 - **Phases 1 and 2 are merged** into master (phase 2 via PR #2).
@@ -169,8 +175,10 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
   1. The Kubuntu rollout with the owner (plan → Rollout): done on 2026-10-23 (live copy to master, `runtime init`, the shell, the integration; `claude-sync` waits for Windows) except the setup wizard on the real root, which the owner runs. It includes the phase 2 checks for Kubuntu (Where and the status line for terminal and VS Code sessions; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and the Kubuntu half of design §10's verification.
   2. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while: the Windows half of the memory spike (D2), the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real), the Windows rollout and its half of §10. Meanwhile, code stays portable and CI keeps running on both OSes.
   3. Calibration (still open from phase 1): the owner collects "wrote X, it extracted Y, expected Z" cases; tune `prompts/filing.md` and the Settings defaults.
-  4. **Phase 3 is built** on branch `phase-3` (and the arm repo's `brainhub-home`); the owner merges both. Then its rollout (design §11): router reservation, ufw, Settings, Fully Kiosk and pairing, `integration install`, the arm server restart and the ROBOT/HOME round trip, and the device checks in `phase3-decisions.md` → Residuals.
-- **Later phases:** voice (Kokoro) and notifications, Google Calendar, phone.
+  4. **Phase 3 is merged** (2026-10-23). Its rollout (design §11) and device checks are on the owner's list in `../TODO.md`.
+  5. **Phase 4 (voice and sass) is built** on branch `phase-4`; the owner merges it. Then its rollout (design §11, `../TODO.md`): download the voice, Play sample, a line of each kind, the tray pause, the quotes.
+- **Later phases:** Google Calendar, phone.
+- **The owner's to-do list is `../TODO.md`:** every check or step on their side goes there.
 
 ## How the owner likes to work
 - Brainstorm, then a spec, then a plan, then subagent-driven execution with reviews.

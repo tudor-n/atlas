@@ -29,7 +29,7 @@ FILING_SCHEMA: dict = json.loads(
 
 ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
 MAX_TURNS = 25
-PROTECTED = {"log", "_items", "map.json", ".gitattributes", ".gitignore"}
+PROTECTED = {"log", "_items", "_voice", "map.json", ".gitattributes", ".gitignore"}
 PROTECTED_WARNING = "agent tried to edit protected files"
 FIX_IN_PLACE = "Fix the files in place; earlier text from this entry may already exist."
 # Startup never mass-files a backlog it can't account for (e.g. after a lost index): past this

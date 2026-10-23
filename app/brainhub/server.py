@@ -21,6 +21,7 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
+from .quotes import ensure_quotes
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
@@ -30,6 +31,7 @@ from .store import SchemaTooNew, Store, commit_hook
 from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
 from .tablet_routes import add_tablet_routes
 from .usage import UsageStore, rate_limits_from_event
+from .voice_routes import add_voice_routes, close_voice, setup_voice, voice_tick
 from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
@@ -77,6 +79,13 @@ def _ensure_gitattributes(app: web.Application) -> None:
     repo = app["repo"]
     if repo.ensure_gitattributes():
         repo.commit_all("add .gitattributes")
+        app["backup"].notify_commit()
+
+
+def _ensure_quotes(app: web.Application) -> None:
+    """Brains set up before phase 4 get the voice's quote file, in a commit of its own."""
+    if ensure_quotes(app["paths"].brain):
+        app["repo"].commit_all("add the voice quotes")
         app["backup"].notify_commit()
 
 
@@ -150,6 +159,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git setup", repo.init)
     step("owner edits", _commit_owner_edits, app)
     step("git attributes", _ensure_gitattributes, app)
+    step("voice quotes", _ensure_quotes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
     step("restoring tablet requests", store.restore_tablet_if_empty, paths.brain)
@@ -196,6 +206,7 @@ async def _watch_root(app: web.Application) -> None:
 
 
 async def on_startup(app: web.Application) -> None:
+    app["loop"] = asyncio.get_running_loop()  # threads (the voice download) broadcast through it
     if app["root_status"].state == "readonly":
         # Every startup step writes (git, hub.db, the brain), and so do the workers, the backup
         # and the agents prune: none of them runs. Only the watch for a writable root does.
@@ -208,6 +219,8 @@ async def on_startup(app: web.Application) -> None:
         app["tasks"] += [asyncio.create_task(app["worker"].run_forever()),
                          asyncio.create_task(app["backup"].run_forever()),
                          asyncio.create_task(_prune_agents(app))]
+        if app.get("voice") is not None:
+            app["tasks"].append(asyncio.create_task(voice_tick(app)))
 
 
 async def on_shutdown(app: web.Application) -> None:
@@ -220,6 +233,7 @@ async def on_cleanup(app: web.Application) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await t(close_voice, app)  # the worker (and whatever it's playing) goes with the hub
     if "store" in app:  # the reduced app has none
         app["store"].close()
 
@@ -291,7 +305,7 @@ def _run_state(app: web.Application, recheck_interval: float) -> None:
 
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
                claude_settings_path: Path | None = None, status: RootStatus | None = None,
-               recheck_interval: float = RECHECK_SECONDS) -> web.Application:
+               recheck_interval: float = RECHECK_SECONDS, voice_env: dict | None = None) -> web.Application:
     # The root is classified before anything touches it: the hub never creates a root. run_server
     # passes the status it took the lock on, so both agree.
     status = status or check_root(paths)
@@ -364,7 +378,10 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
     app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
-    app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
+    # Phase 4: the voice (None on a read-only root). It hears the agents' status changes.
+    setup_voice(app, speaker_env=voice_env)
+    app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths),
+                                 on_transition=app["voice"].agent_transition if app["voice"] else None)
 
     app["arm"] = ArmProbe()
     # The port the hub listens on: run_server sets the bound one; default to the settings port.
@@ -373,6 +390,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
 
     add_routes(app)
     add_tablet_routes(app)
+    add_voice_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root
         app.router.add_static("/static/", paths.web)
     app.on_startup.append(on_startup)

@@ -172,3 +172,55 @@ def test_tablet_units_validation(paths, bad):
     assert save_settings(paths, {"tablet_units": ["mm", "°", "Ω"]})["tablet_units"] == ["mm", "°", "Ω"]
     with pytest.raises(ValueError):
         save_settings(paths, {"tablet_units": bad})
+
+
+# -- phase 4: voice and sass ----------------------------------------------------------------------
+def test_voice_defaults(paths):
+    s = load_settings(paths)
+    assert s["voice_enabled"] is True and s["voice_sass"] is True and s["voice_sass_readback"] is False
+    assert s["voice_events"] == {"agent_waiting": True, "agent_finished": True, "reminder": True,
+                                 "readback": True}
+    assert s["voice_blend"] == {"bm_george": 0.7, "bm_fable": 0.3}  # Atlas's voice (owner)
+    assert s["voice_speed"] == 0.95 and s["voice_volume"] == 80 and s["voice_model"] == "int8"
+    assert s["voice_finish_min_s"] == 120
+
+
+def test_voice_events_validation(paths):
+    ok = {"agent_waiting": False, "agent_finished": True, "reminder": True, "readback": False}
+    assert save_settings(paths, {"voice_events": ok})["voice_events"] == ok
+    for bad in [{}, {**ok, "extra": True}, {**ok, "reminder": 1}, {"agent_waiting": True}, [], None]:
+        with pytest.raises(ValueError):
+            save_settings(paths, {"voice_events": bad})
+
+
+@pytest.mark.parametrize("blend", [{"bm_george": 1}, {"af_heart": 0.5, "bm_george": 0.25, "bf_emma": 0.25},
+                                   {"bm_george": 0.7, "bm_fable": 0.3}])
+def test_voice_blend_accepts(paths, blend):
+    assert save_settings(paths, {"voice_blend": blend})["voice_blend"] == blend
+
+
+@pytest.mark.parametrize("blend", [{}, {"bm_george": 0}, {"bm_george": -1}, {"bm_george": True},
+                                   {"af_heart": 1, "bm_lewis": 1, "bf_emma": 1, "bm_george": 1}, {"BM_GEORGE": 1},
+                                   {"../x": 1}, {"zz_nobody": 1},
+                                   {"bm_george": "1"}, ["bm_george"], {"bm_george": float("nan")},
+                                   {"bm_george": float("inf")}])
+def test_voice_blend_rejects(paths, blend):
+    with pytest.raises(ValueError):
+        save_settings(paths, {"voice_blend": blend})
+
+
+def test_voice_speed_takes_ints_and_floats_in_range(paths):
+    assert save_settings(paths, {"voice_speed": 1})["voice_speed"] == 1
+    assert save_settings(paths, {"voice_speed": 1.25})["voice_speed"] == 1.25
+    for bad in [0.4, 2.1, True, "1", None, float("nan")]:
+        with pytest.raises(ValueError):
+            save_settings(paths, {"voice_speed": bad})
+
+
+def test_voice_volume_model_and_threshold(paths):
+    assert save_settings(paths, {"voice_volume": 0, "voice_model": "fp32",
+                                 "voice_finish_min_s": 0})["voice_model"] == "fp32"
+    for key, bad in [("voice_volume", 101), ("voice_volume", -1), ("voice_model", "int4"),
+                     ("voice_finish_min_s", 3601), ("voice_enabled", 1), ("voice_sass", "yes")]:
+        with pytest.raises(ValueError):
+            save_settings(paths, {key: bad})

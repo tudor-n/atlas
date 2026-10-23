@@ -62,3 +62,7 @@ button.row:hover { background: rgba(255, 255, 255, 0.08); }
 .open-link { margin-top: 6px; background: none; border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 .open-link:hover { border-color: #fff; }
 .popup-err { color: #ff8a8a; font-size: 12px; margin-top: 4px; }
+.voice { background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; cursor: pointer; font-size: 14px; line-height: 1; flex: none; }
+.voice:hover { border-color: rgba(255, 255, 255, 0.3); }
+.voice.muted { opacity: 0.55; }
+.voice[hidden] { display: none; }

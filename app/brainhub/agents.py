@@ -130,8 +130,12 @@ def _s(v) -> str | None:
 
 class AgentTracker:
     def __init__(self, store: Store, paths: Paths, settings: Callable[[], dict],
-                 now: Callable[[], datetime] = datetime.now):
+                 now: Callable[[], datetime] = datetime.now,
+                 on_transition: Callable[[dict], None] | None = None):
         self._store, self._paths, self._settings, self._now = store, paths, settings, now
+        # Phase 4: the voice hears every status change (it decides what's worth saying). It gets
+        # the project's name and the notification type only, never the session's own text.
+        self._on_transition = on_transition
         self._lock = threading.RLock()
 
     def _stamp(self) -> str:
@@ -210,7 +214,14 @@ class AgentTracker:
                 self._refresh(row, event, load_map(self._paths.brain))
             elif name == "UserPromptSubmit":
                 self._refresh(row, event, load_map(self._paths.brain))
+        transition = None
         if status is not None:
+            if status != row["status"] or before is None:
+                transition = {"session_id": sid, "before": row["status"] if before is not None else None,
+                              "after": status, "since": row["status_since"], "at": stamp,
+                              "project_name": row["project_name"],
+                              "kind": (_s(event.get("notification_type")) if name == "Notification"
+                                       else "stop_failure" if name == "StopFailure" else None)}
             if status != row["status"]:
                 row["status"] = status
                 row["status_since"] = stamp
@@ -220,6 +231,11 @@ class AgentTracker:
         # linger keeps its row, which must then survive a hub restart in this boot.
         row["os"], row["boot"] = osdirs.os_name(), osdirs.boot_id()
         st.upsert_agent(row)
+        if transition and self._on_transition:
+            try:
+                self._on_transition(transition)
+            except Exception:  # the voice never costs the Agents panel an event
+                pass
         return before is None or before != self._visible(row)
 
     @staticmethod

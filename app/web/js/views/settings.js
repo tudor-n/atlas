@@ -5,14 +5,16 @@ import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../compon
 import { runtimeText } from './runtime-model.js';
 import { renderClaudeSync } from './claude-sync.js';
 import { renderTabletSettings } from './tablet-settings.js';
+import { renderVoiceSettings } from './voice-settings.js';
 
 const MODELS = ['haiku', 'sonnet', 'opus'];
 const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
+const OWN_SECTION = /^(tablet|voice)_/;
 const HINTS = {
   port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
   claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after BrainHub restarts.',
-  quiet_hours: 'Stored now; used when reminders arrive.',
+  quiet_hours: 'The voice stays silent in these hours, and date-only reminders speak when they end.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
   nudge_days: 'Days before an open item gets a nudge.',
   default_lead_days: 'Default days of notice for deadlines.',
@@ -278,8 +280,9 @@ export async function render(container) {
   try {
     current = await api.get('/api/settings');
     if (dead) return cleanup;
-    for (const [k, v] of Object.entries(current)) fields[k] = buildField(k, v);
-    const prefKeys = Object.keys(current).filter((k) => !BACKUP_KEYS.includes(k));
+    for (const [k, v] of Object.entries(current)) if (!OWN_SECTION.test(k)) fields[k] = buildField(k, v);
+    // The tablet's and the voice's keys have their own sections below.
+    const prefKeys = Object.keys(current).filter((k) => !BACKUP_KEYS.includes(k) && !OWN_SECTION.test(k));
     prefBox.appendChild(el('div', {}, prefKeys.map((k) => fields[k].node),
       el('div', { class: 'actions' }, el('button', { type: 'button', class: 'primary', onclick: () => saveKeys(prefKeys, prefMsg) }, 'Save preferences')),
       prefMsg));
@@ -349,6 +352,12 @@ export async function render(container) {
   container.appendChild(el('h2', { id: 'tablet' }, 'Tablet'));
   container.appendChild(tabletBox);
   subs.push(await renderTabletSettings(tabletBox, () => dead));
+
+  // ---- the voice (phase 4): download, switches, events, blend, sample, pause, quotes
+  const voiceBox = el('div', {});
+  container.appendChild(el('h2', { id: 'voice' }, 'Voice'));
+  container.appendChild(voiceBox);
+  subs.push(await renderVoiceSettings(voiceBox, () => dead));
 
   // ---- Claude Code sync (claude-sync: shared memory, skills and settings across the OSes)
   const syncBox = el('div', {});

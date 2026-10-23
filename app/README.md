@@ -1,4 +1,4 @@
-# BrainHub (phases 1 and 2, on Kubuntu and Windows)
+# BrainHub (phases 1–4, on Kubuntu and Windows)
 
 BrainHub is a local second brain. You type free text; a headless Claude Code agent files it into a git-versioned Markdown `brain/` and *proposes* tasks, which you confirm. Recall is instant local search plus a cited answer.
 
@@ -23,6 +23,8 @@ BrainHub is a local second brain. You type free text; a headless Claude Code age
 - `data/usage.json`: the last known usage figures (same account on both OSes).
 - `data/root.json`: the root's marker (a random id, the brain format, the time zone it was made in), written by setup. `data/hub.lock`: which hub runs on this root.
 - `data/worktrees/`: temporary agent checkouts, removed after each filing (a leftover from the other OS is removed at the next start).
+- `data/voice/`: the voice's model and voices files (phase 4), downloaded once from Settings → Voice, about 121 MB (354 MB with the higher-quality model). Both OSes use the same copy.
+- `brain/_voice/quotes.md`: the voice's quips, yours to edit (phase 4). The filing agent can't touch it, and Ask doesn't search it.
 
 `brain/` and `data/` are git-ignored by the code repo.
 
@@ -32,6 +34,7 @@ BrainHub is a local second brain. You type free text; a headless Claude Code age
 - `hub.log`: output of a hub started by the desktop shell, plus the shell's own lines.
 - `runtime/` (the two runtime slots and `current.json`), `update.json` (the last update step), `shell.json` (the running shell's source digest), `hook/hook_client.py` (the stable copy the hooks run).
 - `claude-sync.json`, `claude-sync.log`, `claude-sync-last.json` and `claude-sync-backups/` ([claude-sync](#claude-code-sync-claude-sync)).
+- `voice.json` (the reminder tick's last time, a pause, where each quote pool is up to), `voice-worker.log` (the voice worker's errors) and `voice/` (the clip being played) (phase 4).
 
 **Per OS: the config folder**: `${XDG_CONFIG_HOME:-~/.config}/brainhub/desktop.json` on Kubuntu, `%LOCALAPPDATA%\BrainHub\desktop.json` on Windows (`BRAINHUB_CONFIG_DIR` replaces the folder). Also per OS: the shell's window position and web view data (see `desktop/README.md`), and its start-at-login entry.
 
@@ -196,6 +199,21 @@ All typing uses an in-page keyboard, so the Android keyboard never opens. On the
 
 **ROBOT and HOME:** ROBOT opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `brainhub-home` branch.
 
+## Phase 4: voice and sass
+BrainHub speaks through the PC speakers, in Atlas's voice (Kokoro, British English: 70 % `bm_george`, 30 % `bm_fable`, speed 0.95). Everything runs locally and offline, on the CPU. It speaks only for:
+- **an agent that needs you** (a permission prompt, a question, an error stop);
+- **an agent that finished a long run**: 2 minutes or more by default, measured from your prompt to the stop;
+- **a reminder**: at its remind time and again at its due time. A date with no time speaks when quiet hours end (08:00 by default). After the hub was off, missed reminders become one line ("You have three reminders from while I was off"). Anything older than a day is left to Today;
+- **a readback** of what you typed on the tablet ("Width of the desk. 1200 millimetres. Saved.").
+
+It never reads text an agent wrote: only your project names and your own words. Nothing is spoken during quiet hours, and nothing silenced is saved for later.
+
+**Sass:** after the information comes a quip from `brain/_voice/quotes.md`: 107 to start, in three styles (a dry butler, a sarcastic friend, a ship's computer). Each pool goes round without repeats. After a quip, lines within the next minute play without one. Readbacks get no quip unless you tick it. Edit the file any time (Settings → Voice → **Edit quotes**). Its header explains the format, and lines it can't use are listed in Settings.
+
+**Setting it up:** Settings → **Voice** → **Download the voice** (about 121 MB, once, checked against pinned checksums), then **Play sample**. Settings also has the switches, which events speak, the voice blend, speed, volume and the model. **Pause** (an hour, or until morning) is there and in the tray menu. The widget's speaker icon switches the voice off and on.
+
+**How it runs:** a child process (`python -m brainhub voice-worker`) starts on the first line and exits after 10 minutes of silence, so its model's memory (about 300 MB) goes back. It plays with `pw-play`, `paplay` or `aplay` on Linux and `winsound` on Windows. If it fails (no audio device, a damaged voice file), the hub carries on and Settings shows the error. A read-only root has no voice.
+
 ## Claude Code sync (`claude-sync`)
 `python -m brainhub claude-sync` keeps your own Claude Code the same on both OSes through the shared store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`). Your login, sessions, history and plugin installs stay per OS.
 - **Memory:** a home session (started in your home folder) loads your personal memory; a project session loads only that project's notes, on both OSes, from the same files. claude-sync merges this OS's existing notes into the store (after a backup to `<state>/claude-sync-backups/`; a note that clashes is kept under a second name, `<name>.<os>.md`), then points Claude Code there through `autoMemoryDirectory` in `~/.claude/settings.local.json` (home) and in each project's `.claude/settings.local.json` (git-ignored through the repo's `info/exclude`). A project is the same on both OSes when its folder has the same name in `~/dev` and on `D:\`; `pairs.json` in the store lists exceptions (`{"<name>": {"linux": "<folder>", "windows": "<folder>"}}`). The live copy is never pointed.
@@ -245,6 +263,7 @@ The Python tests use a fake Claude runner; none of them call the real CLI. They 
 
 ## Known limitations
 Deferred on purpose; none of them loses data.
+- Voice (phase 4): a line waits up to 3 s for others of its kind, so two agents finishing together are one sentence. Windows plays through `winsound` and is untested by hand while Windows is on hold. The tray's Pause voice items don't show the pause's end: the widget's speaker and Settings do.
 - Owner edits to notes are committed (and re-indexed for search) at the next hub commit or restart, not the moment the file is saved: there is no file watcher yet.
 - `_items/proposals.json` and dismissals reach the backup with the next hub commit, not on their own.
 - `map.json` is written in place, not via a temporary file; a crash mid-write needs a `git checkout map.json` in `brain/`.
@@ -418,10 +437,22 @@ These checks ran on Kubuntu without the tablet itself. A scratch hub ran on port
 
 The first run of the arm check caught a real bug (phase 3 decisions T16): the HOME action had been named `home`, which is the arm UI's **Start pose** action.
 
+### Phase 4 (Linux, 2026-10-23)
+These checks used a scratch hub on port 8097 with a temp root and state, and the real voice files. A stand-in `pw-play` first on its PATH saved each clip instead of playing it, so nothing sounded during the checks; the owner hears the saved clips. The scratch folders were deleted afterwards.
+
+| Check | Result |
+|---|---|
+| kokoro-onnx on Python 3.14, CPU | model load 0.5–0.6 s; a 5–6 s line in 0.7–0.9 s (int8) or 1.1–1.3 s (fp32) |
+| Play sample (worker not yet running) | the clip was ready 1.8 s after the click (worker start, model load, synthesis); 5.1 s long |
+| A permission prompt through a real hook post | "Robot Arm Control needs you. It's asking for permission." plus a quip, 4.2 s after the event: the 3 s merge window, then synthesis |
+| A finished turn (threshold set to 0), a tablet note, a reminder 40 s ahead | each spoken once; the reminder at its minute |
+| Pause for 5 minutes, then a tablet note | silent; Resume brings the voice back |
+| SIGTERM, then SIGKILL, of the hub mid-sentence (a player that sleeps 30 s) | no worker and no player left behind, after the fix in phase 4 decisions V32 |
+| The voice download | the network was slow that evening (curl measured 38 KB/s), so the files were copied in; the download itself is tested against a local server, and the pins are the spike's files |
+
 ## Not built yet
-- **Phase 4:** voice, and the tray's "pause notifications" with it.
 - **Phase 5:** Google Calendar (OAuth tokens in shared `data/`, so it is authorised once).
 - **Phase 6:** phone.
 - **Any time:** semantic search; a file watcher for owner edits (phase 1 residual).
 
-Phase 1 already stores `quiet_hours` and project folders (now per OS) so those phases need no data migration.
+Project folders are already stored per OS, so those phases need no data migration.

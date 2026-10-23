@@ -112,6 +112,12 @@ button.linkish { border: 0; background: none; padding: 0 var(--space-1); color: 
 .check input { width: 18px; height: 18px; min-height: 0; }
 .erow .wide .check { display: inline-flex; margin-right: var(--space-4); }
 .pref { margin: var(--space-3) 0; max-width: 520px; }
+/* Settings → Voice (phase 4): label, control and unit on one line */
+.voice-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-2) 0; max-width: 520px; }
+.voice-line > span:first-child { min-width: 6.5em; color: var(--muted); }
+.voice-line select { flex: 1 1 220px; }
+.voice-line input[type="number"] { width: 5.5em; }
+.voice-line input[type="range"] { flex: 1 1 160px; }
 .review-list { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-4); margin: var(--space-2) 0; }
 .review-list dt { color: var(--muted); }
 .review-list dd { margin: 0; overflow-wrap: anywhere; }

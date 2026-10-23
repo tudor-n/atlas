@@ -22,6 +22,7 @@ from . import runtime
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
+from .quotes import ensure_quotes
 from .rawlog import append_entry
 from .recall import deeper_answer, quick_answer, search_hits
 from .store import Store
@@ -160,6 +161,7 @@ async def setup(request: web.Request) -> web.Response:
     await t(_folders, paths.brain, m)
     await t(app["repo"].init)
     await t(app["repo"].ensure_gitattributes)  # committed with setup: line endings stay as written
+    await t(ensure_quotes, paths.brain)  # the voice's quote file (phase 4), the owner's to edit
     sha = await t(app["repo"].commit_all, "setup")
     if remote:
         await t(save_settings, paths, {"backup_remote": remote})
@@ -257,9 +259,14 @@ async def get_settings(request: web.Request) -> web.Response:
 
 
 async def put_settings(request: web.Request) -> web.Response:
+    before = await t(load_settings, request.app["paths"])
     saved = await t(save_settings, request.app["paths"], await body_dict(request))
     if "lan" in request.app:
         await request.app["lan"].sync()  # "Tablet over Wi-Fi" takes effect now, not in 15 s
+    if request.app.get("voice") is not None:
+        if before["voice_enabled"] and not saved["voice_enabled"]:
+            await t(request.app["voice"].stop)  # switched off: silent now, mid-sentence included
+        await request.app["broadcast"]("voice.changed", {})
     return web.json_response(saved)
 
 

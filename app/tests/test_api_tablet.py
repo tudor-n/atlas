@@ -173,6 +173,9 @@ async def test_file_this_sends_a_note_through_filing(client):
 
 # -- state and the long-poll --------------------------------------------------------------------------
 async def test_state_on_the_pc(client):
+    async def offline(url):  # never the real port 8080: the owner's arm server may be running
+        return False
+    client.server.app["arm"].reachable = offline
     state = await (await client.get("/api/tablet/state")).json()
     assert state["device"] is None and state["version"] == client.server.app["feed"].version
     assert state["robot_url"].startswith("http://127.0.0.1:8080/?home=http%3A%2F%2F127.0.0.1%3A")
