@@ -374,6 +374,7 @@ Recall (Haiku, `recall_top_n` 12): first text after 1.4–3.2 s, `done` after 2.
 
 - Every run saves about 1.2–1.6 s. The rest is the model, and it varies a lot: the robot arm entry spent 13 s between its last write and `wrapping up`, composing four proposals.
 - **Live progress,** as a WebSocket client saw it for the robot arm entry: `filing.started` at 0.03 s, then `looking for projects/robotarm/**` (2.3 s), `looking for general/**` (2.8 s), `writing projects/robotarm/notes.md` (7.2 s), `writing general/andrei.md` (8.2 s), `wrapping up` (21.1 s), `filing.done` (21.2 s). `GET /api/filings/<id>` mid-filing carried `progress` (`started`, `step`), and `null` once done. The real tool names were `Glob`, `Write` and `StructuredOutput`.
+- **In the page** (headless Chrome over the DevTools protocol, a scratch hub, and a fake `claude` playing slow Glob → Write → StructuredOutput steps): after Save, the tray card appeared at once and read `Filing… looking for projects/robotarm/** · 0 s`, then `… writing projects/robotarm/notes.md · 4 s`, then `… wrapping up · 6 s`. It then turned into the review card, with no console errors.
 - The meter still updated from the runs (11 % and 10 %), so the env var doesn't hide `rate_limit_event`. No `~/.claude/projects/` folder was created.
 
 ## Not built yet

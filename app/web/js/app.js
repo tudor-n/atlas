@@ -170,6 +170,7 @@ async function boot() {
     onSaved: (entryId, text, held) => {
       mine.set(entryId, text);  // a held capture's card comes once it is filed, after the drive is back
       if (held) refreshState();  // the banner's held count
+      else showTrayCard(entryId);  // at once: it shows the filing's live progress, then the review
     },
   });
   startTray(capture);
