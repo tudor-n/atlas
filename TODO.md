@@ -1,7 +1,7 @@
 # BrainHub: the owner's to-do list
 
 Everything that's waiting on you, in order. Tick each item here as you go.
-Last updated: 2026-10-23 (phase 4 added).
+Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold).
 
 ## Now
 
@@ -40,8 +40,10 @@ Tell Claude about anything that fails.
 - [ ] IGNORE a note (two taps within 2 s), then bring it back with **Show ignored** on the PC.
 - [ ] ROBOT → arm UI → **‹ HOME** (hold it or tap it twice) brings you back. It refuses with "LIVE ON" while LIVE is on, and with "LET GO" while you hold a grip button.
 
-### 6. Phase 4: the voice (after it's merged)
-- [ ] Merge the phase 4 PR on GitHub, wait for CI to pass, then restart the widget. The update pulls it in.
+### 6. Phase 4: the voice
+- [x] Merge the phase 4 PR (#5). Done on 2026-10-23.
+- [ ] Merge the Windows fix PR (#6) once Claude marks it ready. Master's CI hangs on Windows until then, and the update step won't pull master while CI isn't green on both OSes.
+- [ ] Restart the widget so the update pulls phase 4 in.
 - [ ] Rebuild the widget so the tray gets **Pause voice**: in `/mnt/data/BrainHub/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`, then restart the widget. Settings will say "widget update available" until you do.
 - [ ] Settings → **Voice** → **Download the voice** (about 121 MB, once).
 - [ ] Press **Play sample**. It should sound like Atlas. Tell Claude if the sentences sound unnatural.
@@ -54,6 +56,24 @@ Tell Claude about anything that fails.
 - [ ] The widget's speaker icon switches the voice off and on.
 - [ ] Settings → Voice → **Edit quotes**: read through the quips and change or delete what doesn't land.
 
+### 7. Phase 4.5: the native app and the new look (after its PR is merged)
+- [ ] Merge the phase 4.5 PR on GitHub once CI is green, then restart the widget so the update pulls it in.
+- [ ] Rebuild the desktop shell. In `/mnt/data/BrainHub/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`. Then **Quit** from the tray and start it again. Settings says "widget update available" until you do.
+- [ ] Add BrainHub to the KDE launcher: `python3 -m brainhub desktop-entry install --exec ~/.cache/brainhub-target/release/brainhub-desktop`, run from `/mnt/data/BrainHub/app` with the runtime's Python. Or ask Claude to run it. If it doesn't show up in the menu, run `kbuildsycoca6`.
+- [ ] Start **BrainHub** from the launcher. A black window should say "STARTING THE HUB…", then show the app.
+- [ ] Check the taskbar: the entry has the BrainHub icon and groups with the launcher entry. If it doesn't, run `xprop WM_CLASS`, click the window, and tell Claude what it prints.
+- [ ] Alt+Tab lists the main window but not the widget.
+- [ ] Resize or maximise the window, then Quit and restart. The window comes back the same size; the widget only keeps its position.
+- [ ] Click a widget tile, for example AGENTS. The main window comes forward on that page.
+- [ ] Closing the main window only hides it, and reopening is instant. The tray's **Quit** really quits.
+- [ ] A login autostart, or a second launch without `--open`, shows only the widget. The tray's **Open in browser** still works.
+- [ ] Use it for a few days. Then tell Claude what still feels off, screen by screen.
+- [ ] On the tablet:
+  - **‹ HOME** is now top left. It shows as `‹`, not an empty box.
+  - The 22px letters on the keys read well at arm's length.
+  - The `2 REQUESTS` chip sits in the top bar.
+
 ## Later
 - [ ] **Windows (on hold):** the Windows half of the dual-boot checks, claude-sync, the Windows rollout, and the Windows half of the tablet (allow `python.exe` on private networks; update both OSes together because of schema 3).
+- [ ] **Phases 5 (Google Calendar) and 6 (phone) are on hold** until the phases so far prove useful (your call, 2026-10-24).
 - [ ] **Autostart** stays off unless you change your mind (tick **Start at login** in the tray menu).
