@@ -135,7 +135,7 @@ def test_find_player_is_winsound_on_windows():
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 def test_player_stop_kills_a_real_player_process(tmp_path):
     script = tmp_path / "slowplay"
-    script.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    script.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
     script.chmod(0o755)
     player = vw.Player((str(script),))
     wav = tmp_path / "a.wav"
@@ -170,3 +170,31 @@ def test_real_synthesis_in_the_atlas_blend(tmp_path):
     assert 3 * vw.SAMPLE_RATE < len(audio) < 12 * vw.SAMPLE_RATE
     with pytest.raises(ValueError, match="unknown voice"):
         engine.synth({**req, "blend": {"zz_nobody": 1}})
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX players")
+def test_the_hub_going_away_ends_a_line_mid_play(tmp_path):
+    """The hub closes the worker's stdin (or dies): the player must not play on by itself."""
+    import io
+    import threading
+    script = tmp_path / "slowplay"
+    script.write_text("#!/bin/sh\necho $$ > \"$0.pid\"\nexec sleep 30\n", encoding="utf-8")
+    script.chmod(0o755)
+    r, w = os.pipe()
+    inp, wr = os.fdopen(r, "r", encoding="utf-8"), os.fdopen(w, "w", encoding="utf-8")
+    out = io.StringIO()
+    done = threading.Event()
+    threading.Thread(target=lambda: (vw.serve(tmp_path / "state", inp, out, engine=vw.FakeEngine(),
+                                              player=vw.Player((str(script),))), done.set()), daemon=True).start()
+    wr.write(json.dumps(_say("a", "Long.")) + "\n")
+    wr.flush()
+    pidfile = Path(str(script) + ".pid")
+    deadline = time.monotonic() + 10
+    while not pidfile.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    pid = int(pidfile.read_text())
+    wr.close()  # the hub is gone
+    assert done.wait(10)
+    time.sleep(0.2)
+    with pytest.raises(OSError):
+        os.kill(pid, 0)  # the player is gone too (reaped by communicate)

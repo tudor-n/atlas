@@ -34,3 +34,8 @@ Rulings made while building phase 4, as amendments to the plan (`plans/2026-10-2
 - **V29 (Task 9) The tray's Pause voice menu has fixed labels** ("For 1 hour", "Until morning", "Resume"), not the design's "Voice paused until 14:05" line. A live label would mean the shell polling the hub. The widget's speaker already shows the pause and its end on hover, and Settings shows it too.
 - **V30 (Task 9) The tray POSTs with std `TcpStream`** (`src/voice.rs`): a hand-written HTTP/1.1 request with `Host: 127.0.0.1:<port>` and a JSON body, so `local_only` passes as it does for any client without an Origin. It runs on its own thread with 2 s and 5 s timeouts, so a stopped hub never freezes the menu. No new crate, and `Cargo.lock` is unchanged.
 - **V31 (Task 9) The shell's source changed**, so after the merge Settings shows "widget update available" until the owner rebuilds the shell (`TODO.md`).
+- **V32 (Task 11, found by hand) The player died with the worker only by luck: it didn't.** The worker started the player in a session of its own, so the hub's kill of the worker's process group missed it. A hub stopped mid-sentence left `pw-play` talking. Now:
+  - the player stays in the worker's group, so killing the group takes the player too;
+  - the worker stops the player itself the moment its stdin closes. That covers a hub that crashed (SIGKILL) as well as one that stopped.
+  
+  Its stderr goes to a temp file, not a pipe, so a player that leaves a child behind can't hold up the wait. Checked by hand: SIGTERM and SIGKILL of the hub mid-sentence both leave no process behind. There's a regression test.

@@ -18,7 +18,6 @@ import math
 import os
 import queue
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -131,21 +130,25 @@ class Player:
             # SND_ASYNC returns at once: wait out the clip, unless stop() purges it first
             self._stopped.wait(seconds + 0.2)
             return
-        with self._lock:
-            self._proc = subprocess.Popen([*self._cmd, str(path)], stdin=subprocess.DEVNULL,
-                                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                          start_new_session=True)
-        try:
-            _, err = self._proc.communicate(timeout=seconds + 30)
-        except subprocess.TimeoutExpired:
-            self.stop()
-            raise RuntimeError("the audio player hung") from None
-        finally:
+        # stderr to a file, not a pipe: a player's leftover child can't hold the wait up. In the
+        # worker's own process group (no new session): when the hub kills the worker's group,
+        # the player goes with it, mid-sentence included.
+        with tempfile.TemporaryFile() as err:
             with self._lock:
-                proc, self._proc = self._proc, None
-        if proc.returncode and not self._stopped.is_set():
-            msg = (err or b"").decode("utf-8", "replace").strip().splitlines()
-            raise RuntimeError(f"{self._cmd[0]} failed: {msg[-1] if msg else f'exit {proc.returncode}'}")
+                self._proc = subprocess.Popen([*self._cmd, str(path)], stdin=subprocess.DEVNULL,
+                                              stdout=subprocess.DEVNULL, stderr=err)
+            try:
+                self._proc.wait(timeout=seconds + 30)
+            except subprocess.TimeoutExpired:
+                self.stop()
+                raise RuntimeError("the audio player hung") from None
+            finally:
+                with self._lock:
+                    proc, self._proc = self._proc, None
+            if proc.returncode and not self._stopped.is_set():
+                err.seek(0)
+                msg = err.read().decode("utf-8", "replace").strip().splitlines()
+                raise RuntimeError(f"{self._cmd[0]} failed: {msg[-1] if msg else f'exit {proc.returncode}'}")
 
     def stop(self) -> None:
         self._stopped.set()
@@ -157,7 +160,7 @@ class Player:
             proc = self._proc
         if proc and proc.poll() is None:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
+                proc.kill()  # pw-play, paplay and aplay are single processes
             except OSError:
                 pass
 
@@ -192,15 +195,17 @@ class FakePlayer:
         self._stopped.set()
 
 
-def serve(state: Path, inp, out) -> int:
+def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
     """The protocol loop. A reader thread takes "stop" at once; "say" requests play in order."""
     state.mkdir(parents=True, exist_ok=True)
     fake = os.environ.get("BRAINHUB_VOICE_FAKE")
-    engine = FakeEngine() if fake else Engine(state)
-    player = FakePlayer(Path(fake)) if fake else None
+    if engine is None:
+        engine = FakeEngine() if fake else Engine(state)
     if player is None:
-        cmd = find_player()
-        player = Player(cmd) if cmd else None
+        if fake:
+            player = FakePlayer(Path(fake))
+        elif cmd := find_player():
+            player = Player(cmd)
     says: queue.Queue = queue.Queue()
     out_lock = threading.Lock()
 
@@ -222,7 +227,10 @@ def serve(state: Path, inp, out) -> int:
                     player.stop()
             elif req.get("op") == "say":
                 says.put(req)
-        says.put(None)  # stdin closed: the hub is gone or done with us
+        # stdin closed: the hub is gone (or done with us). Stop talking at once, even mid-line.
+        if player:
+            player.stop()
+        says.put(None)
 
     threading.Thread(target=reader, daemon=True).start()
     wav = state / "voice" / f"line-{os.getpid()}.wav"
