@@ -219,3 +219,86 @@ async def test_timeout_kills_process_group(tmp_path):
         assert pid_gone(int(pid_file.read_text()), timeout=3)
     finally:
         kill_pid_file(pid_file)
+
+
+# -- usage from the hub's own runs (owner feedback 2026-10-22) -----------------------------------
+_RATE = {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.07, "resetsAt": 1800003600}}}
+
+
+def _lines(*events, exit_code=0):
+    """A fake claude that prints these stream-json events, one per line (shapes from 2.1.309)."""
+    body = "import sys,json\nsys.stdin.read()\n"
+    body += "".join(f"print(json.dumps({e!r}))\n" for e in events)
+    return body + (f"sys.exit({exit_code})\n" if exit_code else "")
+
+
+def test_build_args_schema_run_streams_without_partial_messages():
+    """Filing reads the stream too, for its rate_limit_event; it needs no partial text."""
+    a = build_args(model="sonnet", system_prompt_file=Path("p.md"), allowed_tools=["Read"],
+                   max_turns=20, json_schema={"type": "object"}, stream=False)
+    assert a[a.index("--output-format") + 1] == "stream-json" and "--verbose" in a
+    assert "--include-partial-messages" not in a
+
+
+async def test_run_json_reads_the_stream_and_reports_usage(tmp_path):
+    seen = []
+
+    async def on_rate_limit(info):
+        seen.append(info)
+
+    cli = _fake_cli(tmp_path, _lines(
+        {"type": "system", "subtype": "init"}, {"type": "assistant", "message": {}},
+        {"type": "rate_limit_event", "rate_limit_info": _RATE},
+        {"type": "result", "subtype": "success", "structured_output": {"n": 7}}))
+    out = await ClaudeRunner(cli, on_rate_limit=on_rate_limit).run_json(
+        "x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md", json_schema={}, timeout_s=20, **_KW)
+    assert out == {"n": 7} and seen == [_RATE]
+
+
+async def test_run_json_reports_usage_from_a_failed_run(tmp_path):
+    """A run turned away by the limit is exactly when the meter matters."""
+    seen = []
+
+    async def on_rate_limit(info):
+        seen.append(info)
+
+    cli = _fake_cli(tmp_path, _lines({"type": "rate_limit_event", "rate_limit_info": _RATE}, exit_code=1))
+    with pytest.raises(ClaudeError, match="exited 1"):
+        await ClaudeRunner(cli, on_rate_limit=on_rate_limit).run_json(
+            "x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md", json_schema={}, timeout_s=20, **_KW)
+    assert seen == [_RATE]
+
+
+async def test_run_json_unparsable_output(tmp_path):
+    cli = _fake_cli(tmp_path, "import sys\nsys.stdin.read()\nprint('not json')\nprint('[1]')\n")
+    with pytest.raises(ClaudeError, match="unparsable"):
+        await ClaudeRunner(cli).run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                         json_schema={}, timeout_s=20, **_KW)
+
+
+async def test_stream_text_reports_usage(tmp_path):
+    seen = []
+
+    async def on_rate_limit(info):
+        seen.append(info)
+
+    delta = {"type": "stream_event", "event": {"type": "content_block_delta",
+                                                "delta": {"type": "text_delta", "text": "ok"}}}
+    cli = _fake_cli(tmp_path, _lines(delta, {"type": "rate_limit_event", "rate_limit_info": _RATE},
+                                     {"type": "rate_limit_event"}, {"type": "result"}))
+    got = [c async for c in ClaudeRunner(cli, on_rate_limit=on_rate_limit).stream_text(
+        "x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md", timeout_s=20, **_KW)]
+    assert got == ["ok"] and seen == [_RATE]
+
+
+async def test_a_failing_usage_callback_never_breaks_a_run(tmp_path):
+    async def on_rate_limit(info):
+        raise OSError("disk")
+
+    cli = _fake_cli(tmp_path, _lines({"type": "rate_limit_event", "rate_limit_info": _RATE},
+                                     {"type": "result", "structured_output": {"n": 1}}))
+    r = ClaudeRunner(cli, on_rate_limit=on_rate_limit)
+    assert await r.run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                            json_schema={}, timeout_s=20, **_KW) == {"n": 1}
+    assert [c async for c in r.stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                           timeout_s=20, **_KW)] == []

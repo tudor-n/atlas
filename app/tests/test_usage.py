@@ -125,3 +125,66 @@ def test_integral_float_resets_at_accepted(tmp_path):
     assert v["seven_day"] is None
     saved = json.loads((tmp_path / "usage.json").read_text(encoding="utf-8"))
     assert saved["five_hour"]["resets_at"] == T + 3600 and type(saved["five_hour"]["resets_at"]) is int
+
+
+# -- several sessions post at once (owner feedback 2026-10-22: the meter lagged ~2 points) ------
+def _five(used, resets=T + 3600):
+    return {"rate_limits": {"five_hour": {"used_percentage": used, "resets_at": resets}}}
+
+
+def test_lower_reading_in_the_same_window_is_stale(tmp_path):
+    """Each Claude Code session posts its own last response's numbers: an idle session's older,
+    lower reading must not pull the meter back (usage only rises inside a window)."""
+    store, clock = make(tmp_path)
+    assert store.update(_five(7))
+    stamp = store.updated_at()
+    clock.t = T + 60
+    assert store.update(_five(5)) is False
+    assert store.view(80, URL)["five_hour"]["used"] == 7
+    assert store.updated_at() == stamp  # a stale reading is not news
+    assert store.update(_five(8)) is True
+    assert store.view(80, URL)["five_hour"]["used"] == 8
+    assert json.loads((tmp_path / "usage.json").read_text(encoding="utf-8"))["five_hour"]["used_percentage"] == 8
+
+
+def test_window_order_decides_over_the_number(tmp_path):
+    store, _ = make(tmp_path)
+    store.update(_five(40))
+    assert store.update(_five(90, resets=T - 60)) is False  # an earlier, finished window
+    assert store.view(80, URL)["five_hour"]["used"] == 40
+    assert store.update(_five(1, resets=T + 3600 + 18000)) is True  # a new window starts low
+    five = store.view(80, URL)["five_hour"]
+    assert five["used"] == 1
+    assert five["resets_at"] == datetime.fromtimestamp(T + 3600 + 18000).strftime("%Y-%m-%dT%H:%M")
+
+
+def test_windows_merge_independently(tmp_path):
+    store, _ = make(tmp_path)
+    store.update(PAYLOAD)
+    assert store.update({"rate_limits": {"five_hour": {"used_percentage": 50, "resets_at": T + 3600},
+                                         "seven_day": {"used_percentage": 82, "resets_at": T + 86400}}})
+    v = store.view(80, URL)
+    assert v["five_hour"]["used"] == 62.4 and v["seven_day"]["used"] == 82
+
+
+def test_rate_limits_from_run_event():
+    """The shape `claude -p --output-format stream-json` reports (seen with 2.1.309)."""
+    from brainhub.usage import rate_limits_from_event
+    info = {"status": "allowed", "resetsAt": T + 3600, "rateLimitType": "five_hour",
+            "unifiedWindows": {"five_hour": {"utilization": 0.07, "resetsAt": T + 3600},
+                               "seven_day": {"utilization": 0.09, "resetsAt": T + 86400}}}
+    assert rate_limits_from_event(info) == {
+        "five_hour": {"used_percentage": 7.0, "resets_at": T + 3600},
+        "seven_day": {"used_percentage": 9.0, "resets_at": T + 86400}}
+    assert rate_limits_from_event({"unifiedWindows": {"seven_day": {"utilization": 1, "resetsAt": 5}}}) == {
+        "seven_day": {"used_percentage": 100, "resets_at": 5}}
+
+
+@pytest.mark.parametrize("info", [None, [], "x", {}, {"unifiedWindows": []},
+                                  {"unifiedWindows": {"five_hour": "x"}},
+                                  {"unifiedWindows": {"five_hour": {"utilization": "0.5", "resetsAt": T}}},
+                                  {"unifiedWindows": {"five_hour": {"utilization": True, "resetsAt": T}}},
+                                  {"unifiedWindows": {"other": {"utilization": 0.5, "resetsAt": T}}}])
+def test_rate_limits_from_odd_events(info):
+    from brainhub.usage import rate_limits_from_event
+    assert rate_limits_from_event(info) is None

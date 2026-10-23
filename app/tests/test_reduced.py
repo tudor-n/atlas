@@ -252,6 +252,21 @@ async def test_readonly_root_keeps_hub_db(aiohttp_client, tmp_path):
 
 
 @not_superuser
+def test_readonly_hub_records_no_usage_from_its_runs(tmp_path):
+    """Recall still runs on a read-only root; its usage must not try to write data/usage.json."""
+    paths = _brain(tmp_path)
+    s = Store(paths.db)
+    s.init_schema()
+    s.close()
+    try:
+        paths.root.chmod(0o555)
+        app = create_app(paths, start_workers=False)
+        assert app["root_status"].state == "readonly" and app["runner"].on_rate_limit is None
+    finally:
+        paths.root.chmod(0o755)
+
+
+@not_superuser
 async def test_readonly_recovery_requests_exit_75(aiohttp_client, tmp_path):
     paths = _brain(tmp_path)
     s = Store(paths.db)

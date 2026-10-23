@@ -2,7 +2,7 @@
 
 A local "second brain" for one person (the owner), on a dual-boot laptop: Kubuntu 26.04 (the daily driver, where development happens) and Windows 11. The owner writes freely. A headless Claude Code agent files each entry into a git-versioned Markdown brain and proposes tasks and dates. The owner confirms them. Later the owner asks questions and gets their own words back, with citations. Phase 2 adds a usage meter, an Agents panel fed by the owner's Claude Code hooks, a desktop widget and a Tauri desktop shell. The dual-boot port makes it one lifeline on both OSes: the same master commit, one shared root on `D:`, the same features, and Claude Code memory, skills and settings shared through `claude-sync`.
 
-**Phases 1 and 2 are merged into master. The dual-boot port is built on branch `dual-boot` (draft PR #3); the owner merges it. Next: the Windows half of the memory spike (ruling D2), the Windows-side checks, then the rollout with the owner (plan → Rollout).**
+**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. Next: the owner's test-drive feedback (the usage meter is fixed, rulings 20–21 in `phase2-decisions.md`; filing speed is measured, see `app/README.md` → Measured), the Windows half of the memory spike (ruling D2), the Windows-side checks, then the rollout with the owner (plan → Rollout).**
 
 > `../NEXT-SESSION.md` is a short pointer: where things stand and the standing rules.
 
@@ -127,14 +127,14 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `brainhub/gitrepo.py` | `BrainRepo`: commit, revert, worktrees, cherry-pick, stale lock clearing and the non-interactive push; `safe.directory` and per-OS `core.ignorecase` on every call. |
 | `brainhub/brainmap.py` | The map: load, validate, save (LF), `os_folders`, `path_os`, `folders_for`. |
 | `brainhub/filing.py` | Filing prompt, result parsing, Windows path guard, `FilingWorker` (queue, worktree flow, corrections, rebuild recovery). |
-| `brainhub/claude_runner.py` | `ClaudeRunner`: the isolated `claude -p` call, `child_env()`, process-group kill on timeout. |
+| `brainhub/claude_runner.py` | `ClaudeRunner`: the isolated `claude -p` call (always `stream-json`), `child_env()`, process-group kill on timeout, each run's `rate_limit_event` to `on_rate_limit`. |
 | `brainhub/review.py` | Confirm, dismiss and edit for proposals and items. |
 | `brainhub/recall.py` | FTS query building, quick cited answer and dig deeper. |
 | `brainhub/today.py` | Today sections, plus the catch-all "other". |
 | `brainhub/backup.py` | Debounced private-repo push. |
 | `brainhub/server.py` + `routes.py` | aiohttp app, startup steps (`startup_error`/`log_error`), reduced app, read-only mode, root watch (exit 75), API, SSE and WebSocket. |
 | `brainhub/__main__.py` | CLI: run the hub (port check, root status, lock, exit code), `integration …`, `desktop-config`, `runtime …`, `claude-sync …`. |
-| `brainhub/usage.py` | `UsageStore`: per-window merge of status line `rate_limits`, `data/usage.json`, the `/api/usage` view. |
+| `brainhub/usage.py` | `UsageStore`: per-window merge of status line `rate_limits` (the highest reading in a window wins, ruling 20) and of the hub's own runs (`rate_limits_from_event`, ruling 21), `data/usage.json`, the `/api/usage` view. |
 | `brainhub/agents.py` | `AgentTracker`: hook event → status, project/branch/part/where resolution (this OS's folders), `suggest_link`, `os`/`boot` per row, `end_previous_boot`, linger and stale pruning. |
 | `brainhub/widget.py` | `/api/widget` summary (synopsis, attention, tiles; ended sessions don't count) and the cached arm reachability probe (15 s reachable, 60 s offline). |
 | `brainhub/hook_client.py` | Silent stdlib hook and status line client (rule 11). |
@@ -152,7 +152,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 
 ## Where things stand
 - **Phases 1 and 2 are merged** into master (phase 2 via PR #2).
-- **The dual-boot port is built** on branch `dual-boot` (plan Tasks 1–12), draft PR #3; CI runs on both OSes. The owner merges it.
+- **The dual-boot port is merged** (plan Tasks 1–12, PR #3, 2026-10-22); CI runs on both OSes.
+- **The owner's Linux test drive** (2026-10-22): the usage meter lag is fixed (rulings 20–21). Filing and recall speed is measured (`app/README.md` → Measured → Test-drive follow-up); the speed fixes are still to pick with the owner (`../NEXT-SESSION.md`).
 - **Next:**
   1. The Windows half of the memory spike (D2), at a scheduled reboot, and the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real).
   2. The rollout with the owner (plan → Rollout): live copy to master, `runtime init`, the shell, the integration, `claude-sync`, then the setup wizard on the real root, on Kubuntu and then Windows. It includes the phase 2 checks (Where and the status line for terminal and VS Code sessions on both OSes; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and design §10's verification.

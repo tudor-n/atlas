@@ -343,6 +343,26 @@ Real end-to-end run on 2026-10-22 on Kubuntu with Claude Code 2.1.308 (plan Task
 | An `sdk-cli` event posted to the hub | 204, no row |
 | Uninstall on the scratch file | our entries removed (the file became `{}`), with a backup written first; the update step's `hook/hook_client.py` kept |
 
+### Test-drive follow-up (Linux, 2026-10-23)
+The owner felt filing and recall were slow. This is a real run on Kubuntu with Claude Code 2.1.309, on a scratch root (port 8097, scratch state, config and shared folders, all deleted afterwards). A timing pass-through named `claude` was first on the hub's `PATH`; it logged when each stream event arrived. Three captures were filed one after another (the robot arm entry with a deadline and a teammate who owes endpoints, a paper to read, `buy coffee`), then two questions were asked. No status line was installed.
+
+| Stage | Sonnet filing (two runs) | Haiku filing (one run) |
+|---|---|---|
+| Capture saved (`POST /api/entries`) | 0.002–0.004 s | same |
+| `queued` → `running` | 0.1 s | same |
+| `claude` start-up to `system/init` | 0.63 s (2.07 s for the very first run after boot) | same |
+| Agent turns per filing | 4–6 | 3–6 |
+| Model time (`duration_api_ms`) | 8.3–20.2 s | 5.2–13.1 s |
+| Process exit after its `result` line | 0.5–0.7 s | same |
+| The hub's own work (sweep, worktree, commit, cherry-pick, index) | about 0.2 s | same |
+| **Capture → `done`** | **9.8–21.5 s** (robot arm 10.7 / 11.2, paper 11.4 / 21.5, coffee 9.8 / 12.4) | 14.6, 10.6, 7.2 s |
+
+Recall (Haiku, `recall_top_n` 12): first text after 1.4–3.2 s, `done` after 2.5–4.2 s; about 0.9 s of that is the CLI exiting after its `result` line.
+
+- **Where the time goes:** model turns. The hub's own work is about 0.2 s, and the 2 s first start-up after boot drops to 0.6 s.
+- **Haiku for filing is no fix.** It was not reliably faster, and it filed worse: it added `(from e-…)` to every proposal text, and for `buy coffee` it wrote no note because "personal/ does not exist yet". Sonnet created `personal/errands.md`.
+- **Usage meter (rulings 20–21):** with no status line at all, `/api/usage` read 7 % (5 h) and 9 % (weekly) from the hub's own runs, the filings' schema runs included. Each run's `rate_limit_event` agreed with the previous probes. No `~/.claude/projects/` folder was created.
+
 ## Not built yet
 - **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests. On the dual boot it must reach the hub at one fixed address whichever OS is booted, and its pairing tokens go in shared `data/` (dual-boot design §8.3).
 - **Phase 4:** voice, and the tray's "pause notifications" with it.

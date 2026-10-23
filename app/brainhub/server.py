@@ -24,9 +24,10 @@ from .gitrepo import BrainRepo
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
-from .routes import add_reduced_routes, add_routes, errors, local_only, readonly_guard, setup_done
+from .routes import (add_reduced_routes, add_routes, errors, local_only, readonly_guard, record_usage,
+                     setup_done)
 from .store import SchemaTooNew, Store, commit_hook
-from .usage import UsageStore
+from .usage import UsageStore, rate_limits_from_event
 from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
@@ -318,16 +319,23 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
                 except Exception:
                     app["sockets"].discard(ws)
 
+    app["usage"] = UsageStore(paths.data / "usage.json")
+
+    async def usage_from_run(info: dict) -> None:
+        # The hub's own claude runs use the plan too, and no status line reports them.
+        if limits := rate_limits_from_event(info):
+            await record_usage(app, {"rate_limits": limits})
+
     backup = BackupPusher(repo, lambda: load_settings(paths), broadcast)
     app.update(paths=paths, store=store, repo=repo, broadcast=broadcast, backup=backup,
-               runner=runner or ClaudeRunner(settings["claude_path"]))
+               runner=runner or ClaudeRunner(settings["claude_path"],
+                                             on_rate_limit=None if readonly else usage_from_run))
     # Every hub commit (owner edits, filing, revert, confirm, edit, setup, map edit) reports
     # here: the notes it touched are re-indexed, then a backup is scheduled.
     app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
     app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
     app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
-    app["usage"] = UsageStore(paths.data / "usage.json")
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths))
 
     app["arm"] = ArmProbe()

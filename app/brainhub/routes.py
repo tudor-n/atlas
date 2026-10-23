@@ -605,10 +605,14 @@ def _usage_view(app: web.Application) -> dict:
     return app["usage"].view(s["usage_warn_pct"], s["fable_usage_url"])
 
 
-async def post_usage(request: web.Request) -> web.Response:
-    app = request.app
-    if await t(app["usage"].update, await body_dict(request)):
+async def record_usage(app: web.Application, payload: dict) -> None:
+    """A status line post or one of the hub's own claude runs: store it, tell the pages."""
+    if await t(app["usage"].update, payload):
         await app["broadcast"]("usage.changed", await t(_usage_view, app))
+
+
+async def post_usage(request: web.Request) -> web.Response:
+    await record_usage(request.app, await body_dict(request))
     return web.Response(status=204)
 
 

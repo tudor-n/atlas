@@ -30,6 +30,30 @@ def _clean(raw) -> dict | None:
     return {"used_percentage": float(used), "resets_at": resets}
 
 
+def _stale(new: dict, held: dict) -> bool:
+    """Every Claude Code session posts its own last response's numbers, so readings arrive out of
+    order. Usage only rises inside a window: a reading from an earlier window, or lower in the
+    same one, is an older response, never news (owner feedback, 2026-10-22)."""
+    if new["resets_at"] != held["resets_at"]:
+        return new["resets_at"] < held["resets_at"]
+    return new["used_percentage"] < held["used_percentage"]
+
+
+def rate_limits_from_event(info) -> dict | None:
+    """The status line's `rate_limits` shape from the `rate_limit_info` of a `claude -p` stream's
+    `rate_limit_event` (`unifiedWindows.<window>.utilization` is a 0-1 fraction; claude 2.1.309).
+    The hub's own runs use the plan too, and no status line reports them. None if no window."""
+    windows = info.get("unifiedWindows") if isinstance(info, dict) else None
+    if not isinstance(windows, dict):
+        return None
+    out = {}
+    for w in WINDOWS:
+        win = windows.get(w)
+        if isinstance(win, dict) and _num(win.get("utilization")):
+            out[w] = {"used_percentage": round(win["utilization"] * 100, 2), "resets_at": win.get("resetsAt")}
+    return out or None
+
+
 class UsageStore:
     def __init__(self, path: Path, now: Callable[[], float] = time.time):
         self.path, self.now = path, now
@@ -73,7 +97,7 @@ class UsageStore:
             data, seen, changed = dict(self._data), False, False
             for w in WINDOWS:
                 clean = _clean(limits.get(w))
-                if clean is None:
+                if clean is None or (w in data and _stale(clean, data[w])):
                     continue
                 seen = True
                 if data.get(w) != clean:

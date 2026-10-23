@@ -20,18 +20,25 @@ Real output shapes (claude 2.1.304, smoke-checked with --model haiku):
   `thinking_delta` / `signature_delta` and must be ignored.
 * `--max-turns 1` with no tools still returns a normal text answer
   (num_turns 1, subtype success).
+* (2.1.309) Schema runs use `stream-json --verbose` too, without partial
+  messages: the last line is the same `result` object, `structured_output`
+  included. Only the stream carries `rate_limit_event`, whose `rate_limit_info`
+  holds the plan usage (`unifiedWindows`); `--output-format json` drops it.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import signal
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 _STDERR_TAIL = 2000
@@ -76,10 +83,10 @@ def build_args(*, model: str, system_prompt_file: Path, allowed_tools: list[str]
         args += ["--allowedTools", *allowed_tools]
         if _WRITE_TOOLS & set(allowed_tools):
             args += ["--permission-mode", "acceptEdits"]
+    # Always the stream: only it carries the run's rate_limit_event (the plan usage).
+    args += ["--output-format", "stream-json", "--verbose"]
     if stream:
-        args += ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]
-    else:
-        args += ["--output-format", "json"]
+        args += ["--include-partial-messages"]
     if json_schema is not None:
         args += ["--json-schema", json.dumps(json_schema, separators=(",", ":"))]
     return args
@@ -96,8 +103,19 @@ def _local_bin(name: str) -> str | None:
 
 
 class ClaudeRunner:
-    def __init__(self, claude_path: str):
+    def __init__(self, claude_path: str,
+                 on_rate_limit: Callable[[dict], Awaitable[None]] | None = None):
         self.claude_path = shutil.which(claude_path) or _local_bin(claude_path)
+        self.on_rate_limit = on_rate_limit  # gets each rate_limit_event's rate_limit_info
+
+    async def _rate_limit(self, ev: dict) -> None:
+        info = ev.get("rate_limit_info")
+        if self.on_rate_limit is None or not isinstance(info, dict):
+            return
+        try:
+            await self.on_rate_limit(info)
+        except Exception:  # the meter must never break a filing or an answer
+            log.warning("could not record usage from a claude run", exc_info=True)
 
     async def _spawn(self, args: list[str], prompt: str, cwd: Path) -> asyncio.subprocess.Process:
         if not self.claude_path:
@@ -173,14 +191,21 @@ class ClaudeRunner:
         except BaseException:
             await self._kill(proc)
             raise
+        events = []
+        for line in out.decode("utf-8", "replace").splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict):
+                events.append(ev)
+                if ev.get("type") == "rate_limit_event":
+                    await self._rate_limit(ev)  # a failed run used the plan too
         if proc.returncode != 0:
             raise ClaudeError(f"claude exited {proc.returncode}: {self._tail(err)}")
-        try:
-            data = json.loads(out.decode("utf-8"))
-        except ValueError as e:
-            raise ClaudeError(f"unparsable claude output: {e}") from e
-        if not isinstance(data, dict):
-            raise ClaudeError("unparsable claude output: not an object")
+        if not events:
+            raise ClaudeError("unparsable claude output: no JSON object")
+        data = next((ev for ev in reversed(events) if ev.get("type") == "result"), {})
         structured = data.get("structured_output")
         if not isinstance(structured, dict):
             raise ClaudeError(
@@ -218,6 +243,9 @@ class ClaudeRunner:
                 try:
                     ev = json.loads(line)
                 except ValueError:
+                    continue
+                if isinstance(ev, dict) and ev.get("type") == "rate_limit_event":
+                    await self._rate_limit(ev)
                     continue
                 if not isinstance(ev, dict) or ev.get("type") != "stream_event":
                     continue

@@ -603,3 +603,16 @@ async def test_usage_endpoints(client):
     assert (await client.post("/api/usage", json={"rate_limits": 3})).status == 400
     r = await client.post("/api/usage", data="{}", headers={"Content-Type": "text/plain"})
     assert r.status == 415
+
+
+async def test_own_claude_runs_feed_the_usage_meter(app_paths, aiohttp_client):
+    """The hub's filings and answers use the plan too; their rate_limit_event reaches /api/usage."""
+    app = create_app(app_paths, start_workers=False)  # the real ClaudeRunner, never started here
+    client = await aiohttp_client(app)
+    info = {"unifiedWindows": {"five_hour": {"utilization": 0.07, "resetsAt": 4_000_000_000}}}
+    async with client.ws_connect("/ws") as ws:
+        await app["runner"].on_rate_limit(info)
+        msg = await ws.receive_json(timeout=5)
+    assert msg["type"] == "usage.changed" and msg["data"]["five_hour"]["used"] == 7.0
+    assert (await (await client.get("/api/usage")).json())["five_hour"]["used"] == 7.0
+    await app["runner"].on_rate_limit({"status": "allowed"})  # no windows: nothing to record
