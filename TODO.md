@@ -1,7 +1,7 @@
 # BrainHub: the owner's to-do list
 
 Everything that's waiting on you, in order. Tick each item here as you go.
-Last updated: 2026-10-23.
+Last updated: 2026-10-23 (phase 4 added).
 
 ## Now
 
@@ -39,6 +39,20 @@ Tell Claude about anything that fails.
 - [ ] Run `brainhub-request "Test" "Width of the desk" "Height of the desk"`. It shows on NOTES within about a second, and the widget says "1 request". Answer it with the unit chips, then SEND. The answer shows in the PC's **Tablet** view.
 - [ ] IGNORE a note (two taps within 2 s), then bring it back with **Show ignored** on the PC.
 - [ ] ROBOT → arm UI → **‹ HOME** (hold it or tap it twice) brings you back. It refuses with "LIVE ON" while LIVE is on, and with "LET GO" while you hold a grip button.
+
+### 6. Phase 4: the voice (after it's merged)
+- [ ] Merge the phase 4 PR on GitHub, wait for CI to pass, then restart the widget. The update pulls it in.
+- [ ] Rebuild the widget so the tray gets **Pause voice**: in `/mnt/data/BrainHub/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`, then restart the widget. Settings will say "widget update available" until you do.
+- [ ] Settings → **Voice** → **Download the voice** (about 121 MB, once).
+- [ ] Press **Play sample**. It should sound like Atlas. Tell Claude if the sentences sound unnatural.
+- [ ] Hear one of each:
+  - a permission prompt in any Claude Code session ("… needs you");
+  - an agent that works for 2 minutes or more ("… has finished. It took …");
+  - a reminder due a minute ahead;
+  - a tablet note ("Note saved. …").
+- [ ] Tray → **Pause voice** → For 1 hour: nothing is spoken. Then **Resume**.
+- [ ] The widget's speaker icon switches the voice off and on.
+- [ ] Settings → Voice → **Edit quotes**: read through the quips and change or delete what doesn't land.
 
 ## Later
 - [ ] **Windows (on hold):** the Windows half of the dual-boot checks, claude-sync, the Windows rollout, and the Windows half of the tablet (allow `python.exe` on private networks; update both OSes together because of schema 3).

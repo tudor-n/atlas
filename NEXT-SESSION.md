@@ -21,7 +21,11 @@ Everything waiting on the owner lives in **`TODO.md`** at the repo root. Keep ev
      - Checked in headless Chrome over a real LAN site (`app/README.md` → Measured → Phase 3).
      - Reviewed by three subagents after the build (the owner's instruction). Every finding is fixed (decisions T17–T27); 966 pytest and 62 node tests pass.
      - **Its rollout and device checks need the owner:** `TODO.md` steps 4 and 5 (design §11; `app/README.md` → Phase 3; `phase3-decisions.md` → Residuals).
-  4. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while and will come back to Windows later. That covers the Windows half of the memory spike (ruling D2, in a fresh Windows clone, never in `D:\BrainHub`), the Windows-side checks (the widget built hidden and then shown, D1; claude-sync's junctions, drive-letter keys and `D:\` defaults for real), the Windows rollout and the Windows half of design §10's verification. Until then: code stays portable, CI keeps running on both OSes (the update step's gate needs both `test (…)` jobs green), and nothing is checked on Windows by hand.
+  4. **Phase 4, voice and sass: built on branch `phase-4`** (local, not pushed yet). Brainstormed, spec'd and approved by the owner on 2026-10-23, after a listening test that picked kokoro-onnx with natural wording in Atlas's voice.
+     - Design, plan and decisions: `docs/superpowers/specs/2026-10-23-brainhub-phase4-design.md`, `plans/2026-10-23-brainhub-phase4.md`, `phase4-decisions.md` (V1…).
+     - Checked by hand on a scratch hub with real synthesis (`app/README.md` → Measured → Phase 4).
+     - Next: subagent reviews, then the owner merges; its rollout is `TODO.md` step 6.
+  5. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while and will come back to Windows later. That covers the Windows half of the memory spike (ruling D2, in a fresh Windows clone, never in `D:\BrainHub`), the Windows-side checks (the widget built hidden and then shown, D1; claude-sync's junctions, drive-letter keys and `D:\` defaults for real), the Windows rollout and the Windows half of design §10's verification. Until then: code stays portable, CI keeps running on both OSes (the update step's gate needs both `test (…)` jobs green), and nothing is checked on Windows by hand.
 - **No real brain exists yet**: the setup wizard has never run on `/mnt/data/BrainHub` = `D:\BrainHub`.
 
 ## Owner feedback from the Linux test drive (2026-10-22, evening)
@@ -49,6 +53,7 @@ A throwaway test drive on Kubuntu: the hub and widget from the dev copy on a scr
 |---|---|
 | Project rules, code map, run and test commands (both OSes) | `app/CLAUDE.md` |
 | Setup on each OS, where data lives, drills, Measured | `app/README.md`, `app/desktop/README.md` |
+| The owner's to-do list | `TODO.md` |
 | The dual-boot design (approved) and plan | `docs/superpowers/specs/2026-10-21-brainhub-dual-boot-design.md`, `docs/superpowers/plans/2026-10-22-brainhub-dual-boot.md` |
 | Build-time rulings D1–D12 and the residuals | `docs/superpowers/dual-boot-decisions.md` (phases 1 and 2: `phase1-decisions.md`, `phase2-decisions.md`) |
 
