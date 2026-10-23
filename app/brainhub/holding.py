@@ -281,6 +281,7 @@ class Flushed:
     (left held)."""
     appended: list[str] = field(default_factory=list)
     elsewhere: list[dict] = field(default_factory=list)
+    tablet: list[str] = field(default_factory=list)  # appended ids from the tablet: never auto-filed
 
 
 def flush(state_dir: Path, paths: Paths, store, problems: list | None = None) -> Flushed:
@@ -329,6 +330,8 @@ def flush(state_dir: Path, paths: Paths, store, problems: list | None = None) ->
                 report(f"held captures could not be moved into the raw log ({e}); they stay held")
                 break
             done.appended.append(r["id"])
+            if r.get("source") == "tablet":
+                done.tablet.append(r["id"])
         try:
             path.unlink()  # only now: the log has it
         except OSError as e:

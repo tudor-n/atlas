@@ -1,19 +1,29 @@
-"""Phase 3 HTTP: pairing and paired devices. The tablet's own API (/api/tablet/*) is reachable over
-the LAN site through tablet.lan_guard; everything else here is PC-only (loopback)."""
+"""Phase 3 HTTP: pairing and devices, measurement requests, tablet notes, the tablet's state and
+long-poll. The tablet's own API (/api/tablet/*) is reachable over the LAN site through
+tablet.lan_guard; everything else here is PC-only (loopback)."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+from datetime import datetime
 
 from aiohttp import web
 
+from . import holding, osdirs
 from .agents import resolve_project
 from .brainmap import load_map
-from .routes import body_dict, setup_done
+from .config import load_settings
+from .rawlog import append_entry
+from .routes import _today, _usage_view, body_dict, setup_done
 from .tablet import COOKIE, COOKIE_MAX_AGE
+from .tablet_view import build_tablet_state
 
+log = logging.getLogger(__name__)
 t = asyncio.to_thread
 TITLE_MAX, ITEM_MAX, ITEMS_MAX = 80, 120, 20
+ANSWER_MAX, NOTE_MAX = 200, 20000
+WAIT_S = 25.0  # the long-poll's longest wait (design §6.4)
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -118,7 +128,181 @@ async def restore_request(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+# -- capturing on the tablet: the raw log first, or this OS's holding inbox ---------------------
+async def _capture(request: web.Request, text: str) -> tuple[str, bool]:
+    """Write a tablet capture verbatim (rule 1), source "tablet", indexed for recall and never
+    queued for filing (owner): (entry id, held). A read-only or vanished root holds it on this OS
+    instead, as a PC capture is held (rule 14)."""
+    app = request.app
+    if not setup_done(app) and app["root_status"].state != "ok":
+        raise web.HTTPConflict(reason="run setup first")
+    if app["root_status"].state != "readonly":
+        try:
+            entry = await t(append_entry, app["paths"].brain, text, "tablet")
+        except OSError as e:
+            log.error("the raw log can't be written (%s); the tablet capture is held on this OS", e)
+        else:
+            try:
+                await t(app["store"].add_entry, entry)
+                await t(app["store"].index_entry, entry)
+            except Exception:  # the log has it; startup backfill recovers the index
+                log.exception("tablet entry %s saved to the log but not indexed", entry.id)
+            return entry.id, False
+    record = await t(holding.hold, osdirs.state_dir(), app["paths"], text, "tablet", datetime.now())
+    return record["id"], True
+
+
+def answer_text(req: dict, answers: dict[int, str]) -> str:
+    """The raw-log text of one set of answers (design §5.3): the request, then each answered item;
+    items left empty are named on a last line, so nothing is silently missing."""
+    head = f"Measurements: {req['title']}" + (f" ({req['project_name'] or req['project']})"
+                                              if req.get("project_name") or req.get("project") else "")
+    lines = [head] + [f"- {item}: {answers[i]}" for i, item in enumerate(req["items"]) if i in answers]
+    skipped = [item for i, item in enumerate(req["items"]) if i not in answers]
+    if skipped:
+        lines.append("(not answered: " + "; ".join(skipped) + ")")
+    return "\n".join(lines)
+
+
 # -- the tablet ---------------------------------------------------------------
+async def tablet_state(request: web.Request) -> web.Response:
+    app = request.app
+    if not setup_done(app):
+        raise web.HTTPConflict(reason="run setup on the PC first")
+
+    def gather() -> dict:
+        store = app["store"]
+        settings = load_settings(app["paths"])
+        requests = store.list_requests()
+        return {"today": _today(app), "requests": requests, "hidden_requests": store.hidden_refs("request"),
+                "notes": store.list_entries(source="tablet", limit=50), "hidden_notes": store.hidden_refs("note"),
+                "answered": {r["answer_entry"]: r["title"] for r in requests if r.get("answer_entry")},
+                "agents": app["agents"].rows(), "usage": _usage_view(app), "arm_url": settings["arm_url"]}
+    data = await t(gather)
+    reachable = await app["arm"].reachable(data["arm_url"])
+    return web.json_response(build_tablet_state(
+        version=app["feed"].version, device=request.get("device"), arm_reachable=reachable,
+        host=request.host, now=datetime.now(), **data))
+
+
+async def tablet_wait(request: web.Request) -> web.Response:
+    """Long-poll (design §6.4): answers when the feed moves past `since`, or after WAIT_S."""
+    try:
+        since = int(request.query.get("since", ""))
+    except ValueError:
+        raise ValueError("since must be an integer") from None
+    return web.json_response({"version": await request.app["feed"].wait(since, WAIT_S)})
+
+
+async def tablet_note(request: web.Request) -> web.Response:
+    body = await body_dict(request)
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("the note is blank")
+    if len(text) > NOTE_MAX:
+        raise ValueError(f"the note is longer than {NOTE_MAX} characters")
+    entry_id, held = await _capture(request, text)
+    if not held:
+        await request.app["broadcast"]("tablet.changed", {})
+    return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
+
+
+async def tablet_answer(request: web.Request) -> web.Response:
+    app = request.app
+    req = await t(app["store"].get_request, request.match_info["request_id"])
+    if req is None:
+        raise web.HTTPNotFound(reason="unknown request")
+    if req["status"] != "open":
+        raise web.HTTPConflict(reason="this request was already answered")
+    raw = (await body_dict(request)).get("answers")
+    if not isinstance(raw, dict):
+        raise ValueError("answers must be an object: item number to value")
+    answers: dict[int, str] = {}
+    for key, value in raw.items():
+        try:
+            i = int(key)
+        except ValueError:
+            raise ValueError(f"unknown item {key!r}") from None
+        if not 0 <= i < len(req["items"]):
+            raise ValueError(f"unknown item {key!r}")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        answers[i] = _text(value, ANSWER_MAX, f"the answer to item {i + 1}")
+    if not answers:
+        raise ValueError("fill in at least one value")
+    entry_id, held = await _capture(request, answer_text(req, answers))
+    if not held:
+        await t(app["store"].set_request_answered, req["id"], entry_id)
+        await _tablet_changed(app, "requests.changed")
+    return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
+
+
+async def tablet_ignore(request: web.Request) -> web.Response:
+    body = await body_dict(request)
+    kind, ref = body.get("kind"), body.get("id")
+    if kind not in ("note", "request") or not isinstance(ref, str):
+        raise ValueError('kind must be "note" or "request", with an id')
+    await _set_hidden(request, kind, ref, True)
+    return web.Response(status=204)
+
+
+# -- PC: the Tablet notes view ------------------------------------------------
+async def tablet_notes(request: web.Request) -> web.Response:
+    _pc_only(request)
+    app = request.app
+    show_hidden = request.query.get("hidden") == "1"
+
+    def gather() -> dict:
+        store = app["store"]
+        hidden_n, hidden_r = store.hidden_refs("note"), store.hidden_refs("request")
+        requests = store.list_requests()
+        titles = {r["answer_entry"]: r["title"] for r in requests if r.get("answer_entry")}
+        entries = store.list_entries(source="tablet", limit=500)
+        filings = {f.entry_id: f for f in store.list_filings(entry_ids=[e.id for e in entries])}
+        notes = [{"id": e.id, "ts": e.ts.isoformat(), "text": e.text, "hidden": e.id in hidden_n,
+                  "answer_to": titles.get(e.id),
+                  "filing": filings[e.id].status if e.id in filings else None}
+                 for e in entries if show_hidden or e.id not in hidden_n]
+        reqs = [{**r, "hidden": r["id"] in hidden_r} for r in requests
+                if r["status"] == "open" and (show_hidden or r["id"] not in hidden_r)]
+        return {"requests": reqs, "notes": notes,
+                "hidden": {"notes": len(hidden_n), "requests": len(hidden_r)}}
+    return web.json_response(await t(gather))
+
+
+async def _tablet_entry(request: web.Request):
+    e = await t(request.app["store"].get_entry, request.match_info["entry_id"])
+    if e is None or e.source != "tablet":
+        raise web.HTTPNotFound(reason="unknown tablet note")
+    return e
+
+
+async def file_tablet_note(request: web.Request) -> web.Response:
+    """"File this" (owner): the note goes through the normal filing, and its confirm card."""
+    _pc_only(request)
+    app = request.app
+    e = await _tablet_entry(request)
+    f = await t(app["store"].get_filing, e.id)
+    if f and f.status in ("queued", "running"):
+        raise web.HTTPConflict(reason="filing in progress")
+    await t(app["worker"].mark_queued, e.id)
+    app["worker"].queue.put_nowait(e.id)
+    await app["broadcast"]("tablet.changed", {})
+    return web.json_response({"ok": True}, status=202)
+
+
+async def ignore_tablet_note(request: web.Request) -> web.Response:
+    _pc_only(request)
+    await _set_hidden(request, "note", request.match_info["entry_id"], True)
+    return web.Response(status=204)
+
+
+async def restore_tablet_note(request: web.Request) -> web.Response:
+    _pc_only(request)
+    await _set_hidden(request, "note", request.match_info["entry_id"], False)
+    return web.Response(status=204)
+
+
 async def pair(request: web.Request) -> web.Response:
     body = await body_dict(request)
     app = request.app
@@ -146,4 +330,13 @@ def add_tablet_routes(app: web.Application) -> None:
         web.post("/api/requests/{request_id}/restore", restore_request),
         web.post("/api/tablet/pair", pair),
         web.get("/api/tablet/me", me),
+        web.get("/api/tablet/state", tablet_state),
+        web.get("/api/tablet/wait", tablet_wait),
+        web.post("/api/tablet/notes", tablet_note),
+        web.post("/api/tablet/requests/{request_id}/answer", tablet_answer),
+        web.post("/api/tablet/ignore", tablet_ignore),
+        web.get("/api/tablet-notes", tablet_notes),
+        web.post("/api/tablet-notes/{entry_id}/file", file_tablet_note),
+        web.post("/api/tablet-notes/{entry_id}/ignore", ignore_tablet_note),
+        web.post("/api/tablet-notes/{entry_id}/restore", restore_tablet_note),
     ])

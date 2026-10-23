@@ -105,7 +105,8 @@ def _flush_held(app: web.Application) -> None:
     it) stay held, in one line of startup_errors."""
     done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
     for entry_id in done.appended:
-        app["worker"].mark_queued(entry_id)
+        if entry_id not in done.tablet:  # tablet notes are kept, never filed automatically (phase 3)
+            app["worker"].mark_queued(entry_id)
     if done.elsewhere:
         n = len(done.elsewhere)
         folders = ", ".join(sorted({r["root"]["path"] for r in done.elsewhere}))

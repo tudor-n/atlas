@@ -803,6 +803,7 @@ async def reduced_widget(request: web.Request) -> web.Response:
 
 # Opening a page writes nothing, so it works in every mode (the widget's "Open in BrainHub").
 _HARMLESS_POSTS = ("/api/open",)
+_TABLET_CAPTURE = re.compile(r"/api/tablet/notes|/api/tablet/requests/[^/]+/answer")
 _IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
 
 
@@ -816,6 +817,8 @@ async def readonly_guard(request: web.Request, handler):
         return await handler(request)
     if method == "POST" and path == "/api/entries":
         return await hold_entry(request)
+    if method == "POST" and _TABLET_CAPTURE.fullmatch(path):
+        return await handler(request)  # a tablet note or answer: its handler holds it (phase 3)
     if method == "POST" and path in _IGNORED_POSTS:
         return await ignored(request)
     return await unavailable(request)
