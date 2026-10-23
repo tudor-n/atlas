@@ -27,6 +27,8 @@ from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
 from .routes import (add_reduced_routes, add_routes, errors, local_only, readonly_guard, record_usage,
                      setup_done)
 from .store import SchemaTooNew, Store, commit_hook
+from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
+from .tablet_routes import add_tablet_routes
 from .usage import UsageStore, rate_limits_from_event
 from .widget import ArmProbe
 
@@ -103,7 +105,15 @@ def _flush_held(app: web.Application) -> None:
     it) stay held, in one line of startup_errors."""
     done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
     for entry_id in done.appended:
-        app["worker"].mark_queued(entry_id)
+        if entry_id not in done.tablet:  # tablet notes are kept, never filed automatically (phase 3)
+            app["worker"].mark_queued(entry_id)
+    store = app["store"]
+    for entry_id, request_id in done.answers.items():  # answers held while the root was read-only
+        req = store.get_request(request_id)
+        if req and req["status"] == "open":
+            store.set_request_answered(request_id, entry_id)
+    if done.answers:
+        store.export_tablet(app["paths"].brain)
     if done.elsewhere:
         n = len(done.elsewhere)
         folders = ", ".join(sorted({r["root"]["path"] for r in done.elsewhere}))
@@ -142,6 +152,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
+    step("restoring tablet requests", store.restore_tablet_if_empty, paths.brain)
     step("held captures", _flush_held, app)
     step("raw log", _backfill_log, app)
     step("notes index", _rebuild_notes, app)
@@ -188,14 +199,15 @@ async def on_startup(app: web.Application) -> None:
     if app["root_status"].state == "readonly":
         # Every startup step writes (git, hub.db, the brain), and so do the workers, the backup
         # and the agents prune: none of them runs. Only the watch for a writable root does.
-        app["tasks"] = [asyncio.create_task(_watch_root(app))]
+        app["tasks"] = [asyncio.create_task(_watch_root(app)), asyncio.create_task(watch_lan(app))]
         return
     for entry_id in await t(_startup_sync, app):
         app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
+    app["tasks"] = [asyncio.create_task(watch_lan(app))]
     if app["start_workers"]:
-        app["tasks"] = [asyncio.create_task(app["worker"].run_forever()),
-                        asyncio.create_task(app["backup"].run_forever()),
-                        asyncio.create_task(_prune_agents(app))]
+        app["tasks"] += [asyncio.create_task(app["worker"].run_forever()),
+                         asyncio.create_task(app["backup"].run_forever()),
+                         asyncio.create_task(_prune_agents(app))]
 
 
 async def on_shutdown(app: web.Application) -> None:
@@ -288,8 +300,8 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     readonly = status.state == "readonly"
     if status.state in ("ok", "fresh"):
         paths.data.mkdir(exist_ok=True)  # inside the existing root; never the root itself
-    app = web.Application(middlewares=[local_only, errors, readonly_guard] if readonly
-                          else [local_only, errors])
+    app = web.Application(middlewares=[lan_guard, local_only, errors, readonly_guard] if readonly
+                          else [lan_guard, local_only, errors])
     startup_errors: list[str] = []
     settings = load_settings(paths, startup_errors)
     try:
@@ -311,6 +323,8 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     _run_state(app, recheck_interval)
 
     async def broadcast(type_: str, data: dict) -> None:
+        if type_ not in TabletFeed.QUIET:
+            app["feed"].bump()  # the tablet long-polls instead of a WebSocket (phase 3)
         extra = [("items.changed", {})] if type_ in ("filing.done", "filing.failed") else []
         for name, payload in [(type_, data), *extra]:
             for ws in list(app["sockets"]):
@@ -321,6 +335,11 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
 
     app["usage"] = UsageStore(paths.data / "usage.json")
     app["statusline_seen"] = {}  # "at": the last status line post (memory only)
+    # Phase 3: the tablet's pairing, its LAN listener (serve() hands it the runner) and change feed.
+    app["feed"] = TabletFeed()
+    app["pairing"] = Pairing(store)
+    app["answer_lock"] = asyncio.Lock()  # one answer at a time: two at once must not both land
+    app["lan"] = LanSite(lambda: load_settings(paths), lambda: app["port"])
 
     async def usage_from_run(info: dict) -> None:
         # The hub's own claude runs use the plan too, and no status line reports them. Recorded in
@@ -353,6 +372,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     app["opener"] = _default_opener
 
     add_routes(app)
+    add_tablet_routes(app)
     if paths.web.is_dir():  # code-relative; never created under the data root
         app.router.add_static("/static/", paths.web)
     app.on_startup.append(on_startup)

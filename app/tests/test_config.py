@@ -139,3 +139,36 @@ def test_url_settings_validation(paths):
     for bad in (0, 101):
         with pytest.raises(ValueError):
             save_settings(paths, {"usage_warn_pct": bad})
+
+
+# -- phase 3: the workbench tablet ----------------------------------------------------------------
+def test_tablet_defaults(paths):
+    s = load_settings(paths)
+    assert s["tablet_lan"] is False and s["tablet_address"] == ""
+    assert "mm" in s["tablet_units"] and "°" in s["tablet_units"]
+
+
+@pytest.mark.parametrize("addr", ["192.168.0.200", "10.0.0.5", "172.16.3.4", "172.31.255.254", ""])
+def test_tablet_address_accepts_private_ipv4(paths, addr):
+    assert save_settings(paths, {"tablet_address": addr})["tablet_address"] == addr
+
+
+@pytest.mark.parametrize("addr", ["8.8.8.8", "172.32.0.1", "127.0.0.1", "0.0.0.0", "192.168.0.255.1",
+                                  "192.168.0", "localhost", "192.168.0.200 ", "::1", "fe80::1", 5, None,
+                                  "192.168.000.200", "192.168.0.256"])
+def test_tablet_address_rejects_anything_else(paths, addr):
+    with pytest.raises(ValueError):
+        save_settings(paths, {"tablet_address": addr})
+
+
+def test_tablet_lan_is_a_bool(paths):
+    assert save_settings(paths, {"tablet_lan": True})["tablet_lan"] is True
+    with pytest.raises(ValueError):
+        save_settings(paths, {"tablet_lan": 1})
+
+
+@pytest.mark.parametrize("bad", [[], "mm", ["mm", "mm"], ["mm", ""], ["x" * 7], ["mm", 3], ["m m"], ["a"] * 21])
+def test_tablet_units_validation(paths, bad):
+    assert save_settings(paths, {"tablet_units": ["mm", "°", "Ω"]})["tablet_units"] == ["mm", "°", "Ω"]
+    with pytest.raises(ValueError):
+        save_settings(paths, {"tablet_units": bad})

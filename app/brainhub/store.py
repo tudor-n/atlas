@@ -42,10 +42,16 @@ def _migrate_2(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE agents ADD COLUMN {col} TEXT")
 
 
+def _migrate_3(db: sqlite3.Connection) -> None:
+    """Phase 3 (the workbench tablet) only adds tables: devices, requests and tablet_hidden come
+    from _SCHEMA's CREATE TABLE IF NOT EXISTS right after the migrations run."""
+
+
 # The schema version lives in PRAGMA user_version (dual-boot design §5.2). _SCHEMA is always the
 # latest schema; MIGRATIONS[n] moves a version n-1 database to version n.
-SCHEMA_VERSION = 2
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_2}
+SCHEMA_VERSION = 3
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_2, 3: _migrate_3}
+HIDDEN_KINDS = ("note", "request")  # what IGNORE can hide on the tablet (design §6.2, §7)
 
 
 class SchemaTooNew(Exception):
@@ -78,6 +84,16 @@ CREATE TABLE IF NOT EXISTS agents(
     mapped INTEGER NOT NULL, branch TEXT, title TEXT, part_override TEXT, entrypoint TEXT,
     where_override TEXT, status TEXT NOT NULL, note TEXT, started_at TEXT NOT NULL,
     status_since TEXT NOT NULL, last_event_at TEXT NOT NULL, ended_at TEXT, os TEXT, boot TEXT);
+CREATE TABLE IF NOT EXISTS devices(
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+    paired_at TEXT NOT NULL, last_seen TEXT);
+CREATE TABLE IF NOT EXISTS requests(
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, items TEXT NOT NULL, project TEXT, project_name TEXT,
+    created TEXT NOT NULL, status TEXT NOT NULL, answer_entry TEXT);
+CREATE TABLE IF NOT EXISTS tablet_hidden(
+    kind TEXT NOT NULL, ref TEXT NOT NULL, hidden_at TEXT NOT NULL, PRIMARY KEY(kind, ref));
+CREATE TABLE IF NOT EXISTS tablet_sends(
+    client_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, at TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     kind UNINDEXED, ref UNINDEXED, date UNINDEXED, body,
     tokenize='unicode61 remove_diacritics 2');
@@ -196,8 +212,11 @@ class Store:
         return _entry(r) if r else None
 
     def list_entries(self, day: str | None = None, before: str | None = None,
-                     limit: int = 200) -> list[Entry]:
+                     limit: int = 200, source: str | None = None) -> list[Entry]:
         sql, args = "SELECT * FROM entries WHERE 1=1", []
+        if source:
+            sql += " AND source=?"
+            args.append(source)
         if day:
             sql += " AND substr(ts,1,10)=?"
             args.append(day)
@@ -406,6 +425,104 @@ class Store:
                 "UPDATE agents SET ended_at=? WHERE ended_at IS NULL AND (boot IS NULL OR boot<>?)",
                 (stamp, boot)).rowcount
 
+    # paired tablets (phase 3). Only a token's SHA-256 is stored, and it never leaves the store.
+    _DEVICE_PUBLIC = "id, name, paired_at, last_seen"
+
+    def add_device(self, name: str, token_hash: str) -> dict:
+        row = {"id": f"d-{secrets.token_hex(4)}", "name": name, "paired_at": _now(), "last_seen": None}
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO devices VALUES(?,?,?,?,?)",
+                             (row["id"], name, token_hash, row["paired_at"], None))
+        return row
+
+    def device_by_hash(self, token_hash: str) -> dict | None:
+        with self._lock:
+            r = self._db.execute(f"SELECT {self._DEVICE_PUBLIC} FROM devices WHERE token_hash=?",
+                                 (token_hash,)).fetchone()
+        return dict(r) if r else None
+
+    def touch_device(self, id: str, stamp: str) -> None:
+        if self.readonly:
+            return
+        with self._lock, self._db:
+            self._db.execute("UPDATE devices SET last_seen=? WHERE id=?", (stamp, id))
+
+    def list_devices(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(f"SELECT {self._DEVICE_PUBLIC} FROM devices ORDER BY paired_at, id").fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_device(self, id: str) -> bool:
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM devices WHERE id=?", (id,)).rowcount > 0
+
+    # measurement requests (an agent asks; the owner answers on the tablet, spec §7.3)
+    @staticmethod
+    def _request(r) -> dict:
+        d = dict(r)
+        d["items"] = json.loads(d["items"])
+        return d
+
+    def add_request(self, title: str, items: list[str], project: str | None,
+                    project_name: str | None) -> dict:
+        now = datetime.now()
+        rid = f"r-{now:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO requests VALUES(?,?,?,?,?,?,?,?)",
+                             (rid, title, json.dumps(items, ensure_ascii=False), project, project_name,
+                              now.replace(microsecond=0).isoformat(), "open", None))
+        return self.get_request(rid)
+
+    def get_request(self, id: str) -> dict | None:
+        with self._lock:
+            r = self._db.execute("SELECT * FROM requests WHERE id=?", (id,)).fetchone()
+        return self._request(r) if r else None
+
+    def list_requests(self) -> list[dict]:
+        """Newest first."""
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM requests ORDER BY created DESC, id DESC").fetchall()
+        return [self._request(r) for r in rows]
+
+    def set_request_answered(self, id: str, entry_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE requests SET status='answered', answer_entry=? WHERE id=?",
+                             (entry_id, id))
+
+    def request_for_entry(self, entry_id: str) -> dict | None:
+        with self._lock:
+            r = self._db.execute("SELECT * FROM requests WHERE answer_entry=?", (entry_id,)).fetchone()
+        return self._request(r) if r else None
+
+    # what the tablet sent, by its own id: a resend after a lost response is never written twice
+    def sent_entry(self, client_id: str) -> str | None:
+        with self._lock:
+            r = self._db.execute("SELECT entry_id FROM tablet_sends WHERE client_id=?", (client_id,)).fetchone()
+        return r["entry_id"] if r else None
+
+    def record_sent(self, client_id: str, entry_id: str) -> None:
+        if self.readonly:
+            return
+        with self._lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO tablet_sends VALUES(?,?,?)", (client_id, entry_id, _now()))
+
+    # IGNORE on the tablet: hidden, never deleted (spec §3.3)
+    def hide(self, kind: str, ref: str) -> None:
+        if kind not in HIDDEN_KINDS:
+            raise ValueError(f"unknown kind: {kind}")
+        with self._lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO tablet_hidden VALUES(?,?,?)", (kind, ref, _now()))
+
+    def unhide(self, kind: str, ref: str) -> bool:
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM tablet_hidden WHERE kind=? AND ref=?",
+                                    (kind, ref)).rowcount > 0
+
+    def hidden_refs(self, kind: str) -> set[str]:
+        with self._lock:
+            rows = self._db.execute("SELECT ref FROM tablet_hidden WHERE kind=?", (kind,)).fetchall()
+        return {r["ref"] for r in rows}
+
     # fts
     def index_entry(self, e: Entry) -> None:
         with self._lock, self._db:
@@ -549,6 +666,47 @@ class Store:
                 raise ValueError(f"{path} is damaged ({e!r}); proposals were not restored") from None
         return len(rows)
 
+    def export_tablet(self, brain: Path) -> None:
+        """Requests and IGNOREs to brain/_items/requests.json and tablet.json (deterministic,
+        rewritten only when changed), so a rebuilt index keeps them. Paired devices are not
+        exported: their token hashes stay in hub.db, out of the brain's backup (phase 3 decisions)."""
+        out = Path(brain) / "_items"
+        out.mkdir(parents=True, exist_ok=True)
+        with self._lock:  # snapshot and write together: two exports at once can't leave a stale file
+            requests = sorted(self.list_requests(), key=lambda r: r["id"])
+            hidden = [dict(r) for r in self._db.execute(
+                "SELECT kind, ref, hidden_at FROM tablet_hidden ORDER BY kind, ref").fetchall()]
+            _write_if_changed(out / "requests.json", requests)
+            _write_if_changed(out / "tablet.json", {"hidden": hidden})
+
+    def restore_tablet_if_empty(self, brain: Path) -> int:
+        """Rebuild requests and IGNOREs from their exports, each only into an empty table. A
+        damaged file raises ValueError naming it; nothing is restored from it."""
+        items, restored = Path(brain) / "_items", 0
+        req_path, tab_path = items / "requests.json", items / "tablet.json"
+        with self._lock:
+            if not self._db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] and req_path.exists():
+                rows = _load_json_list(req_path)
+                try:
+                    values = [(d["id"], d["title"], json.dumps(d["items"], ensure_ascii=False), d.get("project"),
+                               d.get("project_name"), d["created"], d["status"], d.get("answer_entry"))
+                              for d in rows]
+                    with self._db:
+                        self._db.executemany("INSERT INTO requests VALUES(?,?,?,?,?,?,?,?)", values)
+                except (KeyError, TypeError, AttributeError, sqlite3.Error) as e:
+                    raise ValueError(f"{req_path} is damaged ({e!r}); requests were not restored") from None
+                restored += len(rows)
+            if not self._db.execute("SELECT COUNT(*) FROM tablet_hidden").fetchone()[0] and tab_path.exists():
+                try:
+                    data = json.loads(tab_path.read_text(encoding="utf-8"))
+                    values = [(h["kind"], h["ref"], h["hidden_at"]) for h in data["hidden"]]
+                    with self._db:
+                        self._db.executemany("INSERT INTO tablet_hidden VALUES(?,?,?)", values)
+                except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as e:
+                    raise ValueError(f"{tab_path} is damaged ({e!r}); ignored items were not restored") from None
+                restored += len(values)
+        return restored
+
     def restore_items_if_empty(self, brain: Path) -> int:
         """Rebuild the items table from brain/_items/items.json when it is empty. A corrupt
         file raises ValueError naming it, and nothing is restored."""
@@ -567,6 +725,18 @@ class Store:
             except (AttributeError, sqlite3.Error) as e:
                 raise ValueError(f"{path} is damaged ({e}); items were not restored") from None
         return len(rows)
+
+
+def _write_if_changed(path: Path, data) -> None:
+    """Deterministic JSON, rewritten only when it changed, and atomically: a reader (or a crash)
+    never sees half a file."""
+    text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8", errors="replace") == text:
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    os.replace(tmp, path)
 
 
 def _load_json_list(path: Path) -> list:

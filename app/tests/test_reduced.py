@@ -483,3 +483,33 @@ async def test_capture_held_when_the_drive_goes_away_mid_run(aiohttp_client, tmp
     await aiohttp_client(create_app(paths, runner=make_runner(), start_workers=False))
     assert [e.text for e in read_log(paths.brain)] == ["typed after the drive went"]
     assert holding.held(_state_dir()) == []
+
+
+@not_superuser
+async def test_readonly_root_holds_tablet_notes_and_answers(aiohttp_client, tmp_path):
+    """Phase 3: a tablet capture on a read-only root is held on this OS, as a PC capture is."""
+    paths = Paths(tmp_path / "BrainHub")
+    paths.root.mkdir()
+    app = create_app(paths, runner=make_runner(), start_workers=False)
+    c = await aiohttp_client(app)
+    assert (await c.post("/api/setup", json={"map": MAP})).status == 200
+    rid = (await (await c.post("/api/requests", json={"title": "t", "items": ["a"]})).json())["request"]["id"]
+    await c.close()
+    before = _snapshot(paths.root)
+    try:
+        paths.root.chmod(0o555)
+        app = create_app(paths, runner=make_runner(), start_workers=False)
+        assert app["root_status"].state == "readonly"
+        c = await aiohttp_client(app)
+        r = await c.post("/api/tablet/notes", json={"text": "typed while read-only"})
+        assert r.status == 200 and (await r.json())["held"] is True
+        r = await c.post(f"/api/tablet/requests/{rid}/answer", json={"answers": {"0": "5 mm"}})
+        assert r.status == 200 and (await r.json())["held"] is True
+        assert (await c.post("/api/tablet/ignore", json={"kind": "request", "id": rid})).status == 503
+        assert (await c.get("/api/tablet/state")).status == 200
+        await c.close()
+        assert _snapshot(paths.root) == before
+    finally:
+        paths.root.chmod(0o755)
+    held = holding.held(_state_dir())
+    assert sorted(r["source"] for r in held) == ["tablet", "tablet"]

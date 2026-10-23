@@ -100,7 +100,7 @@ All Claude calls run `claude -p` on your subscription. `ANTHROPIC_API_KEY` is re
 The hub's agents run isolated from your own Claude Code setup: they load no settings files (`--setting-sources ""`), so none of your plugins, hooks or permission rules apply; no MCP servers (`--strict-mcp-config`); no skills or slash commands; no saved sessions; no auto memory (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so filings leave nothing in `~/.claude/projects`); and only the built-in tools each job needs (`--tools`: none for quick recall, `Read Glob Grep` for dig deeper, `Read Write Edit Glob Grep` for filing). Your login still works, since it is not a setting. Because they load no settings, the hub's own agents never fire BrainHub's hooks, so they never show up in the Agents panel. A filing that would create a path Windows can't hold (a reserved name or character, a trailing dot or space, or two names differing only in case) fails into To review instead of reaching `brain/`.
 
 ## Security
-The server binds `127.0.0.1` only. Writes require `Content-Type: application/json` and a same-origin `Origin`/`Host`, so cross-site requests from other web pages are blocked. The UI renders text with `textContent` only.
+The server binds `127.0.0.1`. With **Tablet over Wi-Fi** on (phase 3), it also listens at the one `tablet_address`, and only while the laptop has that address. A request arriving there may reach only the tablet's page and `/api/tablet/*`, from its own origin and Host, and only with a paired device's cookie. Everything else answers 403 there, even when paired. Writes require `Content-Type: application/json` and a same-origin `Origin`/`Host`, so cross-site requests from other web pages are blocked. The UI renders text with `textContent` only.
 
 Phase 2 keeps the same model. Any local program can already reach the hub, so a program forging hook events could only change what the Agents panel shows. The hook client sends an allow-list of fields (event name, session id, cwd, source, reason, notification type, session title, and messages capped at 300 characters): never your prompts, tool inputs or outputs, or transcripts. `/api/open` only opens the app, the arm URL or the usage URL from your settings.
 
@@ -171,6 +171,31 @@ All in the Settings view.
 | `arm_url` | `http://127.0.0.1:8080` | The robot arm UI: the widget's Robot arm tile checks and opens it. |
 | `widget_tiles` | all eight, in order | Which tiles the expanded widget shows, and their order. |
 
+## Phase 3: the workbench tablet
+The Samsung SM-T110 at the bench, in Fully Kiosk Browser, is a separate ES5 page at `/tablet`. Its home screen has **ROBOT**, which opens the arm UI, and **JOURNAL**. JOURNAL has three tabs:
+- **TODAY:** a glance only.
+- **NOTES:** measurement requests and free-text notes.
+- **AGENTS:** Claude Code sessions and the usage meters.
+
+All typing uses an in-page keyboard, so the Android keyboard never opens. On the PC, the same page opens on localhost without pairing: http://127.0.0.1:8090/tablet.
+
+**Setting it up** (once per OS; design §11):
+1. Reserve the laptop's address for its Wi-Fi MAC in the router (`192.168.0.200` for `24:b2:b9:cd:c5:69`). Both OSes use the same MAC, so they get the same address.
+2. Let the port through the firewall. Kubuntu: `sudo ufw allow from 192.168.0.0/24 to any port 8090 proto tcp`. Windows, later: allow `python.exe` on private networks.
+3. Settings → **Tablet**: set the address ("Use … (now)" fills in this laptop's), tick **Tablet over Wi-Fi**, then Save. The section says "Listening on http://192.168.0.200:8090/tablet".
+4. In Fully Kiosk, set the start URL to `http://192.168.0.200:8090/tablet`. Press **Pair a device** in Settings and type the 6-digit code on the tablet. It's valid for 5 minutes and works once. The tablet is then remembered; Settings lists it, with **Revoke**.
+5. Install the integration again (Settings → Claude Code integration → Install, or `integration install`). This adds the `brainhub-request` command to `~/.local/bin` and one line about it to `~/.claude/CLAUDE.md`, after a backup.
+
+**Measurement requests:** an agent runs `brainhub-request "Arm calibration" "ArUco ID 3 → arm base" "ID 3 → ID 7"`. The checklist appears on the tablet's NOTES tab within about a second, and the widget shows "1 request".
+- On the tablet you type each value with its unit (`412` then the **mm** chip), and **SET** moves to the next item. **SEND** writes one raw-log entry with every value.
+- Answers go to **Tablet** on the PC, never back to the agent.
+
+**Tablet notes** are kept verbatim in the raw log (`source=tablet`) and can be found by Ask. They are **not filed** until you press **File this** in the PC's **Tablet** view.
+
+**IGNORE** on the tablet needs a second tap within 2 s. It hides a note or request without deleting it, and **Show ignored** on the PC brings it back.
+
+**ROBOT and HOME:** ROBOT opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `brainhub-home` branch.
+
 ## Claude Code sync (`claude-sync`)
 `python -m brainhub claude-sync` keeps your own Claude Code the same on both OSes through the shared store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`). Your login, sessions, history and plugin installs stay per OS.
 - **Memory:** a home session (started in your home folder) loads your personal memory; a project session loads only that project's notes, on both OSes, from the same files. claude-sync merges this OS's existing notes into the store (after a backup to `<state>/claude-sync-backups/`; a note that clashes is kept under a second name, `<name>.<os>.md`), then points Claude Code there through `autoMemoryDirectory` in `~/.claude/settings.local.json` (home) and in each project's `.claude/settings.local.json` (git-ignored through the repo's `info/exclude`). A project is the same on both OSes when its folder has the same name in `~/dev` and on `D:\`; `pairs.json` in the store lists exceptions (`{"<name>": {"linux": "<folder>", "windows": "<folder>"}}`). The live copy is never pointed.
@@ -208,7 +233,7 @@ From `app/` in a dev copy (Kubuntu `~/dev/BrainHub/app`):
 ```
 uv sync --locked --extra test
 uv run --no-sync python -m pytest -q
-node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs
+node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs
 ```
 (On Kubuntu load nvm first: `source ~/.nvm/nvm.sh`.) From `app/desktop/src-tauri`, with the local target folder:
 ```
@@ -216,7 +241,7 @@ CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test
 ```
 (Windows: `set CARGO_TARGET_DIR=%LOCALAPPDATA%\brainhub-target`, then `cargo test`, with `%USERPROFILE%\.cargo\bin` on `PATH`.) CI runs the Python and JS tests on Ubuntu and Windows for every PR and push to master, and the Rust tests and a build when `app/desktop/` changes. A test that only makes sense on one OS is skipped on the other and runs in CI there.
 
-The Python tests use a fake Claude runner; none of them call the real CLI. They point `CLAUDE_CONFIG_DIR`, `LOCALAPPDATA`, `BRAINHUB_STATE_DIR`, `BRAINHUB_CONFIG_DIR` and `BRAINHUB_SHARED_DIR` at temp folders, so they never touch your Claude settings, your state or config folder, `desktop.json` or the Claude store.
+The Python tests use a fake Claude runner; none of them call the real CLI. They point `CLAUDE_CONFIG_DIR`, `LOCALAPPDATA`, `BRAINHUB_STATE_DIR`, `BRAINHUB_CONFIG_DIR`, `BRAINHUB_SHARED_DIR` and `BRAINHUB_BIN_DIR` at temp folders, so they never touch your Claude settings or `CLAUDE.md`, your state or config folder, `desktop.json`, the Claude store or `~/.local/bin`. The tablet page can't run Android 4.2's browser in a test, so `tests/test_tablet_es5.py` refuses the syntax, DOM APIs and CSS that browser lacks.
 
 ## Known limitations
 Deferred on purpose; none of them loses data.
@@ -377,8 +402,23 @@ Recall (Haiku, `recall_top_n` 12): first text after 1.4–3.2 s, `done` after 2.
 - **In the page** (headless Chrome over the DevTools protocol, a scratch hub, and a fake `claude` playing slow Glob → Write → StructuredOutput steps): after Save, the tray card appeared at once and read `Filing… looking for projects/robotarm/** · 0 s`, then `… writing projects/robotarm/notes.md · 4 s`, then `… wrapping up · 6 s`. It then turned into the review card, with no console errors.
 - The meter still updated from the runs (11 % and 10 %), so the env var doesn't hide `rate_limit_event`. No `~/.claude/projects/` folder was created.
 
+### Phase 3 (Linux, 2026-10-23)
+These checks ran on Kubuntu without the tablet itself. A scratch hub ran on port 8097 with **Tablet over Wi-Fi** on at this laptop's real address (`192.168.0.200`; ufw keeps the port closed to the rest of the network). Headless Chrome ran at 1024×600 with touch emulation, and a fake `claude` stood in for filing, so no plan usage was spent. Everything was deleted afterwards.
+
+| Check | Result |
+|---|---|
+| The LAN site | `tablet over Wi-Fi: listening on 192.168.0.200:8097` within one check; unpaired, `/api/tablet/state` over the LAN answered 401 and `/api/today` 403 |
+| `brainhub-request "Arm calibration" "ArUco ID 3 → arm base" "ID 3 → ID 7"` (the real script, exit 0) | `Sent to the workbench tablet (r-…)`; the tablet's NOTES tab showed the card with a count chip |
+| Pairing over the LAN | code typed on the page's keypad by touch, then the home screen; Settings listed "Workbench tablet" |
+| A measurement answer typed on the in-page keyboard | `4` `1` `2` then the **mm** chip, **SET** (moved on to the next item), `9` `8`, **SEND** → one raw-log entry `Measurements: Arm calibration (…)` / `- ArUco ID 3 → arm base: 412 mm` / `- ID 3 → ID 7: 98`; the request closed |
+| A free-text note | **⇧ SHIFT** then `bench ok`, then **SAVE** → `Bench ok` in Tablet notes, not filed |
+| HOME | held 0.8 s → home screen |
+| Console errors | none |
+| The arm UI's HOME (`server.py --sim --no-camera` from a scratch copy, port 8098), after its review | no `?home=` → "ARM-6"; `?home=javascript:…` or a URL not ending in `/tablet` → refused; `?home=<tablet>` → "‹ HOME", and not remembered on the next plain visit; one tap → nothing; held while LIVE on → amber "LIVE ON", stayed; LIVE just asked for → "LIVE ON"; another control held → "LET GO"; LIVE off, two taps → left for the tablet page; server killed → "WAIT" at first, allowed after 5 s out of reach |
+
+The first run of the arm check caught a real bug (phase 3 decisions T16): the HOME action had been named `home`, which is the arm UI's **Start pose** action.
+
 ## Not built yet
-- **Phase 3:** tablet (and its AGENTS tab), LAN binding and pairing, measurement requests. On the dual boot it must reach the hub at one fixed address whichever OS is booted, and its pairing tokens go in shared `data/` (dual-boot design §8.3).
 - **Phase 4:** voice, and the tray's "pause notifications" with it.
 - **Phase 5:** Google Calendar (OAuth tokens in shared `data/`, so it is authorised once).
 - **Phase 6:** phone.

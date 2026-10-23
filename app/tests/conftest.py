@@ -28,3 +28,4 @@ def _isolate_claude_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAINHUB_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("BRAINHUB_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("BRAINHUB_SHARED_DIR", str(tmp_path / "claude-shared"))
+    monkeypatch.setenv("BRAINHUB_BIN_DIR", str(tmp_path / "bin"))  # brainhub-request (phase 3)

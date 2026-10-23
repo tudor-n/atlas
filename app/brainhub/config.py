@@ -19,6 +19,10 @@ DEFAULT_SETTINGS: dict = {
     "usage_warn_pct": 80, "fable_usage_url": "https://claude.ai/settings/usage",
     "agents_end_linger_s": 60, "agents_stale_h": 12, "arm_url": "http://127.0.0.1:8080",
     "widget_tiles": list(WIDGET_TILES),
+    # Phase 3: the workbench tablet. Off until the owner switches it on; the hub then also listens
+    # at tablet_address (the laptop's fixed home address), only while the laptop holds it.
+    "tablet_lan": False, "tablet_address": "",
+    "tablet_units": ["mm", "cm", "m", "°", "g", "kg", "V", "A", "mA", "Ω", "s"],
 }
 
 # Code locations come from the installed package, never from the data root (--root may be any folder).
@@ -28,6 +32,7 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _FABLE_URL = re.compile(r"^https://\S+$")
 _ARM_URL = re.compile(r"^https?://[\w.-]+(:\d{1,5})?(/\S*)?$")
 _REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
+_IPV4 = re.compile(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$")
 # Inclusive bounds for the numeric settings.
 RANGES: dict[str, tuple[int, int]] = {
     "port": (1024, 65535),
@@ -79,6 +84,11 @@ class Paths:
         return _PKG / "schemas"
 
 
+def _private_ipv4(addr: str) -> bool:
+    a, b = (int(x) for x in addr.split(".")[:2])
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
 def validate_setting(key: str, value) -> None:
     """Raise ValueError unless `value` is acceptable for setting `key`."""
     default = DEFAULT_SETTINGS[key]
@@ -93,6 +103,20 @@ def validate_setting(key: str, value) -> None:
               and all(isinstance(v, str) and v in WIDGET_TILES for v in value))
         if not ok:
             raise ValueError("widget_tiles must be a non-empty list of distinct tile names")
+        return
+    if key == "tablet_address":
+        if value == "":
+            return
+        if not isinstance(value, str) or not _IPV4.match(value) or not _private_ipv4(value):
+            raise ValueError("tablet_address must be this laptop's home address: a private IPv4 like "
+                             "192.168.0.200 (10.x, 172.16-31.x or 192.168.x), or empty")
+        return
+    if key == "tablet_units":
+        ok = (isinstance(value, list) and 1 <= len(value) <= 20 and len(set(map(str, value))) == len(value)
+              and all(isinstance(v, str) and 1 <= len(v) <= 6 and not any(c.isspace() for c in v)
+                      for v in value))
+        if not ok:
+            raise ValueError("tablet_units must be 1-20 distinct units of 1-6 characters, no spaces")
         return
     if key in ("fable_usage_url", "arm_url"):
         rx = _FABLE_URL if key == "fable_usage_url" else _ARM_URL

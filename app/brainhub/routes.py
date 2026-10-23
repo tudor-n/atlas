@@ -51,7 +51,10 @@ ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 
 @web.middleware
 async def local_only(request: web.Request, handler):
-    """Outermost guard: blocks DNS rebinding (Host) and cross-site requests (Origin)."""
+    """Blocks DNS rebinding (Host) and cross-site requests (Origin) on loopback. A request on the
+    tablet's LAN site was already checked by tablet.lan_guard, the outermost middleware."""
+    if request.get("lan"):
+        return await handler(request)
     if request.url.host not in ALLOWED_HOSTS:
         return err(403, "forbidden host")
     origin = request.headers.get("Origin")
@@ -254,7 +257,10 @@ async def get_settings(request: web.Request) -> web.Response:
 
 
 async def put_settings(request: web.Request) -> web.Response:
-    return web.json_response(await t(save_settings, request.app["paths"], await body_dict(request)))
+    saved = await t(save_settings, request.app["paths"], await body_dict(request))
+    if "lan" in request.app:
+        await request.app["lan"].sync()  # "Tablet over Wi-Fi" takes effect now, not in 15 s
+    return web.json_response(saved)
 
 
 async def backup_push(request: web.Request) -> web.Response:
@@ -452,7 +458,14 @@ def _widget_state(app) -> dict:
     return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(store.list_proposals()),
             "failed": len(store.list_filings("failed")), "map": load_map(paths.brain),
             "usage": app["usage"].view(settings["usage_warn_pct"], settings["fable_usage_url"]),
-            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now()}
+            "agents": app["agents"].rows(), "settings": settings, "now": datetime.now(),
+            "requests": _open_requests(store)}
+
+
+def _open_requests(store: Store) -> int:
+    """Measurement requests waiting for the owner (phase 3): open and not ignored."""
+    hidden = store.hidden_refs("request")
+    return sum(1 for r in store.list_requests() if r["status"] == "open" and r["id"] not in hidden)
 
 
 async def get_widget(request: web.Request) -> web.Response:
@@ -797,6 +810,7 @@ async def reduced_widget(request: web.Request) -> web.Response:
 
 # Opening a page writes nothing, so it works in every mode (the widget's "Open in BrainHub").
 _HARMLESS_POSTS = ("/api/open",)
+_TABLET_CAPTURE = re.compile(r"/api/tablet/notes|/api/tablet/requests/[^/]+/answer")
 _IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
 
 
@@ -810,8 +824,12 @@ async def readonly_guard(request: web.Request, handler):
         return await handler(request)
     if method == "POST" and path == "/api/entries":
         return await hold_entry(request)
+    if method == "POST" and _TABLET_CAPTURE.fullmatch(path):
+        return await handler(request)  # a tablet note or answer: its handler holds it (phase 3)
     if method == "POST" and path in _IGNORED_POSTS:
         return await ignored(request)
+    if request.get("lan") and "device" not in request:
+        return err(503, "BrainHub can't take that right now")  # nothing about the drive before pairing
     return await unavailable(request)
 
 

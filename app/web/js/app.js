@@ -58,6 +58,7 @@ export const views = {
   today: () => import('./views/today.js'),
   ask: () => import('./views/ask.js'),
   journal: () => import('./views/journal.js'),
+  tablet: () => import('./views/tablet.js'),
   project: () => import('./views/browse.js').then((m) => ({ render: m.renderProject })),
   people: () => import('./views/browse.js').then((m) => ({ render: m.renderPeople })),
   deadlines: () => import('./views/browse.js').then((m) => ({ render: m.renderDeadlines })),
@@ -67,7 +68,7 @@ export const views = {
   setup: () => import('./views/setup.js'),
 };
 
-const NAV = [['today', 'Today'], ['ask', 'Ask'], ['journal', 'Journal'], ['people', 'People'],
+const NAV = [['today', 'Today'], ['ask', 'Ask'], ['journal', 'Journal'], ['tablet', 'Tablet'], ['people', 'People'],
   ['deadlines', 'Deadlines'], ['agents', 'Agents'], ['usage', 'Usage'], ['settings', 'Settings']];
 
 // -- Router ---------------------------------------------------------------------------------

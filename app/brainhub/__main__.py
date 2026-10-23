@@ -79,6 +79,9 @@ def serve(app: web.Application, host: str, port: int) -> int:
         await runner.setup()
         try:
             await web.TCPSite(runner, host, port).start()
+            if "lan" in app:  # the full app: its LAN site (phase 3) follows the settings and the address
+                app["lan"].runner = runner
+                await app["lan"].sync()
             await app["stop"].wait()
         finally:
             await runner.cleanup()
