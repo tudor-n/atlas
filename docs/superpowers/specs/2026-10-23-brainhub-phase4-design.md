@@ -1,7 +1,7 @@
 # BrainHub Phase 4: Voice and sass (design)
 
 Date: 2026-10-23
-Status: **draft, waiting for the owner's approval.** Brainstormed with the owner the same day; their answers are marked **(owner)**.
+Status: **approved by the owner (2026-10-23).** Brainstormed with the owner the same day; their answers are marked **(owner)**.
 Parent spec: `2026-10-20-brainhub-design.md` (§8 "Notifications and voice", §12 item 4). It is the authority; this document makes phase 4 concrete. The dual-boot design (§8.3: "voice plays on both OSes") adds the cross-OS requirement. Where this document departs from either, the departure is marked **(my call)**.
 
 ## 1. Scope
