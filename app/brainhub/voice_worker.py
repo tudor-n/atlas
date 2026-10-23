@@ -234,8 +234,19 @@ class FakePlayer(_Stoppable):
         self._bump()
 
 
+def _trace(msg: str) -> None:
+    """Stage notes on stderr (the voice-worker.log), only with BRAINHUB_VOICE_TRACE set."""
+    if os.environ.get("BRAINHUB_VOICE_TRACE"):
+        print(f"voice-worker {os.getpid()}: {msg}", file=sys.stderr, flush=True)
+
+
 def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
     """The protocol loop. A reader thread takes "stop" at once; "say" requests play in order."""
+    _trace("serve")
+    # The heavy imports happen here, before the reader thread starts blocking on stdin: on Windows
+    # a thread parked in a synchronous pipe read can stall another thread's first DLL-loading import.
+    import numpy  # noqa: F401
+    _trace("numpy loaded")
     state.mkdir(parents=True, exist_ok=True)
     fake = os.environ.get("BRAINHUB_VOICE_FAKE")
     if engine is None:
@@ -254,7 +265,9 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
             out.flush()
 
     def reader() -> None:
+        _trace("reader up")
         for line in inp:
+            _trace(f"read {len(line)} chars")
             try:
                 req = json.loads(line)
             except ValueError:
@@ -283,6 +296,7 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
     try:
         while (req := says.get()) is not None:
             rid = req.get("id")
+            _trace(f"say {rid}")
             try:
                 if player is None:
                     raise RuntimeError("no audio player (pw-play, paplay or aplay) was found")
@@ -294,6 +308,7 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
                     seconds = to_wav(wav, samples, int(req.get("volume", 80)))
                     if seconds > 0 and not math.isnan(seconds):
                         player.play(wav, seconds, gen)
+                _trace(f"played {rid}")
                 reply({"id": rid, "ok": True})
             except Exception as e:  # one bad line never ends the worker
                 reply({"id": rid, "ok": False, "error": str(e) or type(e).__name__})
@@ -310,9 +325,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--state", required=True, help="this OS's BrainHub state folder")
     args = ap.parse_args(argv)
     # The protocol owns the real stdout; whatever a library prints goes to stderr instead.
+    _trace("start")
     proto = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", newline="\n")
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     sys.stdin.reconfigure(encoding="utf-8")
+    _trace("streams set")
     return serve(Path(args.state), sys.stdin, proto)
 
 

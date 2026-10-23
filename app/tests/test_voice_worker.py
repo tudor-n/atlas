@@ -14,7 +14,7 @@ APP = Path(__file__).resolve().parents[1]
 
 
 def _worker(tmp_path, delay="0", extra_env=None):
-    env = {**os.environ, "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "BRAINHUB_VOICE_FAKE_DELAY": delay,
+    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "BRAINHUB_VOICE_FAKE_DELAY": delay,
            **(extra_env or {})}
     return subprocess.Popen([sys.executable, "-m", "brainhub", "voice-worker", "--state", str(tmp_path / "state")],
                             cwd=APP, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

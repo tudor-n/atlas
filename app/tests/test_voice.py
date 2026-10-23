@@ -355,7 +355,7 @@ def test_a_broken_state_file_is_ignored(env):
 
 # -- the Speaker, with the real worker process in fake mode ------------------------------------------------
 def _speaker(tmp_path, **kw):
-    env = {**os.environ, "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "PYTHONPATH": str(APP),
+    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "PYTHONPATH": str(APP),
            "BRAINHUB_VOICE_FAKE_DELAY": kw.pop("delay", "0")}
     return v.Speaker(tmp_path / "state", env=env, **kw)
 
