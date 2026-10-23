@@ -98,8 +98,14 @@
     return false;
   };
 
+  // The top bar's warning chip (the arm UI's): '2 REQUESTS', '1 REQUEST', and nothing for none.
+  function requestsChip(n) {
+    n = Math.max(0, Math.floor(Number(n) || 0));
+    return n ? n + (n === 1 ? ' REQUEST' : ' REQUESTS') : '';
+  }
+
   var api = { ConfirmTap: ConfirmTap, HoldOrDouble: HoldOrDouble, Backoff: Backoff, Store: Store,
-              SendQueue: SendQueue };
+              SendQueue: SendQueue, requestsChip: requestsChip };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BHLogic = api;
 })(this);

@@ -96,8 +96,10 @@ def test_css_has_nothing_the_old_webkit_lacks():
     css = css.replace("-webkit-tap-highlight-color: rgba(0,0,0,0);", "")
     found = [name for name, rx in _CSS.items() if re.search(rx, css)]
     assert not found, f"tablet.css uses {found}"
-    radii = [int(v) for v in re.findall(r"border-radius\s*:\s*(\d+)px", css)]
-    assert radii and max(radii) <= 4, radii
+    # Radius 3 (cards 4); the keyboard keys take the arm keypad's 6 (phase 4.5 §7).
+    key_radii = [int(v) for v in re.findall(r"\.key\s*\{[^}]*border-radius\s*:\s*(\d+)px", css)]
+    radii = [int(v) for v in re.findall(r"border-radius\s*:\s*(\d+)px", re.sub(r"\.key\s*\{[^}]*\}", "", css))]
+    assert key_radii == [6] and radii and max(radii) <= 4, (key_radii, radii)
 
 
 def test_no_input_ever_summons_the_android_keyboard():

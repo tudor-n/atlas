@@ -46,7 +46,6 @@
     if (on && !hasCls(e, c)) e.className = (e.className + ' ' + c).replace(/^\s+/, '');
     if (!on && hasCls(e, c)) e.className = (' ' + e.className + ' ').replace(' ' + c + ' ', ' ').replace(/^\s+|\s+$/g, '');
   }
-  function show(e, on) { var d = on ? '' : 'none'; if (e.style.display !== d) e.style.display = d; }
   function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); }
   function now() { return new Date().getTime(); }
 
@@ -201,22 +200,30 @@
     onTap(home.journal.el, function () { go('journal'); });
   })();
 
-  // journal: the bar, the panes, HOME
+  // journal: the bar (HOME in the brand slot, as on the arm UI; the tabs; the status), the panes,
+  // the message line
+  var HOME_TEXT = '‹ HOME';
   var J = {};
   (function () {
     var e = screen('journal');
     var bar = h('div', 'bar'); e.appendChild(bar);
-    bar.appendChild(h('div', 'brand', 'BRAINHUB'));
+    J.home = h('div', 'brand', HOME_TEXT); bar.appendChild(J.home);
+    homeControl(J.home);
+    var tabs = h('div', 'tabs'); bar.appendChild(tabs);
     J.tabs = {};
-    var names = [['today', 'TODAY', 130], ['notes', 'NOTES', 250], ['agents', 'AGENTS', 384]];
+    var names = [['today', 'TODAY'], ['notes', 'NOTES'], ['agents', 'AGENTS']];
     for (var i = 0; i < names.length; i++) (function (n) {
-      var t = at(h('div', 'tab'), n[2], 0); t.appendChild(document.createTextNode(n[1]));
-      if (n[0] === 'notes') { J.chip = h('span', 'chip'); t.appendChild(J.chip); }
-      t.appendChild(h('div', 'under')); bar.appendChild(t); J.tabs[n[0]] = t;
+      var t = h('div', 'tab', n[1]);
+      t.appendChild(h('div', 'under')); tabs.appendChild(t); J.tabs[n[0]] = t;
       onTap(t, function () { S.tab = n[0]; store.set('bh.tab', S.tab); kbClose(); render(); });
     })(names[i]);
-    J.link = at(h('div', 'dot'), 900, 24); bar.appendChild(J.link);
-    J.linkText = at(h('div', 'abs mono dim'), 914, 20, 100); J.linkText.style.fontSize = '12px'; bar.appendChild(J.linkText);
+    // the status, right: the open requests as the arm's warning chip, then the link
+    var stat = h('div', 'stat'); bar.appendChild(stat);
+    J.warn = h('span', 'wchip'); J.warn.appendChild(h('span', 'sq')); J.warnText = h('span'); J.warn.appendChild(J.warnText);
+    stat.appendChild(J.warn);
+    var link = h('span', 'link'); stat.appendChild(link);
+    J.link = h('span', 'dot'); link.appendChild(J.link);
+    J.linkText = h('span', 'mono'); link.appendChild(J.linkText);
     J.panes = {};
     J.scroll = {};
     for (var p = 0; p < names.length; p++) {
@@ -226,12 +233,11 @@
     J.agents = h('div', 'agents'); J.panes.agents.appendChild(J.agents);
     J.usage = h('div', 'usage'); J.panes.agents.appendChild(J.usage);
     var foot = h('div', 'foot'); e.appendChild(foot);
-    J.home = h('div', 'home', 'HOME (HOLD)'); foot.appendChild(J.home);
-    J.msg = h('div', 'msg'); foot.appendChild(J.msg);
-    homeControl(J.home);
+    J.msg = h('div', 'msg ellip'); foot.appendChild(J.msg);
   })();
 
-  // HOME: a deliberate action (spec §3.3): hold it, or tap it twice. Far from where STOP sits.
+  // HOME: a deliberate action (spec §3.3): hold it, or tap it twice. Top left, where the arm UI has
+  // its own HOME, far from where STOP sits there.
   function homeControl(e) {
     var hod = new L.HoldOrDouble(600, 400), timer = null;
     function down(ev) {
@@ -241,7 +247,7 @@
       if (timer) clearInterval(timer);  // a second finger: still one hold
       timer = setInterval(function () { if (hod.check(now()) === 'go') { stop(); go('home'); } }, 50);
     }
-    function stop() { if (timer) { clearInterval(timer); timer = null; } cls(e, 'hold', false); txt(e, 'HOME (HOLD)'); }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } cls(e, 'hold', false); txt(e, HOME_TEXT); }
     function up(ev) {
       if (ev.type === 'mouseup' && now() - S.lastTouch < 800) return;
       var r = hod.up(now()); stop();
@@ -287,7 +293,7 @@
              ['z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.']];
   var SYM = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['-', '/', ':', ';', '(', ')', '&', '@', '"'],
              ['.', ',', '?', '!', '%', '+', '=', '*', '#']];
-  var ROW_Y = [8, 98, 188, 278];
+  var ROW_Y = [10, 100, 190, 280];  // 80 px keys, 10 px apart, in the sheet's 371 px below its top line
   (function () {
     var top = h('div'); top.id = 'kbtop'; root.appendChild(top);
     KB.label = h('div', 'label'); top.appendChild(KB.label);
@@ -539,7 +545,7 @@
     }
     if (S.screen !== 'journal') return;
     for (var t in J.tabs) if (J.tabs.hasOwnProperty(t)) { cls(J.tabs[t], 'sel', t === S.tab); cls(J.panes[t], 'on', t === S.tab); }
-    txt(J.chip, st.requests.length ? st.requests.length : ''); show(J.chip, st.requests.length > 0);
+    txt(J.warnText, L.requestsChip(st.requests.length)); cls(J.warn, 'on', st.requests.length > 0);
     if (S.tab === 'today') renderToday(st);
     else if (S.tab === 'notes') renderNotes(st);
     else renderAgents(st);
