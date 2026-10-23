@@ -25,7 +25,7 @@ export function synopsisText(w) {
 }
 const hasUsed = (win) => !!win && win.used !== null && win.used !== undefined;
 
-function usageWindow(w) {
+export function usageWindow(w) {
   const u = w.usage || {};
   if (hasUsed(u.five_hour)) return { win: u.five_hour, label: '5h' };
   if (hasUsed(u.seven_day)) return { win: u.seven_day, label: '7d' };
