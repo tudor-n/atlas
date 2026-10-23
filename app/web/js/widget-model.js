@@ -10,8 +10,28 @@ export const TILE_LABEL = {
 // The arm tile opens the `arm` target instead of a view.
 export const TILE_VIEW = {
   today: 'today', usage: 'usage', agents: 'agents', people: 'people',
-  deadlines: 'deadlines', review: 'today', projects: 'settings',
+  deadlines: 'deadlines', review: 'today', projects: 'browse',
 };
+
+// How a tile opens its view. In the desktop shell the widget asks the shell for the main window
+// (`open_main`, design §6); in a plain browser, or when that call fails, it posts /api/open, which
+// opens the browser. The arm tile always posts its own target. `invoke` is the shell's
+// `__TAURI__.core.invoke` or null (tauriInvoke below).
+export function openPlan(name, view, invoke) {
+  if (name === 'arm') return { invoke: null, view: null, body: { target: 'arm' } };
+  const v = view || TILE_VIEW[name] || null;
+  return { invoke: typeof invoke === 'function' ? invoke : null, view: v, body: v ? { target: 'app', view: v } : { target: 'app' } };
+}
+
+// The shell's command bridge on a window-like object, or null (a browser, or a shell without it).
+export function tauriInvoke(win) {
+  try {
+    const core = win && win.__TAURI__ && win.__TAURI__.core;
+    return core && typeof core.invoke === 'function' ? core.invoke.bind(core) : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 const MAX_ROWS = 6;
 const hhmm = (iso) => String(iso || '').slice(-5);

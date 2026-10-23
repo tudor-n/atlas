@@ -14,9 +14,7 @@ DIST = APP / "desktop" / "dist"
 
 # Files that still speak the old look. Each is restyled by a later phase 4.5 wave, which drops it
 # from here; until then the scan runs and is expected to fail (non-strict, so fixing early is fine).
-LEGACY = {
-    "web/widget.css": "restyled with the widget (design §7)",
-}
+LEGACY: dict[str, str] = {}
 
 
 def _styled_files() -> list[Path]:

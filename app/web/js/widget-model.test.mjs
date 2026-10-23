@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -17,7 +17,7 @@ test('labels and views', () => {
   assert.equal(TILE_LABEL.review, 'To review');
   assert.equal(TILE_LABEL.arm, 'Robot arm');
   assert.equal(TILE_VIEW.review, 'today');
-  assert.equal(TILE_VIEW.projects, 'settings');
+  assert.equal(TILE_VIEW.projects, 'browse');
   assert.equal(TILE_VIEW.arm, undefined);
 });
 
@@ -111,4 +111,28 @@ test('capture draft: storage missing or throwing never breaks capture', () => {
   assert.equal(loadDraft(null), '');
   assert.doesNotThrow(() => saveDraft(undefined, 'x'));
   assert.equal(loadDraft({ getItem: () => 42 }), '');
+});
+
+test('openPlan: the shell when it is there, else POST /api/open; the arm always posts', () => {
+  const inv = () => {};
+  assert.deepEqual(openPlan('agents', undefined, null), { invoke: null, view: 'agents', body: { target: 'app', view: 'agents' } });
+  const p = openPlan('projects', undefined, inv);
+  assert.equal(p.invoke, inv); assert.equal(p.view, 'browse'); assert.deepEqual(p.body, { target: 'app', view: 'browse' });
+  assert.equal(openPlan('projects', 'project/robotarm', inv).view, 'project/robotarm');
+  assert.equal(openPlan('review', undefined, inv).view, 'today');
+  assert.deepEqual(openPlan('arm', undefined, inv), { invoke: null, view: null, body: { target: 'arm' } });
+  assert.deepEqual(openPlan('nope', undefined, 'not a function'), { invoke: null, view: null, body: { target: 'app' } });
+});
+
+test('tauriInvoke finds the shell bridge or nothing', () => {
+  assert.equal(tauriInvoke(null), null);
+  assert.equal(tauriInvoke({}), null);
+  assert.equal(tauriInvoke({ __TAURI__: {} }), null);
+  assert.equal(tauriInvoke({ __TAURI__: { core: { invoke: 1 } } }), null);
+  const core = { calls: [], invoke(cmd, args) { this.calls.push([cmd, args]); return 'ok'; } };
+  const f = tauriInvoke({ __TAURI__: { core } });
+  assert.equal(f('open_main', { view: 'agents' }), 'ok');
+  assert.deepEqual(core.calls, [['open_main', { view: 'agents' }]]);
+  const trap = { get __TAURI__() { throw new Error('denied'); } };
+  assert.equal(tauriInvoke(trap), null);
 });
