@@ -20,13 +20,13 @@ from .today import snooze_active
 log = logging.getLogger(__name__)
 
 _ITEM_FIELDS = [f.name for f in fields(Item)]
-_SKIP_DIRS = ("log", "_items")
+_SKIP_DIRS = ("log", "_items", "_voice")  # _voice: the quote file (phase 4), not a note
 _HEADING = re.compile(r"^#+\s+(.*?)\s*$")
 BUSY_TIMEOUT = 5.0  # seconds a statement waits for another connection's lock before "database is locked"
 
 
 def is_note_path(rel: str) -> bool:
-    """A brain-relative path the notes index covers: a .md file outside log/ and _items/ and
+    """A brain-relative path the notes index covers: a .md file outside log/, _items/, _voice/ and
     outside any dot-folder (.git, .obsidian, .trash...)."""
     parts = rel.replace("\\", "/").split("/")
     return (rel.lower().endswith(".md") and parts[0].lower() not in _SKIP_DIRS

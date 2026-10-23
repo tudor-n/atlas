@@ -410,7 +410,7 @@ async def test_startup_adds_missing_gitattributes_in_its_own_commit(aiohttp_clie
     assert not (app_paths.brain / ".gitattributes").exists()
     await _started(aiohttp_client, app_paths)
     assert (app_paths.brain / ".gitattributes").read_text(encoding="utf-8") == "* -text\n"
-    assert repo._run("log", "-1", "--format=%s").stdout.strip() == "add .gitattributes"
+    assert "add .gitattributes" in repo._run("log", "--format=%s").stdout.splitlines()
     assert not repo.is_dirty()
 
 
@@ -625,3 +625,22 @@ async def test_filing_card_carries_live_progress(ready_client, app):
     assert card["progress"] == {"started": "2026-10-23T10:00:00", "step": "reading a.md"}
     del app["worker"].progress[eid]
     assert (await (await ready_client.get(f"/api/filings/{eid}")).json())["progress"] is None
+
+
+async def test_setup_seeds_the_voice_quotes(ready_client, app_paths):
+    path = app_paths.brain / "_voice" / "quotes.md"
+    assert path.is_file() and "## agent_finished" in path.read_text(encoding="utf-8")
+    assert not ready_client.server.app["repo"].is_dirty()
+
+
+async def test_startup_adds_missing_voice_quotes_in_its_own_commit_and_keeps_owner_edits(aiohttp_client, app_paths):
+    repo = _setup_brain(app_paths)
+    await _started(aiohttp_client, app_paths)
+    path = app_paths.brain / "_voice" / "quotes.md"
+    assert path.is_file()
+    assert "add the voice quotes" in repo._run("log", "--format=%s").stdout
+    assert not repo.is_dirty()
+    path.write_text("## readback\nMine.\n", encoding="utf-8")
+    repo.commit_all("owner")
+    await _started(aiohttp_client, app_paths)
+    assert path.read_text(encoding="utf-8") == "## readback\nMine.\n"

@@ -21,6 +21,7 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
+from .quotes import ensure_quotes
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
@@ -77,6 +78,13 @@ def _ensure_gitattributes(app: web.Application) -> None:
     repo = app["repo"]
     if repo.ensure_gitattributes():
         repo.commit_all("add .gitattributes")
+        app["backup"].notify_commit()
+
+
+def _ensure_quotes(app: web.Application) -> None:
+    """Brains set up before phase 4 get the voice's quote file, in a commit of its own."""
+    if ensure_quotes(app["paths"].brain):
+        app["repo"].commit_all("add the voice quotes")
         app["backup"].notify_commit()
 
 
@@ -150,6 +158,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git setup", repo.init)
     step("owner edits", _commit_owner_edits, app)
     step("git attributes", _ensure_gitattributes, app)
+    step("voice quotes", _ensure_quotes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
     step("restoring tablet requests", store.restore_tablet_if_empty, paths.brain)
