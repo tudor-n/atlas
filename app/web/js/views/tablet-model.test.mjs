@@ -24,3 +24,23 @@ test('units and the countdown', () => {
   assert.equal(countdown(299.4), '4:59');
   assert.equal(countdown(-3), '0:00');
 });
+
+test('noteDot: green filed, grey filing, amber failed, none before filing', async () => {
+  const { noteDot } = await import('./tablet-model.js');
+  assert.equal(noteDot({ filing: null }), null);
+  assert.equal(noteDot({ filing: 'queued' }), '');
+  assert.equal(noteDot({ filing: 'running' }), '');
+  assert.equal(noteDot({ filing: 'failed' }), 'a');
+  assert.equal(noteDot({ filing: 'done' }), 'g');
+});
+
+test('shortWhen: the time today, month-day this year, the full date otherwise', async () => {
+  const { shortWhen } = await import('./tablet-model.js');
+  const now = new Date(2026, 9, 24, 12, 0);
+  assert.equal(shortWhen('2026-10-24T00:51:23', now), '00:51');
+  assert.equal(shortWhen('2026-10-21T09:00:00', now), '10-21 09:00');
+  assert.equal(shortWhen('2025-12-31T23:59', now), '2025-12-31 23:59');
+  assert.equal(shortWhen('2026-10-24', now), '10-24');
+  assert.equal(shortWhen('garbage', now), 'garbage');
+  assert.equal(shortWhen(null, now), '');
+});

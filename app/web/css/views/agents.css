@@ -1,1 +1,87 @@
-/* AGENTS view (phase 4.5 design §4): filled by wave C; the shell's layout hooks are in css/app.css. */
+/* AGENTS view (phase 4.5 design §4): a hairline table of Claude Code sessions in .main, and the
+   USAGE panel in the 360px .side (also `#/usage`, which highlights it). Below 1100px the usage
+   panel sits above the table and the whole view scrolls in #view. */
+
+/* -- the table ------------------------------------------------------------------------------ */
+.agents .amsg:empty { display: none; }
+.agents .amsg { padding: 10px 20px; border-bottom: 1px solid var(--sub); }
+.agents .aerr { padding: 16px 20px; }
+.agents .tw { overflow-x: auto; }
+.atab { width: 100%; border-collapse: collapse; }
+.atab th {
+  height: var(--h40); padding: 0 12px; text-align: left; vertical-align: middle; white-space: nowrap;
+  font-weight: 600; font-size: 11px; line-height: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+  border-bottom: 1px solid var(--line);
+}
+.atab td { height: var(--h52); padding: 6px 12px; vertical-align: middle; border-bottom: 1px solid var(--sub); }
+.atab th:first-child, .atab td:first-child { padding-left: 20px; }
+.atab th:last-child, .atab td:last-child { padding-right: 20px; }
+.atab .c-st { white-space: nowrap; width: 1%; }
+.atab .c-st .dl > .dot { margin-right: 10px; }
+.atab .c-st .dl.amb { color: var(--amber); }
+.atab .c-pr { min-width: 150px; }
+.atab .pr-n { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-weight: 600; }
+.atab .mp {
+  font-family: var(--mono); font-weight: 500; font-size: 11px; line-height: 11px; color: var(--faint);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.atab .lk {
+  display: block; height: auto; min-height: var(--h40); margin: 6px 0 2px; padding: 10px 12px; line-height: 18px;
+  white-space: nowrap; text-align: left; text-transform: none; letter-spacing: .02em; font-weight: 500; font-size: 13px;
+}
+.atab .c-pt .part {
+  display: inline-block; min-height: var(--h40); padding: 0 10px; margin-left: -10px; border: 1px solid transparent;
+  border-radius: var(--r-btn); font-family: var(--mono); font-weight: 500; font-size: 13px; line-height: 38px; color: var(--text);
+  white-space: nowrap; cursor: text;
+}
+@media (hover: hover) { .atab .c-pt .part:hover { border-color: var(--line2); } }
+.atab .c-pt .part.prs { border-color: var(--dim); }
+.atab .c-pt input { width: 128px; font-family: var(--mono); font-size: 13px; }
+.atab .c-wh select { min-width: 132px; font-size: 13px; }
+.atab .c-sn { white-space: nowrap; font-size: 12px; color: var(--dim); }
+.atab .c-nt { min-width: 140px; font-size: 13px; line-height: 18px; color: var(--dim); }
+.atab .c-nx { white-space: nowrap; }
+.atab .c-nx .m { font-size: 13px; }
+.atab .c-nx .nx { font-size: 12px; color: var(--dim); }
+.atab .c-x { width: 1%; text-align: right; white-space: nowrap; }
+.atab .x { min-width: 40px; padding: 0 10px; }
+/* an ended session lingers greyed: its text drops to the faint grey, its controls stay usable */
+.atab tr.ended td { color: var(--faint); }
+.atab tr.ended .pr-n, .atab tr.ended .c-pt .part, .atab tr.ended .c-nt, .atab tr.ended .c-nx .nx { color: var(--faint); }
+
+/* -- usage panel ---------------------------------------------------------------------------- */
+.agents > .side.usage, .vw > .side.usage { display: flex; flex-direction: column; }
+.usage .ub { flex: none; }
+.usage .uw { padding: 22px 24px 24px; border-bottom: 1px solid var(--line); }
+.usage .uw .big { margin-top: 18px; }
+.usage .uw.warn .big { color: var(--amber); }
+.usage .uw .meter4 { margin-top: 18px; }
+.usage .uw .rs { margin-top: 14px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 18px; color: var(--dim); }
+.usage .ue { padding: 16px 24px; }
+.usage .uf { margin-top: auto; padding: 20px 24px 24px; }
+.usage .uf .age:empty { display: none; }
+.usage .uf .age { margin-bottom: 12px; font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--faint); }
+.usage .uf .b { width: 100%; }
+.usage .um:empty { display: none; }
+.usage .um { margin-top: 10px; font-size: 13px; }
+/* #/usage: the panel is outlined in white, the way a selected thing is */
+.vw > .side.usage.hl { outline: 1px solid var(--text); outline-offset: -1px; }
+.vw > .side.usage.hl > .sect-h .lb { color: var(--text); }
+
+/* -- narrow: the usage panel above the table, one scroll ------------------------------------ */
+@media (max-width: 1099px) {
+  .vw.split.agents { display: flex; flex-direction: column; height: auto; min-height: 100%; }
+  .vw.split.agents > * { overflow: visible; }
+  .vw.split.agents > .side.usage { order: -1; width: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .agents > .side.usage .ub { display: flex; }
+  .agents > .side.usage .uw { flex: 1 1 0; min-width: 0; border-bottom: 0; }
+  .agents > .side.usage .uw + .uw { border-left: 1px solid var(--line); }
+  .agents > .side.usage .uf { display: flex; align-items: center; gap: 16px; padding: 0 24px 20px; margin-top: 0; }
+  .agents > .side.usage .uf .age { margin: 0; }
+  .agents > .side.usage .uf .b { width: auto; margin-left: auto; }
+  .atab th, .atab td { padding-left: 8px; padding-right: 8px; }
+  .atab .c-pr { min-width: 120px; }
+  .atab .lk { white-space: normal; }
+  .atab .c-nt { min-width: 0; }
+  .atab .c-wh select { min-width: 0; max-width: 136px; }
+}

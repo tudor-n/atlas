@@ -7,7 +7,7 @@ import { confirmCard } from './components/confirm-card.js';
 import { mountTopbar } from './components/topbar.js';
 import { notice } from './components/ui.js';
 import { installPress } from './press.js';
-import { parseHash, tabByKey, browseTarget, settingsSection } from './nav-model.js';
+import { parseHash, tabByKey, settingsSection } from './nav-model.js';
 import { driveText, heldText, readonlyReason } from './drive.js';
 
 // Re-exported so older imports keep working; new code imports from ./dom.js.
@@ -71,25 +71,23 @@ export const views = {
   ask: () => import('./views/ask.js'),
   journal: () => import('./views/journal.js'),
   tablet: () => import('./views/tablet.js'),
-  project: () => import('./views/browse.js').then((m) => ({ render: m.renderProject })),
-  people: () => import('./views/browse.js').then((m) => ({ render: m.renderPeople })),
-  deadlines: () => import('./views/browse.js').then((m) => ({ render: m.renderDeadlines })),
+  browse: browseView(null),
+  project: browseView('project'),
+  people: browseView('people'),
+  deadlines: browseView('deadlines'),
   agents: () => import('./views/agents.js'),
-  usage: () => import('./views/usage.js'),
+  usage: () => import('./views/agents.js').then((m) => ({ render: (c, p, q) => m.render(c, p, q, { focus: 'usage' }) })),
   settings: () => import('./views/settings.js'),
   setup: () => import('./views/setup.js'),
 };
 
-// -- Browse: `#/browse` opens the last-used browse page (nav-model.browseTarget) ------------------
-const BROWSE_KEY = 'brainhub.browse';
-const BROWSE_ROUTES = new Set(['deadlines', 'people', 'project']);
-
-function loadBrowse() {
-  try { return window.localStorage.getItem(BROWSE_KEY); } catch (_) { return null; }
-}
-function saveBrowse(path) {
-  if (browseTarget(path) !== path) return;  // only a valid route path is remembered
-  try { window.localStorage.setItem(BROWSE_KEY, path); } catch (_) { /* blocked or full storage */ }
+// Browse (people, deadlines, project/<slug>, and `#/browse` for the last-used one) is one view with a
+// rail, views/browse-shell.js; it remembers the last-used page itself. `page` is put in front of the
+// route's params, so the shell sees ['people'], ['project', '<slug>'] or [] for `#/browse`.
+function browseView(page) {
+  return () => import('./views/browse-shell.js').then((m) => ({
+    render: (c, p, q) => m.render(c, page ? [page, ...p] : p, q),
+  }));
 }
 
 // -- Router ---------------------------------------------------------------------------------
@@ -128,12 +126,7 @@ async function route() {
     location.hash = '#/setup';
     return;
   }
-  let { name, params } = r;
-  if (name === 'browse') {
-    ({ name, params } = parseHash(`#/${browseTarget(loadBrowse())}`));
-  } else if (BROWSE_ROUTES.has(name)) {
-    saveBrowse(name === 'project' ? `project/${params[0] || ''}` : name);
-  }
+  const { name, params } = r;
   const loader = Object.hasOwn(views, name) ? views[name] : null;
   if (!loader) {
     location.hash = '#/today';
