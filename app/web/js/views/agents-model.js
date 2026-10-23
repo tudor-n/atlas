@@ -72,3 +72,8 @@ export function meterCells(used, segments = 20) {
   if (used == null || !Number.isFinite(u) || u <= 0) return 0;
   return Math.min(segments, Math.ceil((u / 100) * segments));
 }
+
+// The WHERE cell's value: the owner's override, else `auto (<what the hooks saw>)`.
+export function whereText(row) {
+  return row.where_override ? String(row.where_override) : `auto (${row.where || 'unknown'})`;
+}

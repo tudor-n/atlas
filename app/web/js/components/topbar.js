@@ -1,17 +1,19 @@
 // The top bar (phase 4.5 design §3): the six tabs and SETTINGS (selected from the route), the SETUP
-// label, and the status cluster from status-model.statusFrom(): amber chips, REVIEW n, 5H n%, the agents
-// dot and the VOICE switch. The static parts (brand, #nav, #mode, #status, #settings-tab) are in
+// label, and the status cluster from status-model.statusFrom(): amber chips, REVIEW n (entries to
+// review, as Today's TO REVIEW counts them; the proposals are in its title), 5H n%, the agents dot and
+// the VOICE switch. The static parts (brand, #nav, #mode, #status, #settings-tab) are in
 // index.html. Text enters only through el() and textContent (rule 6).
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { TABS, SETTINGS, tabFor } from '../nav-model.js';
-import { statusFrom } from '../status-model.js';
+import { statusFrom, reviewCounts } from '../status-model.js';
 import { widgetVoice } from '../views/voice-model.js';
 import { readonlyReason } from '../drive.js';
 import { chip, dot, switchEl } from './ui.js';
 
 // What can change the cluster's numbers: the widget's own list, plus tablet requests.
-const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.done', 'filing.failed', 'requests.changed'];
+const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.started', 'filing.done',
+  'filing.failed', 'requests.changed'];
 
 const title = (label, key) => `${label[0]}${label.slice(1).toLowerCase()} (Alt+${key})`;
 
@@ -31,8 +33,9 @@ export function mountTopbar({ shell }) {
   // -- the status cluster: persistent nodes, so a refresh never steals focus ---------------------
   const chips = el('span', { class: 'chips' });
   const reviewV = el('span', { class: 'v' }, '–');
-  const review = el('a', { class: 'sl ro', href: '#/today', 'data-press': true },
-    el('span', { class: 'l' }, 'REVIEW'), reviewV);
+  // At narrow widths the label shortens to REV (a bare amber number would say nothing).
+  const review = el('a', { class: 'sl ro rv', href: '#/today', 'data-press': true },
+    el('span', { class: 'l long' }, 'REVIEW'), el('span', { class: 'l short' }, 'REV'), reviewV);
   const usageL = el('span', { class: 'u' }, '5H');
   const usageV = el('span', { class: 'v' }, '–');
   const usage = el('a', { class: 'sl ro', href: '#/usage', 'data-press': true }, usageL, usageV);
@@ -44,6 +47,7 @@ export function mountTopbar({ shell }) {
   clear(statusBox).append(chips, review, usage, agents, voiceSw);
 
   let summary = null;   // GET /api/widget, or null
+  let counts = null;    // status-model.reviewCounts() of the review lists, or null (not loaded)
   let voice = null;     // GET /api/voice, or null
   let offline = false;  // the last /api/widget failed for want of a connection
   let lastMode = null;
@@ -86,7 +90,7 @@ export function mountTopbar({ shell }) {
     if (s.mode === 'setup') return;
 
     const st = statusFrom(full ? summary : null, full ? voice : null,
-      { offline: !!s.offline || (full && offline), drive: s.drive || null });
+      { offline: !!s.offline || (full && offline), drive: s.drive || null, review: full ? counts : null });
     clear(chips).append(...st.chips.map((c) => chip(c.text, { title: c.title })));
     for (const n of [review, usage, agents]) n.hidden = !full;
     voiceSw.hidden = !full || !st.voice.show;
@@ -94,7 +98,7 @@ export function mountTopbar({ shell }) {
 
     reviewV.textContent = String(st.review.count);
     review.classList.toggle('warn', st.review.warn);
-    review.title = st.review.count ? `${st.review.count} to review · Today` : 'Nothing to review · Today';
+    review.title = st.review.title;
 
     usage.hidden = !st.usage;
     if (st.usage) {
@@ -130,6 +134,15 @@ export function mountTopbar({ shell }) {
     try {
       summary = await api.get('/api/widget');
       offline = false;
+      // The widget's summary counts proposals; Today counts entries. Until the hub sends
+      // `review.entries` itself, the bar counts the two lists Today's queue is made of.
+      if (Number.isFinite(summary && summary.review && summary.review.entries)) counts = null;
+      else {
+        try {
+          const [groups, failed] = await Promise.all([api.get('/api/proposals'), api.get('/api/filings?status=failed')]);
+          counts = reviewCounts(groups, failed);
+        } catch (_) { counts = null; }  // the summary's own numbers stand in
+      }
     } catch (e) {
       offline = !e.status;  // an HTTP error is an answer; only a failed fetch means offline
     }

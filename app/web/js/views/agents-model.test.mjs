@@ -74,3 +74,10 @@ test('usedText and meterCells: the usage value and its 20 segments', async () =>
   assert.equal(meterCells(130), 20);
   assert.equal(meterCells(50, 10), 5);
 });
+
+test('whereText: the override, else auto with what the hooks saw', async () => {
+  const { whereText } = await import('./agents-model.js');
+  assert.equal(whereText({ where: 'terminal', where_override: null }), 'auto (terminal)');
+  assert.equal(whereText({ where: 'terminal', where_override: 'IDE' }), 'IDE');
+  assert.equal(whereText({}), 'auto (unknown)');
+});

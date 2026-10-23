@@ -2,10 +2,10 @@
 // design §4). `#/usage` renders this view with the usage panel focused.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { dot } from '../components/ui.js';
+import { dot, selectBox } from '../components/ui.js';
 import { twice } from '../press.js';
 import { mountUsage } from './usage.js';
-import { statusText, sinceText, nextTimeText, linkText, osText, statusDot } from './agents-model.js';
+import { statusText, sinceText, nextTimeText, linkText, osText, statusDot, whereText } from './agents-model.js';
 
 const WHERE = ['terminal', 'IDE', 'desktop app', 'unknown'];
 const HEAD = ['Status', 'Project', 'Part', 'Where', 'Since', 'Note', 'Next time', ''];
@@ -93,12 +93,31 @@ export async function render(container, _params, _query, opts = {}) {
       } }, text);
   }
 
+  // WHERE: the value in mono (an override, or `auto (<detected>)`); pressing it puts the select in
+  // its place and opens it. A choice saves; Esc or leaving it puts the value back.
   function whereCell(row) {
-    const auto = el('option', { value: '', selected: !row.where_override }, `auto (${row.where})`);
-    const select = el('select', { class: 'h40', 'aria-label': 'Where', title: row.entrypoint || 'unknown entrypoint',
-      onchange: () => patch(row, { where: select.value || null }) },
-      auto, WHERE.map((w) => el('option', { value: w, selected: row.where_override === w }, w)));
-    return select;
+    const btn = el('button', { type: 'button', class: 'wh', title: `${row.entrypoint || 'unknown entrypoint'} · click to change`,
+      'aria-label': `Where: ${whereText(row)}. Change`, onclick: () => {
+        let done = false;
+        const auto = el('option', { value: '', selected: !row.where_override }, `auto (${row.where})`);
+        const select = el('select', { class: 'h40', 'aria-label': 'Where', title: row.entrypoint || 'unknown entrypoint' },
+          auto, WHERE.map((w) => el('option', { value: w, selected: row.where_override === w }, w)));
+        const box = selectBox(select);
+        const finish = (save) => {
+          if (done) return;
+          done = true;
+          if (save && (select.value || null) !== (row.where_override || null)) patch(row, { where: select.value || null });
+          else { dirty = false; refresh(true); }
+        };
+        select.addEventListener('change', () => finish(true));
+        select.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); finish(false); } });
+        select.addEventListener('blur', () => finish(false));
+        btn.replaceWith(box);
+        select.focus();
+        try { if (typeof select.showPicker === 'function') select.showPicker(); } catch (_) { /* needs a user gesture; the focus is enough */ }
+      } },
+    row.where_override ? row.where_override : [el('span', { class: 'f' }, 'auto '), row.where || 'unknown']);
+    return btn;
   }
 
   function removeButton(row) {

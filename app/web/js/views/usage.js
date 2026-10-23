@@ -15,7 +15,7 @@ export function windowBlock(title, w, _warnPct, now = new Date()) {
     return el('section', { class: 'uw' }, label(title),
       el('div', { class: 'big f' }, '–'),
       meter(SEGMENTS, 0, { label: `${title}: no data` }),
-      el('p', { class: 'rs' }, 'No data yet. It appears after your next Claude Code reply.'));
+      el('p', { class: 'rs nd' }, 'No data yet. It appears after your next Claude Code reply.'));
   }
   const used = usedText(w);
   return el('section', { class: w.warn ? 'uw warn' : 'uw' },

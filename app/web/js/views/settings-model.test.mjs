@@ -55,7 +55,7 @@ test('backupRows', () => {
   assert.deepEqual(rows, [
     ['Remote', 'set', ''], ['Last successful push', 'at T', 'm'], ['Waiting to push', 'no', ''], ['Last error', 'denied', 'err'],
   ]);
-  assert.equal(backupRows({ remote_set: false, last_ok: null, pending: true, last_error: null })[1][1], 'never');
+  assert.deepEqual(backupRows({ remote_set: false, last_ok: null, pending: true, last_error: null })[1], ['Last successful push', 'never', 'f']);
 });
 
 test('hierarchyRows flattens depth first without the root', () => {

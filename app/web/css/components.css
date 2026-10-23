@@ -97,7 +97,7 @@ button.row, .row[data-press] { cursor: pointer; }
 
 /* -- segmented control: one bordered box, the selected cell is white ------------------------ */
 .seg { display: inline-flex; height: var(--h48); border: 1px solid var(--line2); border-radius: var(--r-btn); overflow: hidden; vertical-align: middle; }
-.seg > button { min-width: 60px; height: 100%; padding: 0 12px; font-size: 14px; color: var(--text); background: var(--ground); text-align: center; white-space: nowrap; }
+.seg > button { min-width: 60px; height: 100%; padding: 0 12px; font-size: 13px; color: var(--text); background: var(--ground); text-align: center; white-space: nowrap; }
 @media (hover: hover) { .seg > button:hover { background: var(--key); } }
 .seg > button.sel, .seg > button[aria-pressed="true"] { background: var(--text); color: var(--ground); }
 .seg > button.prs { background: var(--line2); color: var(--text); }
@@ -107,8 +107,26 @@ button.row, .row[data-press] { cursor: pointer; }
 /* -- panels, rails, section headers -------------------------------------------------------- */
 .panel { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--ground); }
 .rail { flex: none; width: var(--rail); border-right: 1px solid var(--line); overflow-y: auto; }
+/* a navigation rail's own rows (direct children: Browse, Settings) read as tabs: 600 13px .1em uppercase */
+.rail > .row { font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+.rail > a.row { color: var(--text); text-decoration: none; }
+.rail > a.row:hover { color: var(--text); }
+.rail > a.row.cur, .rail > a.row.cur:hover { color: var(--ground); }
+/* the one left gutter (20px, the arm's): headers, rows, fields and text all start on it */
 .sect-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--h40); padding: 0 20px; border-bottom: 1px solid var(--line); }
 .sect-h .n { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--dim); white-space: nowrap; }
+
+/* -- select: a field with a CSS-drawn caret (selectBox() in ui.js wraps the <select> in .sel) --- */
+.sel { position: relative; display: inline-block; vertical-align: middle; max-width: 100%; }
+.sel > select { -webkit-appearance: none; appearance: none; width: 100%; padding-right: 34px; cursor: pointer; }
+.sel > select:disabled { cursor: default; }
+.sel::after {
+  content: ""; position: absolute; right: 13px; top: 50%; margin-top: -2px; width: 0; height: 0; pointer-events: none;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--dim);
+}
+.sel:focus-within::after { border-top-color: var(--text); }
+.sel.dis::after { border-top-color: var(--line2); }
+.sel > select option { background: var(--ground); color: var(--text); }
 
 /* -- tabs: 3px white underline on the selected one ---------------------------------------- */
 .tabs { display: flex; align-items: stretch; height: 55px; white-space: nowrap; }

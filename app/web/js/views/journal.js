@@ -1,9 +1,11 @@
 // Journal: the verbatim history, newest first, grouped by day under sticky headers. A 240px rail
-// holds the day picker, the area filter (rows with counts) and the text filter (local search only).
+// holds the text filter (local search only; first, so it shows above the fold), the day field (mono
+// yyyy-mm-dd, ↑/↓ step a day) and the area filter (rows with counts, named from the brain map).
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { entryCard, hitList, noteText } from '../components/text.js';
 import { button, sectionHead, row, emptyRow } from '../components/ui.js';
+import { mapNames, nameIn, localDay } from './today-model.js';
 
 const PAGE = 50;
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -45,6 +47,37 @@ export function areaCounts(entries, keep = '') {
   return [...counts].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 }
 
+// What the owner typed in the day field, as "YYYY-MM-DD": '' for empty (all days), null when it isn't
+// a real calendar date. Takes "2026-10-24", "2026-1-5" and "20261024".
+export function parseDay(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return '';
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t) || /^(\d{4})(\d{2})(\d{2})$/.exec(t);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${m[1]}-${pad(mo)}-${pad(d)}`;
+}
+
+// "YYYY-MM-DD" moved by n calendar days.
+export function addDays(day, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day || '');
+  if (!m) return day;
+  const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+// An area key from entryAreas() by its brain-map name: "projects/robot-arm" -> "Robot arm",
+// "uni" -> "Uni". A folder the map doesn't know keeps its slug (a top folder gets a capital).
+export function areaName(key, names) {
+  const k = String(key || '');
+  if (k.startsWith('projects/')) return nameIn(names, 'project', k.slice('projects/'.length));
+  const n = nameIn(names, 'area', k);
+  return n === k ? k.charAt(0).toUpperCase() + k.slice(1) : n;
+}
+
 export async function render(container, _params, query) {
   const focusId = (query && query.get('entry')) || '';
   let day = dayOfId(focusId);
@@ -56,10 +89,30 @@ export async function render(container, _params, query) {
   let seq = 0;
   const subs = [];
 
-  // -- the rail: DAY, AREA, FIND --------------------------------------------------------------
-  const dayInput = el('input', { id: 'j-day', type: 'date', class: 'h40', value: day, 'aria-label': 'Day',
-    onchange: () => { day = dayInput.value; reload(); } });
-  const allDays = button('All days', { size: 40, cls: 'j-all', onclick: () => { day = ''; dayInput.value = ''; reload(); } });
+  // -- the rail: FIND, DAY, AREA --------------------------------------------------------------
+  let names = mapNames(null);
+  const dayErr = el('p', { class: 'err j-dayerr', id: 'j-day-err', role: 'alert' });
+  const dayInput = el('input', { id: 'j-day', type: 'text', class: 'h40', value: day, inputmode: 'numeric',
+    maxlength: '10', autocomplete: 'off', spellcheck: 'false', placeholder: 'yyyy-mm-dd',
+    'aria-label': 'Day, as year-month-day', 'aria-describedby': 'j-day-err',
+    onchange: () => applyDay(), onkeydown: (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); applyDay(); }
+      else if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        const from = parseDay(dayInput.value) || day || localDay();
+        dayInput.value = addDays(from, ev.key === 'ArrowUp' ? 1 : -1);
+        applyDay();
+      } else if (ev.key === 'Escape' && dayInput.value !== day) { ev.preventDefault(); dayInput.value = day; showDayErr(''); }
+    } });
+  const showDayErr = (text) => { dayErr.textContent = text; dayInput.classList.toggle('bad', !!text); };
+  function applyDay() {
+    const d = parseDay(dayInput.value);
+    if (d === null) { showDayErr('Use yyyy-mm-dd, a real date.'); return; }
+    showDayErr('');
+    dayInput.value = d;
+    if (d !== day) { day = d; reload(); }
+  }
+  const allDays = button('All days', { size: 40, cls: 'j-all', onclick: () => { day = ''; dayInput.value = ''; showDayErr(''); reload(); } });
   const areaCount = el('span', { class: 'n' });
   const areaRows = el('div', { class: 'j-areas', role: 'group', 'aria-label': 'Area' });
   const filterInput = el('input', { id: 'j-q', type: 'search', class: 'h40', placeholder: 'Words',
@@ -67,12 +120,13 @@ export async function render(container, _params, query) {
   const findForm = el('form', { class: 'j-find', onsubmit: (ev) => { ev.preventDefault(); runFilter(); } },
     filterInput, button('Find', { size: 40, type: 'submit' }));
   const rail = el('aside', { class: 'rail j-rail', 'aria-label': 'Journal filters' },
-    sectionHead('Day'),
-    el('div', { class: 'j-day' }, dayInput, allDays),
-    el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Area'), areaCount),
-    areaRows,
     sectionHead('Find'),
-    el('div', { class: 'j-findp' }, findForm, el('p', { class: 'hn j-findn' }, 'Local search only, never Claude.')));
+    el('div', { class: 'j-findp' }, findForm, el('p', { class: 'hn j-findn' }, 'Local search only, never Claude.')),
+    sectionHead('Day'),
+    el('div', { class: 'j-day' }, dayInput, dayErr,
+      el('p', { class: 'hn j-dayn' }, '↑ ↓ step a day'), allDays),
+    el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Area'), areaCount),
+    areaRows);
 
   // -- the main pane --------------------------------------------------------------------------
   const msg = el('div', { class: 'j-msg err', role: 'alert' });
@@ -81,6 +135,9 @@ export async function render(container, _params, query) {
   const olderRow = el('div', { class: 'j-olderp', hidden: true }, olderBtn);
   const main = el('div', { class: 'main j-main' }, msg, list, olderRow);
   container.appendChild(el('div', { class: 'vw split journal' }, rail, main));
+
+  // The map's names for the AREA rows (slugs until it answers, or when it can't be read).
+  const loadNamesFirst = () => api.get('/api/map').then((m) => { names = mapNames(m); }, () => {});
 
   const url = (extra) => `/api/entries?${new URLSearchParams({ ...(day ? { day } : {}), ...extra })}`;
 
@@ -92,7 +149,7 @@ export async function render(container, _params, query) {
     clear(areaRows).appendChild(row([el('span', { class: 'grow' }, 'All areas'), el('span', { class: 'j-c' }, String(entries.length))],
       { current: !area, onclick: pick('') }));
     for (const [k, n] of counts) {
-      areaRows.appendChild(row([el('span', { class: 'grow j-an' }, k), el('span', { class: 'j-c' }, String(n))],
+      areaRows.appendChild(row([el('span', { class: 'grow j-an' }, areaName(k, names)), el('span', { class: 'j-c' }, String(n))],
         { current: k === area, onclick: pick(k), title: k }));
     }
   }
@@ -119,16 +176,17 @@ export async function render(container, _params, query) {
     }
     if (count) count.textContent = String(n);
     if (!shown.length) {
-      const why = area ? `Nothing filed under ${area} among the entries loaded${more ? ' so far' : ''}.`
+      const why = area ? `Nothing filed under ${areaName(area, names)} among the entries loaded${more ? ' so far' : ''}.`
         : day ? 'Nothing written that day.' : 'Nothing written yet.';
       list.appendChild(emptyRow(why));
     }
     olderRow.hidden = !more;
   }
 
-  async function reload(size = day ? 500 : PAGE) {
+  // keepFind: a background refresh leaves the FIND field as it is (the owner may be typing in it).
+  async function reload(size = day ? 500 : PAGE, { keepFind = false } = {}) {
     filter = '';
-    filterInput.value = '';
+    if (!keepFind) filterInput.value = '';
     const mine = ++seq;
     msg.textContent = '';
     try {
@@ -200,14 +258,33 @@ export async function render(container, _params, query) {
     }
   }
 
-  await reload();
+  await Promise.all([loadNamesFirst(), reload()]);
+  if (!dead) drawAreas();
   const hl = list.querySelector('.hl');
   if (hl && typeof hl.scrollIntoView === 'function') hl.scrollIntoView({ block: 'center' });
   if (focusId && !hl && !dead) msg.textContent = 'That entry was not found.';
 
   // New entries and filing results appear without a reload (not while a text search is on screen).
+  // While a rail field has the focus the refresh waits until it is left, and it never empties FIND.
+  let pending = false;
+  const typing = () => {
+    const a = document.activeElement;
+    return !!a && rail.contains(a) && a.tagName === 'INPUT';
+  };
+  const refresh = () => {
+    if (dead || filter) return;
+    if (typing()) { pending = true; return; }
+    pending = false;
+    reload(Math.max(PAGE, entries.length), { keepFind: true });
+  };
+  rail.addEventListener('focusout', (ev) => {
+    if (ev.relatedTarget && rail.contains(ev.relatedTarget) && ev.relatedTarget.tagName === 'INPUT') return;
+    setTimeout(() => { if (pending && !typing()) refresh(); }, 0);
+  });
   for (const type of ['entry.saved', 'filing.done', 'filing.failed', 'ws.open']) {
-    subs.push(api.onEvent(type, () => { if (!filter) reload(Math.max(PAGE, entries.length)); }));
+    subs.push(api.onEvent(type, refresh));
   }
+  const loadNames = () => api.get('/api/map').then((m) => { if (!dead) { names = mapNames(m); drawAreas(); } }, () => {});
+  subs.push(api.onEvent('map.changed', loadNames));
   return () => { dead = true; for (const s of subs.splice(0)) s(); };
 }

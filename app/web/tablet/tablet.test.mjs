@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { Keyboard, withUnit } = require('./kb.js');
-const { ConfirmTap, HoldOrDouble, Backoff, Store, SendQueue, requestsChip } = require('./logic.js');
+const { ConfirmTap, HoldOrDouble, Backoff, Store, SendQueue, requestsChip, journalDot } = require('./logic.js');
 
 const UNITS = ['mm', 'cm', 'm', '°', 'mA', 'A', 'Ω'];
 
@@ -147,4 +147,12 @@ test('the request chip: a count and a noun, nothing for none', () => {
   assert.equal(requestsChip(12), '12 REQUESTS');
   assert.equal(requestsChip(undefined), '');
   assert.equal(requestsChip(-3), '');
+});
+
+test('journalDot: amber while requests wait, green otherwise', () => {
+  assert.equal(journalDot(0), 'ok');
+  assert.equal(journalDot(2), 'warn');
+  assert.equal(journalDot(1), 'warn');
+  assert.equal(journalDot(undefined), 'ok');
+  assert.equal(journalDot('x'), 'ok');
 });

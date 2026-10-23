@@ -3,7 +3,7 @@
 // `ui` is Settings' section context: its action bar (SAVE and the status line) and the rail's dot.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { button, switchEl, meter } from '../components/ui.js';
+import { button, switchEl, meter, selectBox } from '../components/ui.js';
 import { EVENT_LABELS, blendRows, readBlend, voiceName, statusLine, mb } from './voice-model.js';
 import { voiceDot } from './settings-model.js';
 import { prefRow, groupHead, intro, failLine } from './settings-sections.js';
@@ -69,7 +69,8 @@ export async function renderVoiceSettings(box, isDead, ui) {
     }
 
     // -- switches and events
-    const sw = (on, id, title) => { const n = switchEl({ on: !!on, title }); n.id = id; return n; };
+    // Preferences take the small white switch: green is kept for what is live (the status dot above).
+    const sw = (on, id, title) => { const n = switchEl({ on: !!on, small: true, title }); n.id = id; return n; };
     const on = sw(s.voice_enabled, 'voice-on', 'Voice on');
     const sass = sw(s.voice_sass, 'voice-sass', 'Add a quip after the information');
     const sassRb = sw(s.voice_sass_readback, 'voice-sass-rb', 'Quips on tablet readbacks too');
@@ -86,7 +87,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
         v.voices.map((x) => el('option', { value: x, selected: x === id || null }, voiceName(x))));
       const share = el('input', { type: 'number', class: 'm pct', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': `Voice ${n}: share in %` });
       editors.push({ select, share });
-      rowsBox.appendChild(el('div', { class: 'pair' }, select, share, el('span', { class: 'u' }, '%')));
+      rowsBox.appendChild(el('div', { class: 'pair' }, selectBox(select), share, el('span', { class: 'u' }, '%')));
     }
     rows.forEach((r) => addRow(r.id, r.pct));
     const addBtn = button('ADD A VOICE', { size: 40, onclick: () => { if (editors.length < 3) addRow('', 20); } });
@@ -150,7 +151,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
         prefRow('BLEND', el('div', {}, rowsBox, addBtn), { hint: 'Up to three voices, mixed by share.', cls: 'pf-top' }),
         prefRow('SPEED', el('div', { class: 'pair' }, speed, speedOut), { forId: 'voice-speed' }),
         prefRow('VOLUME', el('div', { class: 'pair' }, volume, volOut), { forId: 'voice-volume' }),
-        prefRow('MODEL', model, { forId: 'voice-model' }))),
+        prefRow('MODEL', selectBox(model), { forId: 'voice-model' }))),
       el('section', { class: 'st-grp' }, groupHead('LISTEN'), el('div', { class: 'pfs' },
         prefRow('SAMPLE', el('div', { class: 'pair' },
           button('PLAY SAMPLE', { size: 40, onclick: sample, disabled: !v.installed }),

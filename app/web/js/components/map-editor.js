@@ -115,6 +115,36 @@ export function dropProjectRefs(map, slug) {
 
 export const hasErrors = (errs) => Object.values(errs).some((l) => l.length);
 
+// Where validateMap's problems sit, so the editors can give those fields an error border:
+// [{key, index, field}], field one of 'name', 'slug', 'folders-windows', 'folders-linux', 'company'.
+// Same rules as validateMap (a duplicate marks the later entry, as its message names it). A person's
+// link to a missing project has no field of its own: only its message shows.
+export function invalidFields(m) {
+  const out = [];
+  const add = (key, index, field) => {
+    if (!out.some((x) => x.key === key && x.index === index && x.field === field)) out.push({ key, index, field });
+  };
+  for (const [key] of TYPES) {
+    const seen = new Set();
+    m[key].forEach((n, i) => {
+      const slug = n.slug || '';
+      if (!SLUG.test(slug) || seen.has(slug)) add(key, i, 'slug');
+      seen.add(slug);
+      if (!String(n.name || '').trim()) add(key, i, 'name');
+      if (RESERVED.includes(slug) && !(key === 'areas' && DEFAULT_AREAS.includes(slug))) add(key, i, 'slug');
+    });
+  }
+  m.projects.forEach((p, i) => {
+    for (const os of OS_NAMES) {
+      if (((p.os_folders && p.os_folders[os]) || []).some((f) => pathOs(f) !== os)) add('projects', i, `folders-${os}`);
+    }
+  });
+  if (m.projects.filter((p) => p.is_company).length > 1) {
+    m.projects.forEach((p, i) => { if (p.is_company) add('projects', i, 'company'); });
+  }
+  return out;
+}
+
 // The node objects of a map as loaded from the server, for createMapEditors' isExisting.
 export function savedNodes(map) {
   return new Set([...map.areas, ...map.projects, ...map.courses, ...map.people]);
@@ -154,9 +184,23 @@ function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, locke
     if (first) first.focus();
   } }, addText);
   const node = el('div', { class: 'editor' }, cols, rows, errBox, el('div', { class: 'eadd' }, addBtn));
+  let drawn = [];  // the entry rows, in map[key] order
+  let marks = [];  // [{index, field}] with an error border (invalidFields)
+
+  // Fields carry data-f (name, slug, folders-<os>, company); a marked one gets .bad and aria-invalid.
+  function mark() {
+    drawn.forEach((row, i) => {
+      for (const f of row.querySelectorAll('[data-f]')) {
+        const bad = marks.some((m) => m.index === i && m.field === f.dataset.f);
+        f.classList.toggle('bad', bad);
+        if (bad) f.setAttribute('aria-invalid', 'true'); else f.removeAttribute('aria-invalid');
+      }
+    });
+  }
 
   function draw() {
     clear(rows);
+    drawn = [];
     cols.hidden = !map[key].length;
     if (!map[key].length) rows.appendChild(el('div', { class: 'empty' }, `No ${label}s yet.`));
     for (const item of map[key]) {
@@ -170,13 +214,17 @@ function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, locke
             changed();
           } }, 'Remove')
         : el('span', { class: 'lb elock' }, lockedText || '');
-      rows.appendChild(el('div', { class: 'erow' }, el('div', { class: 'e1' }, main, end), extra ? el('div', { class: 'e2' }, extra) : null));
+      const row = el('div', { class: 'erow' }, el('div', { class: 'e1' }, main, end), extra ? el('div', { class: 'e2' }, extra) : null);
+      drawn.push(row);
+      rows.appendChild(row);
     }
+    mark();
   }
   draw();
   return {
     node, refresh: draw,
     setErrors(list) { clear(errBox); for (const m of list) errBox.appendChild(el('p', { class: 'err' }, m)); },
+    setInvalid(list) { marks = list; mark(); },
   };
 }
 
@@ -185,7 +233,7 @@ function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, locke
 // A locked slug (a default area, or a node already saved on the server) is read-only: renaming its
 // folder would strand the notes and items filed under it, so only the display name changes.
 function nameSlug(item, { slugLocked, slugChanged, changed, label }) {
-  const slugInput = el('input', { type: 'text', class: 'm slug', value: item.slug, readonly: slugLocked || null, spellcheck: 'false',
+  const slugInput = el('input', { type: 'text', class: 'm slug', 'data-f': 'slug', value: item.slug, readonly: slugLocked || null, spellcheck: 'false',
     'aria-label': `Folder name of the ${label}`,
     title: slugLocked ? "Saved folder names can't change; edit the name instead." : null,
     oninput: () => {
@@ -194,7 +242,7 @@ function nameSlug(item, { slugLocked, slugChanged, changed, label }) {
       if (slugChanged) slugChanged(old, item.slug);
       changed();
     } });
-  const nameInput = el('input', { type: 'text', value: item.name, 'aria-label': `Name of the ${label}`,
+  const nameInput = el('input', { type: 'text', value: item.name, 'data-f': 'name', 'aria-label': `Name of the ${label}`,
     oninput: () => {
       const old = item.slug;
       const followed = !slugLocked && item.slug === slugify(item.name);
@@ -217,7 +265,13 @@ export function createMapEditors(map, { onChange, isExisting = () => false, os =
   let live = false;  // show errors while typing only after a first failed Next/Save
   const editors = {};
 
-  function show(errs) { for (const [key] of TYPES) editors[key].setErrors(errs[key]); }
+  function show(errs) {
+    const bad = invalidFields(map);
+    for (const [key] of TYPES) {
+      editors[key].setErrors(errs[key]);
+      editors[key].setInvalid(bad.filter((x) => x.key === key));
+    }
+  }
   function changed() {
     if (onChange) onChange();
     if (live) show(validateMap(map));
@@ -244,9 +298,10 @@ export function createMapEditors(map, { onChange, isExisting = () => false, os =
         editors.projects.refresh();
         changed();
       }, 'This is my company (one project at most)');
+      company.dataset.f = 'company';
       // One column per OS; each OS matches sessions against its own column only.
       const folders = (col) => {
-        const box = el('textarea', { rows: 2, class: 'm', spellcheck: 'false', value: ((p.os_folders && p.os_folders[col]) || []).join('\n'),
+        const box = el('textarea', { rows: 2, class: 'm', spellcheck: 'false', 'data-f': `folders-${col}`, value: ((p.os_folders && p.os_folders[col]) || []).join('\n'),
           placeholder: `Optional, one per line, like ${OS_EXAMPLE[col]}`,
           oninput: () => {
             p.os_folders = { ...p.os_folders, [col]: box.value.split('\n').map((s) => s.trim()).filter(Boolean) };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { statusFrom } from './status-model.js';
+import { statusFrom, reviewCounts, reviewTitle } from './status-model.js';
 
 // The full /api/widget shape (build_widget + drive + warnings).
 const W = (o = {}) => ({
@@ -19,16 +19,17 @@ const VOICE = { available: true, installed: true, enabled: true, paused_until: n
 test('a quiet hub: no chips, nothing amber', () => {
   const s = statusFrom(W(), null);
   assert.deepEqual(s.chips, []);
-  assert.deepEqual(s.review, { count: 0, warn: false });
+  assert.deepEqual([s.review.count, s.review.warn], [0, false]);
   assert.equal(s.usage, null);
   assert.deepEqual(s.agents, { running: 0, waiting: 0, dot: '', text: '0 RUNNING' });
   assert.equal(s.voice.show, false);
   assert.equal(s.voice.on, false);
 });
 
-test('review counts proposals and failed filings, and failures get a chip', () => {
+test('without counts of its own, review falls back to proposals + failed, and failures get a chip', () => {
   const s = statusFrom(W({ review: { proposals: 3, failed: 2 } }), null);
-  assert.deepEqual(s.review, { count: 5, warn: true });
+  assert.deepEqual([s.review.count, s.review.warn], [5, true]);
+  assert.equal(s.review.title, '5 to review · Today');
   assert.deepEqual(s.chips.map((c) => [c.text, c.kind]), [['2 FAILED', 'failed']]);
   assert.equal(s.chips[0].title, '2 filings failed');
   assert.equal(statusFrom(W({ review: { proposals: 0, failed: 1 } }), null).chips[0].title, '1 filing failed');
@@ -72,7 +73,7 @@ test('drive chips: read-only wins over DRIVE, and carries the reason', () => {
 test('offline: the chip first, and a missing summary is safe', () => {
   const s = statusFrom(null, null, { offline: true });
   assert.deepEqual(s.chips.map((c) => c.text), ['OFFLINE']);
-  assert.deepEqual(s.review, { count: 0, warn: false });
+  assert.deepEqual([s.review.count, s.review.warn], [0, false]);
   assert.equal(s.usage, null);
   assert.equal(s.agents.dot, '');
   const order = statusFrom(W({ review: { proposals: 0, failed: 1 }, drive: { state: 'missing', message: 'x' } }),
@@ -85,7 +86,7 @@ test('the reduced app summary (no tiles data) gives the DRIVE chip and nothing e
     drive: { state: 'missing', message: 'Drive D: is not mounted.', held: 0 }, warnings: [] };
   const s = statusFrom(reduced, null);
   assert.deepEqual(s.chips.map((c) => c.text), ['DRIVE']);
-  assert.deepEqual(s.review, { count: 0, warn: false });
+  assert.deepEqual([s.review.count, s.review.warn], [0, false]);
   assert.equal(s.usage, null);
   assert.equal(s.agents.running, 0);
 });
@@ -103,4 +104,25 @@ test('voice: hidden until installed; on, off and paused', () => {
   assert.equal(paused.on, false);
   assert.equal(paused.action, 'resume');
   assert.equal(statusFrom(W(), { ...VOICE, quiet_now: true }).voice.on, true);
+});
+
+test('review counts entries, as Today does; the proposals go in the title', () => {
+  const groups = [{ entry_id: 'e-1', proposals: [{}, {}, {}] }, { entry_id: 'e-2', proposals: [{}] },
+    { entry_id: 'e-3', proposals: [{}, {}] }];
+  const failed = [{ entry_id: 'e-4' }, { entry_id: 'e-2' }];  // e-2 is listed twice: one entry
+  const rc = reviewCounts(groups, failed);
+  assert.deepEqual(rc, { entries: 4, proposals: 6, failed: 2 });
+  const s = statusFrom(W({ review: { proposals: 6, failed: 2 } }), null, { review: rc });
+  assert.equal(s.review.count, 4);
+  assert.equal(s.review.warn, true);
+  assert.equal(s.review.proposals, 6);
+  assert.equal(s.review.title, '4 entries to review · 6 proposals · 2 failed filings · Today');
+  assert.deepEqual(reviewCounts(null, undefined), { entries: 0, proposals: 0, failed: 0 });
+  // the hub's own entries count is used when the top bar has none
+  const e = statusFrom(W({ review: { proposals: 14, failed: 1, entries: 6 } }), null);
+  assert.equal(e.review.count, 6);
+  assert.equal(e.review.title, '6 entries to review · 14 proposals · 1 failed filing · Today');
+  assert.equal(statusFrom(W(), null, { review: { entries: 0, proposals: 0, failed: 0 } }).review.title,
+    'Nothing to review · Today');
+  assert.equal(reviewTitle(1, 1, 0), '1 entry to review · 1 proposal · Today');
 });

@@ -12,7 +12,11 @@
   .vw.today > .side, .vw.today > .side.w400 { width: auto; border-left: 0; border-top: 1px solid var(--line); }
 }
 
-/* -- TO REVIEW: the queue (master) and the selected entry's card (detail) ------------------ */
+/* -- TO REVIEW: the queue (master) and the selected entry's card (detail) ------------------
+   Past five entries the queue scrolls on its own at 4½ rows (the cut row says there is more), so the
+   card stays near the top of the column; the card's action bar is sticky at the column's foot. */
+.rq { position: relative; }
+.rq.more { max-height: calc(var(--h52) * 4.5); overflow-y: auto; border-bottom: 1px solid var(--line); }
 .rq .row.q { gap: 14px; }
 .rq .sq, .rq .sq0 { flex: none; width: 6px; height: 6px; margin: 0; top: 0; }
 .rq .n { flex: none; min-width: 20px; font-size: 13px; text-align: right; color: var(--dim); }
@@ -45,6 +49,12 @@
 .today .row.it { flex-wrap: wrap; }
 .today .row.it > .grow { flex: 1 1 0; min-width: 0; }
 .snz { flex: none; display: flex; align-items: center; }
+/* SNOOZE: a faint text button, outlined on hover, focus and while its line is open */
+.today .snz .b.tx { padding: 0 10px; border-color: var(--ground); color: var(--dim); font-size: 11px; letter-spacing: .14em; }
+@media (hover: hover) { .today .snz .b.tx:hover { border-color: var(--line2); color: var(--text); } }
+.today .snz .b.tx:focus-visible, .today .snz .b.tx.on { border-color: var(--line2); background: var(--ground); color: var(--text); }
+.today .snz .b.tx:disabled, .today .snz .b.tx:disabled:hover { border-color: var(--ground); color: var(--line2); }
+.today .snz .b.tx.prs { background: var(--text); border-color: var(--text); color: var(--ground); }
 .snz-pick { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 2px 0 4px 52px; }
 .snz-pick .seg > button { min-width: 56px; font-family: var(--mono); font-weight: 500; font-size: 12px; }
 .today .grp {
@@ -80,20 +90,26 @@
 .pp .warn > .sq { position: relative; top: -2px; }
 .pp > .acts { flex: none; display: flex; gap: 6px; }
 .pp > .acts .b { min-width: 40px; padding: 0 11px; }
-.pp > .acts .b.no.arm { padding: 0 10px; }
+/* ✕ is as wide as its armed TAP AGAIN, so arming it never shifts ✓ and EDIT */
+.pp > .acts .b.no { min-width: 78px; }
+.pp > .acts .b.no.arm { padding: 0 6px; font-size: 11px; letter-spacing: .06em; }
 /* the edit: a grid of fields (11px labels over 40px fields), SAVE and CANCEL */
 .pp.ed > .grow { padding: 8px 0 10px; }
 .eg { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .eg > .wide { grid-column: 1 / -1; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .fld > input, .fld > select { width: 100%; min-width: 0; }
-.eb { display: flex; gap: 8px; margin-top: 14px; }
+.eb { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .cc-err:empty { display: none; }
 .cc-err { font-size: 13px; line-height: 18px; }
 .pp .cc-err { margin-top: 8px; }
 
-/* footer: CONFIRM ALL (the card's one primary), TELL IT WHAT'S WRONG, the folded correction */
-.cc .cc-bar { min-height: 64px; padding: 8px 12px 8px 20px; border-top: 0; }
+/* footer: TELL IT WHAT'S WRONG, then CONFIRM ALL (the card's one primary) on the right; the folded
+   correction under it. The bar sticks to the foot of whatever scrolls the card (Today's column, #view
+   below 1100px, the tray), so CONFIRM ALL never scrolls out of sight while the card shows. */
+.cc .cc-bar { position: sticky; bottom: 0; z-index: 1; min-height: 64px; padding: 8px 12px 8px 20px; border-top: 1px solid var(--line); }
+.cc .pps > .pp:last-child { border-bottom: 0; }
+.rv-card > .cc .cc-bar { border-radius: 0 0 var(--r-card) var(--r-card); }
 .cc-bar .err { font-size: 13px; line-height: 18px; text-align: right; }
 .cc-fix { display: flex; flex-direction: column; gap: 8px; padding: 6px 12px 16px 20px; }
 .cc-fix .fx { display: flex; align-items: flex-end; gap: 8px; }

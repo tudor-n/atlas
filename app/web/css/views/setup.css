@@ -1,9 +1,9 @@
-/* SETUP view (phase 4.5 design §4): the first-run wizard. A 760px column that scrolls, a six-step
+/* SETUP view (phase 4.5 design §4): the first-run wizard. A 760px column (20px gutters) that scrolls, a six-step
    progress bar of 4px segments (done / current / to do), and BACK and NEXT/FINISH in a 72px action
    bar under it. The rows (.pf) and the map editor's hairline rows are styled in settings.css. */
 .vw.setup { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .sp-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.sp-col { width: 100%; max-width: 808px; margin: 0 auto; padding: 0 24px; }
+.sp-col { width: 100%; max-width: 800px; margin: 0 auto; padding: 0 20px; }
 .sp-scroll > .sp-col { padding-bottom: 40px; }
 
 .sp-intro { padding-top: 28px; }

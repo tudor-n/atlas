@@ -79,8 +79,22 @@ export async function render(container) {
   });
 
   // Step 5 inputs
-  const qFrom = el('input', { type: 'time', id: 'sp-quiet', class: 'm', value: st.quiet_hours[0], 'aria-label': 'Quiet from', oninput: () => { st.quiet_hours[0] = qFrom.value; save(); } });
-  const qTo = el('input', { type: 'time', class: 'm', value: st.quiet_hours[1], 'aria-label': 'Until', oninput: () => { st.quiet_hours[1] = qTo.value; save(); } });
+  // A time that failed NEXT gets the error border until it holds a time (markQuiet).
+  const qFrom = el('input', { type: 'time', id: 'sp-quiet', class: 'm', value: st.quiet_hours[0], 'aria-label': 'Quiet from',
+    oninput: () => { st.quiet_hours[0] = qFrom.value; save(); markQuiet(false); } });
+  const qTo = el('input', { type: 'time', class: 'm', value: st.quiet_hours[1], 'aria-label': 'Until',
+    oninput: () => { st.quiet_hours[1] = qTo.value; save(); markQuiet(false); } });
+  let quietMarked = false;
+  function markQuiet(show) {
+    if (show) quietMarked = true;
+    if (!quietMarked) return;
+    [qFrom, qTo].forEach((n, i) => {
+      const bad = !HHMM.test(st.quiet_hours[i]);
+      n.classList.toggle('bad', bad);
+      if (bad) n.setAttribute('aria-invalid', 'true'); else n.removeAttribute('aria-invalid');
+    });
+    if (!quietError() && st.step === 4) clear(stepErr);
+  }
   const remote = el('input', { type: 'text', id: 'sp-remote', class: 'm wide', value: st.backup_remote, spellcheck: 'false', placeholder: 'https://github.com/you/brainhub-backup.git',
     oninput: () => { st.backup_remote = remote.value; save(); } });
   const prefsBox = el('div', { class: 'pfs' },
@@ -154,7 +168,10 @@ export async function render(container) {
     if (st.step <= 3) editors.validateAndShow();
     if (errs.length) {
       clear(stepErr);
-      if (st.step === 4) stepErr.append(...errList(errs));
+      if (st.step === 4) { stepErr.append(...errList(errs)); markQuiet(true); }
+      // the messages sit under the list; bring the first one into view (the marked field is above it)
+      const msg = body.querySelector('.eerr:not(:empty)') || (stepErr.childNodes.length ? stepErr : null);
+      if (msg) msg.scrollIntoView({ block: 'nearest' });
       return;
     }
     go(st.step + 1);

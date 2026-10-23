@@ -59,10 +59,12 @@ html, body { height: 100%; overflow: hidden; }
 .top.compact .stat .l, .top.compact .stat .swb > .lb, .top.compact .stat .sl .long { display: none; }
 .top.compact .stat .sl .short { display: inline; }
 @media (max-width: 1099px) {
-  .brand { min-width: 0; padding: 0 14px; }
-  .top .tab, .top.tight .tab { padding: 0 8px; letter-spacing: .08em; }
-  .top .tab.set { min-width: 0; padding: 0 14px; }
-  .stat, .top.tight .stat { gap: 10px; padding: 0 10px; }
+  .brand { min-width: 0; padding: 0 10px; }
+  .top .tab, .top.tight .tab { padding: 0 7px; letter-spacing: .08em; }
+  .top .tab.set { min-width: 0; padding: 0 10px; }
+  .stat, .top.tight .stat { gap: 7px; padding: 0 8px; }
+  .stat .sl.ro { gap: 4px; }  /* REV 6, 5H 43%: the short label sits close to its value */
+  .stat .chip { padding: 0 8px; }
   .spacer { min-width: 4px; }
   .stat .l, .stat .swb > .lb, .stat .sl .long { display: none; }
   .stat .sl .short { display: inline; }
@@ -107,7 +109,7 @@ html, body { height: 100%; overflow: hidden; }
   font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); white-space: normal;
 }
 .cap .msg .err:empty, .cap .msg .st:empty { display: none; }
-.cap .b.pr { flex: none; min-width: 112px; }
+.cap > .b { flex: none; min-width: 112px; }  /* SAVE: an outline, white (.pr) only while there is text */
 @media (max-width: 1099px) { .cap .msg { flex-basis: 180px; } }
 @media (max-width: 759px) {
   .cap { gap: 8px; padding-left: 12px; }
@@ -125,7 +127,7 @@ html, body { height: 100%; overflow: hidden; }
    .vw.split   columns that fill the view's height and scroll on their own:
                .rail (240px, rule on its right; components.css), .main (the rest), .side (360px, rule
                on its left; .side.w400 for 400px). Put them in that order; any of them is optional.
-   .pane       the standard 20px/24px inner padding of a column or a flowing view.
+   .pane       the standard 20px inner padding of a column or a flowing view (the one gutter).
    .actbar     a 72px action bar (label left, buttons right) at the foot of a column. */
 .vw { min-height: 100%; }
 .vw.split { display: flex; align-items: stretch; height: 100%; min-height: 0; }
@@ -133,7 +135,7 @@ html, body { height: 100%; overflow: hidden; }
 .vw > .main { flex: 1 1 auto; min-width: 0; }
 .vw > .side { flex: none; width: 360px; border-left: 1px solid var(--line); }
 .vw > .side.w400 { width: 400px; }
-.pane { padding: 20px 24px; }
+.pane { padding: 20px; }
 .actbar {
   display: flex; align-items: center; gap: 8px; min-height: var(--h72); padding: 11px 12px 12px 18px;
   border-top: 1px solid var(--line); background: var(--ground);

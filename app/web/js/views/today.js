@@ -1,16 +1,17 @@
 // Today (spec 3.2; phase 4.5 design §4). Two columns from 1100px: on the left TO REVIEW as master
-// and detail (a queue of entries, the selected one's confirm card below it; ↑/↓ move through the
-// queue), then OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER (anything open that fits nowhere
+// and detail (a queue of entries, at most 4½ rows tall with its own scroll, and the selected one's
+// confirm card below it, its action bar sticky at the column's foot; ↑/↓ move through the queue and
+// bring the card into view), then OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER (anything open that fits nowhere
 // else, so nothing confirmed ever vanishes); on the right NEXT TIME (by project), WAITING, TO READ.
 // Pure helpers: today-model.js. Styles: css/views/today.css.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { confirmCard } from '../components/confirm-card.js';
+import { confirmCard, setReviewHandler } from '../components/confirm-card.js';
 import { button, dot, notice as noticePanel, sectionHead, seg, emptyRow } from '../components/ui.js';
 import { readonlyReason } from '../drive.js';
 import {
   SNOOZES, SNOOZE_NAMES, snoozeUntil, entryStamp, reviewQueue, pickSelection, moveSelection,
-  mapNames, projectSlugs, itemMeta, localDay,
+  mapNames, groupName, projectSlugs, itemMeta, localDay, scrollToShow, revealCard,
 } from './today-model.js';
 
 export { snoozeUntil };
@@ -19,6 +20,24 @@ export { snoozeUntil };
 let selectedId = null;
 let selectedIndex = 0;
 let snoozeFor = null;
+
+// The queue shows at most this many rows before it scrolls (then 4½, so a cut row says "more").
+const QUEUE_ROWS = 5;
+
+// The nearest ancestor that scrolls: .main from 1100px, #view below.
+function scrollerOf(n) {
+  for (let p = n.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
+// Keep a queue row visible inside the queue's own scroll (.rq is its offset parent).
+function keepRowInList(list, row) {
+  const d = scrollToShow(row.offsetTop, row.offsetTop + row.offsetHeight, list.scrollTop, list.scrollTop + list.clientHeight);
+  if (d) list.scrollTop += d;
+}
 
 const NOTICES = {
   'setup-done': 'Setup was already completed; set the backup URL in Settings.',
@@ -32,8 +51,9 @@ export async function render(container, _params, query) {
   let dirty = false;
   let readonly = '';       // read-only root: writes are disabled, with this as their title
   const blocked = () => readonly;
-  let names = {};
+  let names = mapNames(null);
   let linkable = null;
+  let review = null;  // the drawn queue: {has(id), select(id, opts)}, or null while it is empty
 
   // The selected entry's card is kept across redraws (a refresh never flashes "Loading…" or drops
   // what the card holds); it is replaced only when the selection moves.
@@ -41,8 +61,10 @@ export async function render(container, _params, query) {
   let cardId = null;
   let cardQ = null;  // the queue row the card was opened from
   const dropCard = () => { if (card) { card.destroy(); card.remove(); } card = null; cardId = null; cardQ = null; };
+  // A kept card reloads (sequence-guarded, focus kept): the redraw comes after a change, and a card
+  // still showing a proposal handled elsewhere would send it with CONFIRM ALL.
   const cardFor = (q) => {
-    if (card && cardId === q.id) return card;
+    if (card && cardId === q.id) { card.reload(); return card; }
     dropCard();
     card = confirmCard(q.id, { entryText: q.text, blocked, onChange: () => refresh() });
     cardId = q.id;
@@ -96,7 +118,12 @@ export async function render(container, _params, query) {
     const a = document.activeElement;
     const inQueue = a && a.closest && a.closest('.rq');
     const inCard = !inQueue && a && card && card.contains(a) ? a : null;  // the card is kept: refocus the node
+    // The card was busy (its buttons disabled, the focus on <body>) and meant to take it back.
+    const cardWants = !inQueue && !inCard && (!a || a === document.body) && card && card.wantsFocus();
+    const prevCard = card;
     const key = !inQueue && !inCard && a && view.contains(a) ? a.dataset.k : null;
+    const oldList = main.querySelector('.rq');
+    const listTop = oldList ? oldList.scrollTop : 0;
     clear(main);
     clear(side);
     if (note) main.appendChild(el('div', { class: 'tdy-note' }, noticePanel(note)));
@@ -109,9 +136,19 @@ export async function render(container, _params, query) {
     side.appendChild(nextTimeSection(today.next_time || {}));
     side.appendChild(section('Waiting', today.waiting, (w) => itemRow(w.item, { nudge: w.nudge })));
     side.appendChild(section('To read', today.to_read));
+    // The queue keeps its own scroll, and its selected row stays in it.
+    const list = main.querySelector('.rq');
+    const cur = main.querySelector('.rq .row.cur');
+    if (list) {
+      list.scrollTop = listTop;
+      if (cur) keepRowInList(list, cur);
+    }
     if (inQueue) {
-      const cur = main.querySelector('.rq .row.cur');
       if (cur) cur.focus({ preventScroll: true });
+    } else if ((inCard || cardWants) && card && card !== prevCard) {
+      // The selected entry was done with (its last proposal handled) and the selection moved on:
+      // the keyboard goes to the next entry's first ✓, not to <body>.
+      card.focusFirst();
     } else if (inCard) {
       if (inCard.isConnected) inCard.focus({ preventScroll: true });
     } else if (key) {
@@ -132,13 +169,16 @@ export async function render(container, _params, query) {
     selectedId = pickSelection(queue, selectedId, selectedIndex);
     const box = el('section', { class: 'sec rv', 'aria-label': 'To review' }, sectionHead('To review', queue.length));
     if (!queue.length) {
+      review = null;
       dropCard();
       box.appendChild(el('div', { class: 'empty rv-none' }, dot('g'), 'Nothing to review'));
       return box;
     }
     const slot = el('div', { class: 'rv-card' });
     const rows = new Map();
-    const select = (id, { focus } = {}) => {
+    // reveal: the owner's own move (a click, ↑/↓, the tray's REVIEW) brings the card into view; a
+    // background redraw never scrolls.
+    const select = (id, { focus, reveal } = {}) => {
       selectedId = id;
       selectedIndex = Math.max(0, queue.findIndex((q) => q.id === id));
       for (const [rid, r] of rows) {
@@ -147,22 +187,35 @@ export async function render(container, _params, query) {
         r.setAttribute('aria-current', on ? 'true' : 'false');
         r.tabIndex = on ? 0 : -1;
       }
-      slot.replaceChildren(cardFor(queue[selectedIndex]));
-      if (focus) rows.get(id).focus({ preventScroll: false });
+      const c = cardFor(queue[selectedIndex]);
+      if (slot.firstChild !== c) slot.replaceChildren(c);
+      const row = rows.get(id);
+      if (!list.isConnected) return;
+      keepRowInList(list, row);
+      if (focus) row.focus({ preventScroll: false });
+      if (reveal) {
+        const sc = scrollerOf(slot);
+        if (!sc) return;
+        const v = sc.getBoundingClientRect();
+        const cb = slot.getBoundingClientRect();
+        const d = revealCard(cb.top, cb.bottom, Math.max(row.getBoundingClientRect().top, list.getBoundingClientRect().top), v.top, v.bottom, 300);
+        if (d) sc.scrollTop += d;
+      }
     };
-    const list = el('div', { class: 'rq', role: 'group', 'aria-label': 'Entries to review (arrow keys move)',
+    const list = el('div', { class: queue.length > QUEUE_ROWS ? 'rq more' : 'rq', role: 'group',
+      'aria-label': 'Entries to review (arrow keys move)',
       onkeydown: (ev) => {
         if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
         const to = moveSelection(queue, selectedId, ev.key);
         if (!to) return;
         ev.preventDefault();
-        if (to !== selectedId) select(to, { focus: true });
+        if (to !== selectedId) select(to, { focus: true, reveal: true });
       } });
     const today = localDay();
     for (const q of queue) {
       const r = el('button', { type: 'button', class: q.failed ? 'row q fl' : 'row q',
         title: q.failed ? `Filing failed: ${q.error}`.slice(0, 300) : null,
-        onclick: () => select(q.id) },
+        onclick: () => select(q.id, { reveal: true }) },
         q.failed ? el('span', { class: 'sq' }) : el('span', { class: 'sq0', 'aria-hidden': 'true' }),
         el('span', { class: 'm n' }, q.failed || q.filing ? '–' : String(q.count)),
         el('span', { class: 'sr' }, q.failed ? 'Filing failed: ' : q.filing ? 'Filing: ' : q.count === 1 ? 'proposal: ' : 'proposals: '),
@@ -173,6 +226,7 @@ export async function render(container, _params, query) {
     }
     box.append(list, slot);
     select(selectedId);
+    review = { has: (id) => rows.has(id), select };
     return box;
   }
 
@@ -189,7 +243,7 @@ export async function render(container, _params, query) {
     const box = el('section', { class: 'sec', 'aria-label': 'Next time' }, sectionHead('Next time', total));
     if (!keys.length) box.appendChild(emptyRow('None'));
     for (const key of keys) {
-      const name = names[key] || key;
+      const name = groupName(names, key);
       const link = !linkable || linkable.has(key);
       box.appendChild(el('h3', { class: 'grp' }, link
         ? el('a', { href: `#/project/${encodeURIComponent(key)}`, title: `Open ${name}` }, name)
@@ -224,7 +278,8 @@ export async function render(container, _params, query) {
 
     // SNOOZE opens an inline 1 D / 3 D / 1 W on a line of its own under the text; Esc (or SNOOZE
     // again) folds it.
-    const snoozeBtn = button('Snooze', { size: 40, title: reason || null, disabled: !!reason });
+    // A faint text button (the column's lightest control); it outlines on hover, focus and while open.
+    const snoozeBtn = button('Snooze', { size: 40, cls: 'tx', title: reason || null, disabled: !!reason });
     snoozeBtn.dataset.k = `snz:${it.id}`;
     const pick = el('div', { class: 'snz-pick', hidden: true });
     pick.id = `snz-${it.id}`;
@@ -256,6 +311,16 @@ export async function render(container, _params, query) {
       el('div', { class: 'snz' }, snoozeBtn),
       pick);
   }
+
+  // -- the tray's REVIEW, while Today is the current view ------------------------------------
+  // An entry in the queue is selected here (its card gets the keyboard) instead of opening a second
+  // full card in the tray; the tray's card rests compact while this one is open.
+  subs.push(setReviewHandler((id) => {
+    if (dead || !review || !review.has(id)) return false;
+    review.select(id, { reveal: true });
+    if (card) card.focusFirst();
+    return true;
+  }));
 
   // -- live updates -------------------------------------------------------------------------
   for (const type of ['items.changed', 'filing.started', 'filing.done', 'filing.failed', 'ws.open']) {

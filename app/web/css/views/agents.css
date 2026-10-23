@@ -29,15 +29,19 @@
   display: block; height: auto; min-height: var(--h40); margin: 6px 0 2px; padding: 10px 12px; line-height: 18px;
   white-space: nowrap; text-align: left; text-transform: none; letter-spacing: .02em; font-weight: 500; font-size: 13px;
 }
-.atab .c-pt .part {
+/* PART and WHERE: a mono value that turns into its field (an input, a select) when pressed */
+.atab .c-pt .part, .atab .c-wh .wh {
   display: inline-block; min-height: var(--h40); padding: 0 10px; margin-left: -10px; border: 1px solid transparent;
   border-radius: var(--r-btn); font-family: var(--mono); font-weight: 500; font-size: 13px; line-height: 38px; color: var(--text);
   white-space: nowrap; cursor: text;
 }
-@media (hover: hover) { .atab .c-pt .part:hover { border-color: var(--line2); } }
-.atab .c-pt .part.prs { border-color: var(--dim); }
+.atab .c-wh .wh { cursor: pointer; }
+.atab .c-wh .wh .f { color: var(--faint); }
+@media (hover: hover) { .atab .c-pt .part:hover, .atab .c-wh .wh:hover { border-color: var(--line2); } }
+.atab .c-pt .part.prs, .atab .c-wh .wh.prs { border-color: var(--dim); }
 .atab .c-pt input { width: 128px; font-family: var(--mono); font-size: 13px; }
-.atab .c-wh select { min-width: 132px; font-size: 13px; }
+.atab .c-wh .sel { min-width: 148px; margin-left: -10px; }
+.atab .c-wh select { padding-left: 9px; font-family: var(--mono); font-weight: 500; font-size: 13px; }
 .atab .c-sn { white-space: nowrap; font-size: 12px; color: var(--dim); }
 .atab .c-nt { min-width: 140px; font-size: 13px; line-height: 18px; color: var(--dim); }
 .atab .c-nx { white-space: nowrap; }
@@ -52,13 +56,14 @@
 /* -- usage panel ---------------------------------------------------------------------------- */
 .agents > .side.usage, .vw > .side.usage { display: flex; flex-direction: column; }
 .usage .ub { flex: none; }
-.usage .uw { padding: 22px 24px 24px; border-bottom: 1px solid var(--line); }
+.usage .uw { padding: 20px 20px 24px; border-bottom: 1px solid var(--line); }
 .usage .uw .big { margin-top: 18px; }
 .usage .uw.warn .big { color: var(--amber); }
 .usage .uw .meter4 { margin-top: 18px; }
 .usage .uw .rs { margin-top: 14px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 18px; color: var(--dim); }
-.usage .ue { padding: 16px 24px; }
-.usage .uf { margin-top: auto; padding: 20px 24px 24px; }
+.usage .uw .rs.nd { font-family: var(--sans); font-weight: 400; font-size: 13px; }
+.usage .ue { padding: 16px 20px; }
+.usage .uf { margin-top: auto; padding: 20px; }
 .usage .uf .age:empty { display: none; }
 .usage .uf .age { margin-bottom: 12px; font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--faint); }
 .usage .uf .b { width: 100%; }
@@ -76,12 +81,12 @@
   .agents > .side.usage .ub { display: flex; }
   .agents > .side.usage .uw { flex: 1 1 0; min-width: 0; border-bottom: 0; }
   .agents > .side.usage .uw + .uw { border-left: 1px solid var(--line); }
-  .agents > .side.usage .uf { display: flex; align-items: center; gap: 16px; padding: 0 24px 20px; margin-top: 0; }
+  .agents > .side.usage .uf { display: flex; align-items: center; gap: 16px; padding: 0 20px 20px; margin-top: 0; }
   .agents > .side.usage .uf .age { margin: 0; }
   .agents > .side.usage .uf .b { width: auto; margin-left: auto; }
   .atab th, .atab td { padding-left: 8px; padding-right: 8px; }
   .atab .c-pr { min-width: 120px; }
   .atab .lk { white-space: normal; }
   .atab .c-nt { min-width: 0; }
-  .atab .c-wh select { min-width: 0; max-width: 136px; }
+  .atab .c-wh .sel { min-width: 0; max-width: 148px; }
 }

@@ -539,7 +539,8 @@
     if (S.screen === 'home') {
       txt(home.clock, st.clock);
       txt(home.robot.sub, st.home.arm); cls(home.robot.dot, 'ok', st.home.arm_ok);
-      txt(home.journal.sub, st.home.journal); cls(home.journal.dot, 'ok', true);
+      var jd = L.journalDot(st.requests ? st.requests.length : 0);
+      txt(home.journal.sub, st.home.journal); cls(home.journal.dot, 'ok', jd === 'ok'); cls(home.journal.dot, 'warn', jd === 'warn');
       txt(home.who, st.device ? 'paired as ' + st.device : 'on the PC (no pairing needed)');
       return;
     }

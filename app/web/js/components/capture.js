@@ -3,7 +3,8 @@
 // isn't usable, 200 with `held` (on disk in this OS's holding inbox).
 // The textarea is one line at rest; focused or holding text it is at least MIN_ACTIVE lines and grows
 // with its content up to MAX_LINES, then scrolls. Its height is the `rows` attribute (the CSP allows no
-// inline styles), and the bar carries `.on` while it is active.
+// inline styles), and the bar carries `.on` while it is active. SAVE is an outline at rest and becomes
+// the white primary only while the box holds text (one white primary on screen is enough).
 import * as api from '../api.js';
 import { el } from '../dom.js';
 import { button as uiButton } from './ui.js';
@@ -38,7 +39,7 @@ export function mountCapture(root, { onSaved }) {
   document.addEventListener('pointercancel', released, true);
   const status = el('span', { class: 'st', role: 'status' });
   const error = el('span', { class: 'err', role: 'alert' });
-  const button = uiButton('SAVE', { primary: true, onclick: save });
+  const button = uiButton('SAVE', { onclick: save });
   let saving = false;
 
   root.append(
@@ -49,6 +50,7 @@ export function mountCapture(root, { onSaved }) {
   );
 
   function fit() {
+    button.classList.toggle('pr', input.value.trim() !== '');
     const active = document.activeElement === input || input.value !== '';
     root.classList.toggle('on', active);
     if (!active) { input.rows = 1; return; }

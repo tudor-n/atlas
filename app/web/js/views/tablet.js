@@ -26,6 +26,19 @@ export async function render(container) {
       msg, notesBox),
     el('aside', { class: 'side w400', 'aria-label': 'Open requests' }, reqHead, swRow, reqBox)));
 
+  // One primary per panel: FILE THIS is an outline, except on the note the focus is in (else the
+  // first note that can be filed).
+  function markPrimary(block) {
+    const all = [...notesBox.querySelectorAll('.tfile')];
+    const mine = block && block.querySelector('.tfile');
+    const pick = mine || all[0] || null;
+    for (const b of all) b.classList.toggle('pr', b === pick);
+  }
+  notesBox.addEventListener('focusin', (ev) => {
+    const block = ev.target.closest && ev.target.closest('.tnote');
+    if (block && block.querySelector('.tfile')) markPrimary(block);
+  });
+
   function say(text, ok) {
     clear(msg);
     if (text) msg.appendChild(el('p', { class: ok ? 'ok' : 'err' }, text));
@@ -76,7 +89,7 @@ export async function render(container) {
         state),
       el('div', { class: 'read tnote-x' }, n.text),
       el('div', { class: 'tnote-a' },
-        s.canFile ? button('File this', { primary: true, size: 40, onclick: act(`/api/tablet-notes/${enc}/file`, 'Filing it now. Its card shows on Today.') }) : null,
+        s.canFile ? button('File this', { size: 40, cls: 'tfile', onclick: act(`/api/tablet-notes/${enc}/file`, 'Filing it now. Its card shows on Today.') }) : null,
         n.hidden
           ? button('Restore', { size: 40, onclick: act(`/api/tablet-notes/${enc}/restore`, 'Restored.') })
           : ignoreButton(`/api/tablet-notes/${enc}/ignore`, 'note')));
@@ -93,6 +106,7 @@ export async function render(container) {
       clear(notesBox).append(...(v.notes.length
         ? v.notes.map(noteBlock)
         : [el('div', { class: 'empty' }, 'Nothing from the tablet yet.')]));
+      markPrimary(null);
       clear(reqHead).appendChild(sectionHead('Open requests', v.requests.length));
       clear(reqBox).append(...(v.requests.length
         ? v.requests.map(requestCard)

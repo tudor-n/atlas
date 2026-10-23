@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   localDay, snoozeUntil, SNOOZES, entryStamp, shortWhen, firstWords, reviewQueue, pickSelection,
-  moveSelection, mapNames, projectSlugs, itemMeta,
+  moveSelection, mapNames, projectSlugs, itemMeta, nameIn, groupName, stillProposed, scrollToShow, revealCard,
 } from './today-model.js';
 
 test('snoozeUntil is local 09:00, days ahead (across a month end)', () => {
@@ -66,14 +66,15 @@ test('arrow keys move within the queue and stop at its ends', () => {
 test('map names and the linkable project slugs', () => {
   const map = { areas: [{ slug: 'uni', name: 'Uni' }], projects: [{ slug: 'robot-arm', name: 'Robot arm' }],
     courses: [{ slug: 'thesis', name: 'Thesis' }], people: [{ slug: 'andrei' }] };
-  assert.deepEqual(mapNames(map), { uni: 'Uni', 'robot-arm': 'Robot arm', thesis: 'Thesis', andrei: 'andrei' });
+  assert.deepEqual(mapNames(map), { area: { uni: 'Uni' }, project: { 'robot-arm': 'Robot arm', thesis: 'Thesis' },
+    person: { andrei: 'andrei' } });
   assert.deepEqual([...projectSlugs(map)], ['robot-arm', 'thesis']);
   assert.equal(projectSlugs(null), null);
-  assert.deepEqual(mapNames(null), {});
+  assert.deepEqual(mapNames(null), { area: {}, project: {}, person: {} });
 });
 
 test('item meta: where, the due date amber once late, the reminder without a due, waiting since', () => {
-  const names = { 'robot-arm': 'Robot arm', uni: 'Uni', andrei: 'Andrei' };
+  const names = { project: { 'robot-arm': 'Robot arm' }, area: { uni: 'Uni' }, person: { andrei: 'Andrei' } };
   const today = '2026-10-24';
   assert.deepEqual(itemMeta({ kind: 'deadline', area: 'uni', project: null, due: '2026-10-21', remind_at: '2026-10-19' }, names, today),
     [{ text: 'Uni', warn: false }, { text: 'due 10-21', warn: true }]);
@@ -85,4 +86,46 @@ test('item meta: where, the due date amber once late, the reminder without a due
     [{ text: 'Robot arm / Andrei', warn: false }, { text: 'since 10-10', warn: false }]);
   assert.deepEqual(itemMeta({ kind: 'next_time', area: 'projects', project: 'robot-arm', person: 'andrei' }, names, today, { place: false }),
     [{ text: 'Andrei', warn: false }]);
+});
+
+test('names are kept per kind: a person and a project sharing a slug show their own names', () => {
+  const map = { areas: [{ slug: 'maria', name: 'Maria area' }], projects: [{ slug: 'maria', name: 'Maria (robot)' }],
+    courses: [{ slug: 'maria', name: 'Course' }, { slug: 'ctrl', name: 'Control systems' }],
+    people: [{ slug: 'maria', name: 'Maria Ionescu' }] };
+  const names = mapNames(map);
+  assert.equal(nameIn(names, 'person', 'maria'), 'Maria Ionescu');
+  assert.equal(nameIn(names, 'project', 'maria'), 'Maria (robot)');  // a project wins over a course
+  assert.equal(nameIn(names, 'project', 'ctrl'), 'Control systems');
+  assert.equal(nameIn(names, 'area', 'maria'), 'Maria area');
+  assert.equal(nameIn(names, 'person', 'nobody'), 'nobody');
+  assert.equal(nameIn({}, 'person', 'x'), 'x');
+  assert.deepEqual(itemMeta({ kind: 'waiting', project: 'maria', person: 'maria' }, names, '2026-10-24'),
+    [{ text: 'Maria (robot) / Maria Ionescu', warn: false }]);
+  assert.equal(groupName(names, 'maria'), 'Maria (robot)');
+  assert.equal(groupName(mapNames({ areas: [{ slug: 'uni', name: 'Uni' }] }), 'uni'), 'Uni');
+  assert.equal(groupName(names, 'unknown'), 'unknown');
+  // a prototype name is a slug like any other
+  assert.equal(nameIn(names, 'person', 'constructor'), 'constructor');
+});
+
+test('stillProposed keeps only what is still to confirm, in the order shown', () => {
+  const ps = [{ id: 'p-1', status: 'proposed' }, { id: 'p-0', status: 'confirmed' }, { id: 'p-2', status: 'proposed' },
+    { id: 'p-3', status: 'dismissed' }];
+  assert.deepEqual(stillProposed(['p-0', 'p-2', 'p-1'], ps), ['p-2', 'p-1']);
+  assert.deepEqual(stillProposed(['p-9'], ps), []);
+  assert.deepEqual(stillProposed(['p-1'], null), []);
+  assert.deepEqual(stillProposed(null, ps), []);
+});
+
+test('scrollToShow and revealCard', () => {
+  assert.equal(scrollToShow(100, 200, 0, 500), 0);
+  assert.equal(scrollToShow(450, 600, 0, 500), 100);       // below: scroll down to its bottom
+  assert.equal(scrollToShow(-50, 20, 0, 500), -50);        // above: up to its top
+  assert.equal(scrollToShow(300, 1200, 0, 500), 300);      // taller than the view: its top
+  // the card below the fold comes up, but the selected row stays at the top at most
+  assert.equal(revealCard(600, 1400, 120, 56, 700, 220), 64);
+  assert.equal(revealCard(400, 900, 120, 56, 700, 220), 0);  // its first 220 px already show
+  assert.equal(revealCard(560, 700, 300, 56, 700, 220), 0);  // 560..700 shows
+  assert.equal(revealCard(600, 800, 300, 56, 700, 220), 100);
+  assert.equal(revealCard(-300, 200, -340, 56, 700, 220), -396);  // scrolled past: back up, the row too
 });

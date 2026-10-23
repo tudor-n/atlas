@@ -104,8 +104,13 @@
     return n ? n + (n === 1 ? ' REQUEST' : ' REQUESTS') : '';
   }
 
+  // HOME's JOURNAL dot: amber while measurement requests wait, green otherwise (the arm's ok/warn).
+  function journalDot(n) {
+    return Math.max(0, Math.floor(Number(n) || 0)) ? 'warn' : 'ok';
+  }
+
   var api = { ConfirmTap: ConfirmTap, HoldOrDouble: HoldOrDouble, Backoff: Backoff, Store: Store,
-              SendQueue: SendQueue, requestsChip: requestsChip };
+              SendQueue: SendQueue, requestsChip: requestsChip, journalDot: journalDot };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BHLogic = api;
 })(this);

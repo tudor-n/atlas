@@ -4,7 +4,7 @@
 // Each section is `async (ctx) => cleanup?`, ctx = {body, bar, state, isDead, setDot}. Text only via el().
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { button, dot } from '../components/ui.js';
+import { button, dot, selectBox } from '../components/ui.js';
 import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
 import { runtimeText } from './runtime-model.js';
 import { prefLabel, backupDot, integrationDot, backupRows, counts, hierarchyRows } from './settings-model.js';
@@ -94,7 +94,12 @@ export async function mapSection({ body, bar, state, isDead }) {
     body.appendChild(el('section', { class: 'st-grp' }, heads[k], editors[k].node));
   }
   const saveBtn = button('SAVE', { primary: true, onclick: async () => {
-    if (hasErrors(editors.validateAndShow())) { bar.say('Fix the problems marked above, then save.'); return; }
+    if (hasErrors(editors.validateAndShow())) {
+      bar.say('Fix the problems marked above, then save.');
+      const first = body.querySelector('.eerr:not(:empty)');
+      if (first) first.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     saveBtn.disabled = true;
     try {
       await api.put('/api/map', map);
@@ -209,7 +214,7 @@ function buildField(key, val) {
     function sync() { custom.hidden = select.value !== 'custom'; }
     sync();
     return {
-      forId: id, control: el('div', { class: 'pair' }, select, custom),
+      forId: id, control: el('div', { class: 'pair' }, selectBox(select), custom),
       read() {
         if (select.value !== 'custom') return select.value;
         if (!custom.value.trim()) throw new Error(`${name}: type a model name or pick one from the list.`);
@@ -357,8 +362,8 @@ export async function claudeSection({ body, bar, isDead, setDot }) {
       prefRow('STATUS LINE', state(s.statusline_installed, s.statusline_installed ? 'installed' : 'not installed')),
       prefRow('PORT MATCHES', s.port_matches ? state(true, 'yes')
         : el('span', { class: s.hooks_installed ? 'pv amb' : 'pv' }, port)),
-      prefRow('LAST HOOK EVENT', value(whenText(s.last_hook_at), 'm')),
-      prefRow('LAST USAGE UPDATE', value(whenText(s.last_usage_at), 'm')),
+      prefRow('LAST HOOK EVENT', value(whenText(s.last_hook_at), s.last_hook_at ? 'm' : 'f')),
+      prefRow('LAST USAGE UPDATE', value(whenText(s.last_usage_at), s.last_usage_at ? 'm' : 'f')),
       prefRow('SETTINGS FILE', value(s.settings_path || '–', 'm path'))),
       // Quiet: installed before `runtime init`, or its interpreter or script has moved since.
       stale ? el('p', { class: 'st-warn' }, el('span', { class: 'sq' }), 'Reinstall: the installed hooks point at an old Python or script.') : null);
@@ -390,7 +395,7 @@ export async function aboutSection({ body, state }) {
   body.append(intro('BrainHub keeps your brain as plain Markdown files in a git repo.'), el('div', { class: 'pfs' },
     prefRow('BRAIN FOLDER', value(state.brain_path || '–', 'm path'),
       { hint: state.brain_path ? 'Open it in Obsidian for a graph view.' : null }),
-    prefRow('RUNTIME', value(rt || '–', rt ? 'm' : 'f'),
+    prefRow('RUNTIME', value(rt || '–', rt ? '' : 'f'),
       { hint: rt ? 'The commit and slot this hub runs from, and any update waiting.' : 'Not running from a runtime slot (a development run).' }),
-    prefRow('THIS OS', value(state.os || '–', 'm'))));
+    prefRow('THIS OS', value(state.os || '–', state.os ? '' : 'f'))));
 }

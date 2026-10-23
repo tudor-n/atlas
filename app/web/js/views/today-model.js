@@ -80,13 +80,32 @@ export function moveSelection(queue, currentId, key) {
   return queue[Math.max(0, Math.min(to, queue.length - 1))].id;
 }
 
-// slug -> display name, from /api/map (projects, courses, areas, people). A missing map gives {}.
+// slug -> display name, from /api/map, kept per kind ({area, project, person}), so a person and a
+// project that share a slug each show their own name. Courses are projects here (an item's `project`
+// may name a course; a project wins a clash). A missing map gives empty tables.
 export function mapNames(map) {
-  const out = {};
-  for (const key of ['areas', 'projects', 'courses', 'people']) {
-    for (const x of (map && map[key]) || []) if (x && x.slug) out[x.slug] = x.name || x.slug;
-  }
-  return out;
+  const table = (...keys) => {
+    const out = {};
+    for (const key of keys.reverse()) {
+      for (const x of (map && map[key]) || []) if (x && x.slug) out[x.slug] = x.name || x.slug;
+    }
+    return out;
+  };
+  return { area: table('areas'), project: table('projects', 'courses'), person: table('people') };
+}
+
+// A slug's name in one kind's table ('area', 'project', 'person'), else the slug itself.
+export function nameIn(names, kind, slug) {
+  const t = (names && names[kind]) || {};
+  return Object.hasOwn(t, slug) ? t[slug] : slug;
+}
+
+// A NEXT TIME group key is the item's project, else its area: its name from either table.
+export function groupName(names, key) {
+  const t = names || {};
+  if (t.project && Object.hasOwn(t.project, key)) return t.project[key];
+  if (t.area && Object.hasOwn(t.area, key)) return t.area[key];
+  return key;
 }
 
 // The slugs a NEXT TIME header may link to (#/project/<slug>): projects and courses. null = unknown
@@ -101,9 +120,9 @@ export function projectSlugs(map) {
 // waiting item has waited. `place: false` leaves out the project or area (a NEXT TIME row sits under
 // its project's header already).
 export function itemMeta(it, names = {}, today = localDay(), { place = true } = {}) {
-  const name = (slug) => names[slug] || slug;
   const parts = [];
-  const where = [!place ? '' : it.project ? name(it.project) : it.area ? name(it.area) : '', it.person ? name(it.person) : '']
+  const where = [!place ? '' : it.project ? nameIn(names, 'project', it.project) : it.area ? nameIn(names, 'area', it.area) : '',
+    it.person ? nameIn(names, 'person', it.person) : '']
     .filter(Boolean).join(' / ');
   if (where) parts.push({ text: where, warn: false });
   const late = (iso) => String(iso).slice(0, 10) < today;
@@ -111,4 +130,31 @@ export function itemMeta(it, names = {}, today = localDay(), { place = true } = 
   else if (it.remind_at) parts.push({ text: `remind ${shortWhen(it.remind_at, today)}`, warn: late(it.remind_at) });
   if (it.kind === 'waiting' && it.created) parts.push({ text: `since ${shortWhen(String(it.created).slice(0, 10), today)}`, warn: false });
   return parts;
+}
+
+// The ids among `ids` whose proposal is still 'proposed' in `proposals` (the card's latest load), in
+// the order of `ids`. CONFIRM ALL sends only these: a proposal handled elsewhere since the card was
+// drawn (the tray's card, another tab, the tablet) would make the server refuse the whole batch.
+export function stillProposed(ids, proposals) {
+  const open = new Set((proposals || []).filter((p) => p && p.status === 'proposed').map((p) => p.id));
+  return (ids || []).filter((id) => open.has(id));
+}
+
+// How far to scroll a box (its visible part runs from viewTop to viewBottom) so that the span
+// [top, bottom] shows: 0 when it already does; a span taller than the view shows its top.
+export function scrollToShow(top, bottom, viewTop, viewBottom) {
+  if (top >= viewTop && bottom <= viewBottom) return 0;
+  if (top < viewTop || bottom - top > viewBottom - viewTop) return top - viewTop;
+  return bottom - viewBottom;
+}
+
+// Bringing the selected entry's card into view without losing the queue: the scroll that shows the
+// card's first `want` px (its header and first rows; the sticky action bar shows CONFIRM ALL), but
+// never so far that the selected queue row (its top at rowTop) leaves the top of the view; scrolling
+// back up, the row comes back into view with the card.
+export function revealCard(cardTop, cardBottom, rowTop, viewTop, viewBottom, want = 220) {
+  const d = scrollToShow(cardTop, Math.min(cardBottom, cardTop + want), viewTop, viewBottom);
+  if (d > 0) return Math.max(0, Math.min(d, rowTop - viewTop));
+  if (d < 0) return Math.min(d, rowTop - viewTop);
+  return 0;
 }

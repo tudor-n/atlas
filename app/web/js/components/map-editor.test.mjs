@@ -99,3 +99,31 @@ test('savedNodes marks the loaded nodes only (their slugs are read-only in Setti
   assert.ok(saved.has(m.projects[0]) && saved.has(m.areas[0]));
   assert.ok(!saved.has(fresh));
 });
+
+test('invalidFields marks the field each validateMap problem sits in', async () => {
+  const { invalidFields } = await import('./map-editor.js');
+  const m = defaultMap();
+  assert.deepEqual(invalidFields(m), []);
+  m.areas.push({ slug: 'Bad Slug', name: '' });
+  m.projects.push(
+    { slug: 'robot-arm', name: 'Robot arm', is_company: true, os_folders: { windows: ['/home/tudor/dev/RobotArmControl'], linux: ['/home/tudor/dev/RobotArmControl'] } },
+    { slug: 'robot-arm', name: 'Robot arm 2', is_company: true, os_folders: { windows: [], linux: ['D:\\RobotArmControl', 'relative'] } },
+  );
+  m.courses.push({ slug: 'people', name: 'People' });
+  m.people.push({ slug: 'andrei', name: 'Andrei', projects: ['nope'] });
+  assert.deepEqual(invalidFields(m), [
+    { key: 'areas', index: 4, field: 'slug' },
+    { key: 'areas', index: 4, field: 'name' },
+    { key: 'projects', index: 1, field: 'slug' },
+    { key: 'courses', index: 0, field: 'slug' },
+    { key: 'projects', index: 0, field: 'folders-windows' },
+    { key: 'projects', index: 1, field: 'folders-linux' },
+    { key: 'projects', index: 0, field: 'company' },
+    { key: 'projects', index: 1, field: 'company' },
+  ]);
+  // every list with a problem in validateMap has at least one marked field, except a person's missing project
+  const errs = validateMap(m);
+  for (const key of ['areas', 'projects', 'courses']) {
+    assert.ok(errs[key].length && invalidFields(m).some((x) => x.key === key), key);
+  }
+});

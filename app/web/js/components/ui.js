@@ -80,6 +80,12 @@ export function row(children, { current, onclick, title, cls } = {}) {
   return el('div', { class: c, title, 'aria-current': current ? 'true' : null }, children);
 }
 
+// A <select> in the arm's look: wrapped in .sel, which draws the caret (components.css). Returns the
+// wrapper; the select itself stays the control (listeners, value, focus).
+export function selectBox(select, { cls } = {}) {
+  return el('span', { class: cls ? `sel ${cls}` : 'sel' }, select);
+}
+
 export const emptyRow = (text) => el('div', { class: 'empty' }, text);
 
 // An amber outline panel. With a title: the title (amber label with its square), then the text.

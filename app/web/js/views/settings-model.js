@@ -49,7 +49,7 @@ export function backupRows(b, when = (iso) => new Date(iso).toLocaleString()) {
   if (!b) return [];
   return [
     ['Remote', b.remote_set ? 'set' : 'not set', ''],
-    ['Last successful push', b.last_ok ? when(b.last_ok) : 'never', 'm'],
+    ['Last successful push', b.last_ok ? when(b.last_ok) : 'never', b.last_ok ? 'm' : 'f'],  // mono for a stamp only
     ['Waiting to push', b.pending ? 'yes' : 'no', ''],
     ['Last error', b.last_error || 'none', b.last_error ? 'err' : ''],
   ];

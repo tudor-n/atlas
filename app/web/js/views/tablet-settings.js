@@ -17,6 +17,7 @@ export async function renderTabletSettings(box, isDead, ui) {
   let codeTimer = null;
   let code = null;  // the pairing code on show, kept across redraws until it runs out or is used
   let devices = null;  // how many were paired at the last look: one more means the code was used
+  let lanOn = true;  // Tablet over Wi-Fi as saved: while it is off, a code can't be used yet
   const say = (text, ok) => bar.say(text, ok);
 
   async function save(patch, done) {
@@ -30,7 +31,10 @@ export async function renderTabletSettings(box, isDead, ui) {
   function draw(s) {
     clear(box);
     setDot('tablet', tabletDot(s));
-    const on = switchEl({ on: !!s.tablet_lan, title: 'Tablet over Wi-Fi' });
+    lanOn = !!s.tablet_lan;
+    // The small white switch, like every Settings preference: its position is a draft until SAVE,
+    // so it can't claim "live". The dot and the line beside it say whether it is listening.
+    const on = switchEl({ on: !!s.tablet_lan, small: true, title: 'Tablet over Wi-Fi' });
     on.id = 'tablet-lan';
     const addr = el('input', { type: 'text', id: 'tablet-address', class: 'm', value: s.tablet_address, placeholder: '192.168.0.200', spellcheck: 'false' });
     const units = el('input', { type: 'text', id: 'tablet-units', class: 'm wide', value: s.tablet_units.join(', '), spellcheck: 'false' });
@@ -40,7 +44,7 @@ export async function renderTabletSettings(box, isDead, ui) {
         + 'Reserve it for this laptop in your router, and let the port through the firewall.'),
       el('div', { class: 'pfs' },
         prefRow('TABLET OVER WI-FI', el('div', { class: 'pair' }, on,
-          el('span', { class: 'dl wrap' }, dot(s.listening ? 'g' : s.tablet_lan ? 'a' : ''), lan)), { forId: 'tablet-lan' }),
+          el('span', { class: 'st-lan' }, dot(s.listening ? 'g' : s.tablet_lan ? 'a' : ''), lan)), { forId: 'tablet-lan' }),
         prefRow("THIS LAPTOP'S HOME ADDRESS", el('div', { class: 'pair' }, addr,
           s.this_address && s.this_address !== s.tablet_address
             ? button(`USE ${s.this_address} (NOW)`, { size: 40, onclick: () => { addr.value = s.this_address; } })
@@ -61,7 +65,8 @@ export async function renderTabletSettings(box, isDead, ui) {
     if (!code) {
       pairBox.appendChild(el('div', { class: 'pf' },
         el('div', { class: 'pfl' }, el('span', { class: 'lb' }, 'NEW DEVICE'),
-          el('p', { class: 'hint' }, 'Shows a one-time code to type on the tablet.')),
+          el('p', { class: 'hint' }, lanOn ? 'Shows a one-time code to type on the tablet.'
+            : 'Shows a one-time code to type on the tablet. Turn on Tablet over Wi-Fi first: until then the tablet can’t reach BrainHub.')),
         el('div', { class: 'pfc' }, button('PAIR A DEVICE', { onclick: async () => {
           try {
             const c = await api.post('/api/devices/pairing-code', {});
@@ -76,9 +81,10 @@ export async function renderTabletSettings(box, isDead, ui) {
       if (s <= 0 || isDead()) { code = null; drawPair(); return; }
       left.textContent = `VALID FOR ${countdown(s)}`;
     };
-    pairBox.appendChild(el('div', { class: 'st-code' },
+    pairBox.appendChild(el('div', { class: lanOn ? 'st-code' : 'st-code off' },
       el('span', { class: 'lb' }, 'ON THE TABLET, TYPE THIS CODE'),
-      el('div', { class: 'big', 'aria-live': 'polite' }, code.code), left));
+      el('div', { class: 'big', 'aria-live': 'polite' }, code.code), left,
+      lanOn ? null : el('p', { class: 'why' }, "Tablet over Wi-Fi is off, so the tablet can't reach BrainHub to use this code. Turn it on and save.")));
     tick();
     codeTimer = setInterval(tick, 1000);
   }

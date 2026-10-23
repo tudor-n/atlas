@@ -3,33 +3,30 @@
    Also here, because the setup wizard uses them too: the 2-column preference row (.pf), the toggle
    buttons (.tg) and the brain-map editor's hairline rows (.editor, components/map-editor.js). */
 
-/* -- rail ----------------------------------------------------------------------------------- */
-.st-rail a.row { text-decoration: none; color: var(--text); font-size: 14px; letter-spacing: .06em; }
-.st-rail a.row:hover { color: var(--text); }
-.st-rail a.row.cur { color: var(--ground); }
-.st-rail a.row > .dot { margin-right: 0; }
+/* One left gutter, 20px, like .sect-h and .pane: headings, intros, rows, fields and the action bar
+   all start at the same x.
+
+   The rail's rows take the shared navigation-rail type (components.css `.rail > .row`). */
 
 /* -- the selected section: heading, scrolling body, action bar ------------------------------- */
 .settings > .st-main { display: flex; flex-direction: column; overflow: hidden; }
 .st-head { flex: none; }
-.st-main .sect-h { padding: 0 24px; }
 .st-head .lb { color: var(--text); }
 .st-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .st-body { padding-bottom: 32px; }
 .st-bar { flex: none; }
-.st-bar .msg {
-  flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px;
-  color: var(--dim);
-}
+.st-bar { padding-left: 20px; }
+/* the status line is a sentence ("Saved.", a server error): sans, not mono */
+.st-bar .msg { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 18px; color: var(--dim); }
 .st-bar .msg.err { color: var(--err); }
 .st-bar > .nm { flex: none; }
 .st-bar > .nm + .msg { margin-left: 16px; }
 .st-bar .btns { flex: none; display: flex; gap: 8px; }
 .st-bar .b.pr { min-width: 112px; }
 
-.st-intro { padding: 16px 24px; max-width: calc(72ch + 48px); font-size: 14px; line-height: 21px; color: var(--dim); }
+.st-intro { padding: 16px 20px; max-width: calc(72ch + 40px); font-size: 14px; line-height: 21px; color: var(--dim); }
 .st-intro a { color: var(--dim); }
-.st-fail { padding: 16px 24px; font-size: 14px; }
+.st-fail { padding: 16px 20px; font-size: 14px; }
 .st-grp { margin-top: 0; }
 .st-intro + .st-grp { margin-top: 4px; }
 .st-grp > .sect-h { border-top: 1px solid var(--line); }
@@ -40,7 +37,7 @@
 .sect-h + .pfs, .sect-h + .editor .ecols { border-top: 0; }
 .pf {
   display: grid; grid-template-columns: minmax(180px, 300px) minmax(0, 1fr); align-items: center; gap: 8px 24px;
-  min-height: var(--h52); padding: 12px 24px; border-bottom: 1px solid var(--sub);
+  min-height: var(--h52); padding: 12px 20px; border-bottom: 1px solid var(--sub);
 }
 .pfl { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pfl .lb { line-height: 14px; white-space: normal; }
@@ -52,21 +49,23 @@
 .pfc input.wide { width: 100%; max-width: 560px; }
 .pfc input.num { width: 140px; }
 .pfc input.pct { width: 88px; }
-.pfc select { min-width: 200px; max-width: 100%; }
+.pfc .sel { min-width: 200px; }
 .pair { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .pair > input[type="text"] { flex: 1 1 200px; min-width: 0; max-width: 360px; }
-.u { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--faint); }
+.u { font-weight: 600; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
 .pv { font-size: 15px; line-height: 21px; color: var(--text); overflow-wrap: anywhere; }
 .pv > .dot { top: -2px; }
 .pv.m { font-family: var(--mono); font-weight: 500; font-size: 14px; }
 .pv.f { color: var(--faint); }
 .pv.err { color: var(--err); }
 .pv.amb { color: var(--amber); }
-.pfc .dl.wrap { white-space: normal; line-height: 16px; }
+/* a status sentence beside a control (the tablet's "Off: BrainHub only listens on this PC."): sans */
+.st-lan { display: inline-flex; align-items: center; font-size: 13px; line-height: 18px; color: var(--dim); }
+.st-lan > .dot { flex: none; }
 
 /* toggles: outlined, white when on (the arm's .pl) */
 .tgs { display: flex; flex-wrap: wrap; gap: 8px; }
-.b.tg { min-width: 64px; }
+.b.tg { min-width: 64px; font-size: 11px; }  /* the arm's .pl: 600 11px, lighter than a 700 12px primary */
 .b.tg.on.prs { background: var(--pressed); border-color: var(--pressed); }
 
 /* range sliders: a 4px track and a white 14×28 thumb, like the arm's sliders */
@@ -85,21 +84,21 @@
 .out { min-width: 64px; }
 
 /* -- notes, warnings, the status line ---------------------------------------------------------- */
-.st-warn { display: flex; align-items: baseline; padding: 12px 24px; font-size: 14px; line-height: 20px; color: var(--amber); }
+.st-warn { display: flex; align-items: baseline; padding: 12px 20px; font-size: 14px; line-height: 20px; color: var(--amber); }
 .st-warn .sq { top: 0; align-self: center; }
 .st-warns { border-bottom: 1px solid var(--sub); }
 .st-warns .st-warn { padding-bottom: 4px; }
-.st-warns li { padding: 4px 24px 4px 38px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 18px; color: var(--dim); }
+.st-warns li { padding: 4px 20px 4px 34px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 18px; color: var(--dim); }
 .st-warns ul { padding-bottom: 12px; }
 .st-notes { border-bottom: 1px solid var(--sub); padding: 6px 0; }
-.st-note { display: flex; align-items: baseline; padding: 6px 24px; font-size: 14px; line-height: 20px; color: var(--dim); max-width: calc(80ch + 48px); }
+.st-note { display: flex; align-items: baseline; padding: 6px 20px; font-size: 14px; line-height: 20px; color: var(--dim); max-width: calc(80ch + 40px); }
 .st-note.amb { color: var(--amber); }
 .st-note .sq { top: 0; align-self: center; }
-.st-status { display: flex; align-items: center; padding: 16px 24px 0; font-size: 15px; line-height: 21px; }
+.st-status { display: flex; align-items: center; padding: 16px 20px 0; font-size: 15px; line-height: 21px; }
 .st-status.err { color: var(--err); }
-.st-meter { padding: 12px 24px 0; max-width: 560px; }
+.st-meter { padding: 12px 20px 0; max-width: 560px; }
 .st-meter:empty { display: none; }
-.st-dl { padding: 14px 24px 0; }
+.st-dl { padding: 14px 20px 0; }
 
 /* -- hierarchy: indented hairline rows ----------------------------------------------------------- */
 .st-tree { border-top: 1px solid var(--sub); }
@@ -114,27 +113,28 @@
 .st-tree .sb { font-size: 12px; color: var(--dim); }
 
 /* -- tablet: the pairing code and the devices ----------------------------------------------------- */
-.st-code { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 20px 24px; border-bottom: 1px solid var(--sub); }
+.st-code { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 20px; border-bottom: 1px solid var(--sub); }
 .st-code .big { letter-spacing: .08em; }
+/* Tablet over Wi-Fi is off: the code can't be used yet, so it is faint, with a line saying why */
+.st-code.off .big { color: var(--faint); }
+.st-code .why { font-size: 13px; line-height: 18px; color: var(--faint); max-width: 72ch; }
 .st-grp .row .dn { display: block; }
 .st-grp .row .dm { display: block; margin-top: 4px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); }
-.st-grp .row { padding-left: 24px; padding-right: 24px; }
-.st-grp .empty, .st-tree .empty { padding-left: 24px; }
 
 /* -- voice: the blend rows ---------------------------------------------------------------------- */
 .blend .pair + .pair { margin-top: 8px; }
 .blend .pair { flex-wrap: nowrap; }
-.blend select { flex: 1 1 180px; width: auto; min-width: 0; max-width: 280px; }
+.blend .sel { flex: 1 1 180px; min-width: 0; max-width: 280px; }
 .blend + .b { margin-top: 8px; }
 
 /* -- the brain-map editor (components/map-editor.js; Settings and the setup wizard) ------------- */
 .editor .ecols, .editor .e1 {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px) 104px; gap: 12px; align-items: center;
 }
-.editor .ecols { padding: 12px 24px 0; border-top: 1px solid var(--sub); }
+.editor .ecols { padding: 12px 20px 0; border-top: 1px solid var(--sub); }
 .editor .ecols .lb { color: var(--faint); }
 .editor .erows { margin-top: 8px; border-top: 1px solid var(--sub); }
-.editor .erow { padding: 6px 24px; border-bottom: 1px solid var(--sub); }
+.editor .erow { padding: 6px 20px; border-bottom: 1px solid var(--sub); }
 .editor .e1 input[type="text"] { width: 100%; height: var(--h40); }
 .editor .e1 { min-height: var(--h40); }
 .editor input[readonly] { color: var(--dim); border-color: var(--line); }
@@ -151,10 +151,13 @@
 .editor .links > .lb { margin-right: 4px; color: var(--faint); }
 .editor .links > .f { font-size: 13px; }
 .editor .eerr:empty { display: none; }
-.editor .eerr { padding: 8px 24px; border-bottom: 1px solid var(--sub); }
+.editor .eerr { padding: 8px 20px; border-bottom: 1px solid var(--sub); }
 .editor .eerr .err { padding: 3px 0; font-size: 14px; line-height: 20px; }
-.editor .eadd { padding: 12px 24px; }
-.editor .empty { padding-left: 24px; }
+.editor .eadd { padding: 12px 20px; }
+/* the field a problem sits in (invalidFields; setup's quiet hours): a 1px error border; its
+   message is in the list under the editor. Focus still turns it white while it is being fixed. */
+input.bad, textarea.bad, .b.tg.bad { border-color: var(--err); }
+input.bad:focus, textarea.bad:focus { border-color: var(--text); }
 
 /* narrower windows: tighter label column */
 @media (max-width: 1099px) {
@@ -163,8 +166,6 @@
   .editor .field.co { width: 96px; }
 }
 
-/* the action bar lines up with the section's 24px gutter */
-.st-bar { padding-left: 24px; }
 /* a row whose control is several lines tall (the blend) keeps its label at the top */
 .pf.pf-top { align-items: start; }
 .pf.pf-top > .pfl { padding-top: 14px; }
