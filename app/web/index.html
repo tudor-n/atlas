@@ -6,18 +6,34 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>BrainHub</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/components.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/views/today.css">
+<link rel="stylesheet" href="/static/css/views/ask.css">
+<link rel="stylesheet" href="/static/css/views/journal.css">
+<link rel="stylesheet" href="/static/css/views/browse.css">
+<link rel="stylesheet" href="/static/css/views/agents.css">
+<link rel="stylesheet" href="/static/css/views/tablet.css">
+<link rel="stylesheet" href="/static/css/views/settings.css">
+<link rel="stylesheet" href="/static/css/views/setup.css">
 </head>
 <body>
-<div id="app">
-  <header class="topbar">
-    <span class="brand">BrainHub</span>
-    <nav id="nav" aria-label="Main"></nav>
+<div id="app" class="shell">
+  <header id="top" class="top">
+    <a id="brand" class="brand" href="#/today" data-press title="Today">BRAINHUB</a>
+    <nav id="nav" class="tabs" aria-label="Main"></nav>
+    <span id="mode" class="mode lb" hidden></span>
+    <span class="spacer"></span>
+    <div id="status" class="stat" aria-label="Status"></div>
+    <a id="settings-tab" class="tab set" href="#/settings" data-press title="Settings (Alt+0)">SETTINGS</a>
   </header>
   <div id="banner"></div>
-  <section id="capture" aria-label="Capture"></section>
-  <div id="tray"></div>
   <main id="view"></main>
+  <div id="tray" aria-label="Recent captures"></div>
+  <section id="capture" class="cap" aria-label="Capture"></section>
 </div>
 <script type="module" src="/static/js/app.js"></script>
 </body>

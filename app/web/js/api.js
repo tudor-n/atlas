@@ -34,10 +34,12 @@ export const del = (path) => request('DELETE', path);
 
 // -- WebSocket: one shared, auto-reconnecting socket ----------------------------------------
 // Listeners receive the whole message {type, data}. 'ws.open' fires on every reconnect (not the
-// first connect), so views can refetch what they missed while the socket was down.
+// first connect), so views can refetch what they missed while the socket was down. 'ws.close' fires
+// once when an open socket drops (not for each failed retry), so the shell can show OFFLINE at once.
 const listeners = new Map();
 let started = false;
 let wasConnected = false;
+let isOpen = false;
 
 function dispatch(type, msg) {
   for (const fn of [...(listeners.get(type) || [])]) {
@@ -51,13 +53,17 @@ function connect() {
   socket.onopen = () => {
     if (wasConnected) dispatch('ws.open', { type: 'ws.open', data: {} });
     wasConnected = true;
+    isOpen = true;
   };
   socket.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (_) { return; }
     if (msg && typeof msg.type === 'string') dispatch(msg.type, msg);
   };
-  socket.onclose = () => setTimeout(connect, 2000);
+  socket.onclose = () => {
+    if (isOpen) { isOpen = false; dispatch('ws.close', { type: 'ws.close', data: {} }); }
+    setTimeout(connect, 2000);
+  };
   socket.onerror = () => { try { socket.close(); } catch (_) { /* already closing */ } };
 }
 

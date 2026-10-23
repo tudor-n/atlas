@@ -1,0 +1,154 @@
+/* The app shell (phase 4.5 design §3): a full-height grid of the top bar, the banner, main#view (the
+   only scroll container), the tray and the capture bar. The page itself never scrolls. Each view's own
+   look lives in css/views/<view>.css; the layout hooks a view can use are at the end of this file. */
+html, body { height: 100%; overflow: hidden; }
+.shell {
+  display: grid; height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--h56) auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "top" "banner" "view" "tray" "cap";
+}
+
+/* -- top bar: brand, tabs, spacer, status cluster, SETTINGS in the arm's STOP slot ----------- */
+.top {
+  grid-area: top; display: flex; align-items: stretch; min-width: 0; height: var(--h56);
+  border-bottom: 1px solid var(--line); background: var(--ground); white-space: nowrap;
+}
+.brand {
+  flex: none; display: flex; align-items: center; justify-content: center; min-width: 124px; padding: 0 20px;
+  border-right: 1px solid var(--line); color: var(--text); text-decoration: none;
+  font-family: var(--mono); font-weight: 600; font-size: 13px; letter-spacing: .14em; text-indent: .14em;
+}
+.brand:hover { color: var(--text); }
+.brand.prs { background: var(--text); color: var(--ground); }
+
+/* the tabs never wrap: when the bar runs out of room they scroll sideways */
+.top .tabs { flex: 0 1 auto; min-width: 0; height: auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.top .tabs::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.top .tab { flex: none; }
+
+/* setup: the brand and a SETUP label, nothing else */
+.mode { display: flex; align-items: center; padding: 0 22px; line-height: 55px; }
+
+.spacer { flex: 1 1 0; min-width: 12px; }
+
+/* status cluster: chips (only when they apply), readouts, the agents dot, the voice switch */
+.stat { flex: none; display: flex; align-items: center; gap: 16px; padding: 0 18px; }
+.stat .chips { display: flex; align-items: center; gap: 8px; }
+.stat .chips:empty { display: none; }
+.stat .sl {
+  display: inline-flex; align-items: center; height: var(--h40); padding: 0 4px; border-radius: var(--r-btn);
+  color: var(--dim); text-decoration: none;
+}
+.stat .sl.ro { gap: 6px; }
+@media (hover: hover) { .stat .sl:hover, .stat .sl:hover .l { color: var(--text); } }
+.stat .sl.prs { background: var(--key); }
+.stat .sl .dot { margin-right: 8px; }
+.stat .sl .short { display: none; }
+.stat .swb { gap: 10px; }
+
+/* SETTINGS: a full-height tab block with a rule on its left, where the arm has STOP (never red) */
+.tab.set { flex: none; justify-content: center; min-width: 132px; border-left: 1px solid var(--line); }
+.tab.set.prs { background: var(--key); }
+
+/* when the tabs would be cut, topbar.js first tightens the bar (.tight), then drops the labels
+   (.compact); below 1100px both always apply. The dots, chips and values stay. */
+.top.tight .tab { padding: 0 14px; }
+.top.tight .tab.set { min-width: 0; padding: 0 16px; }
+.top.tight .stat { gap: 12px; padding: 0 12px; }
+.top.compact .stat .l, .top.compact .stat .swb > .lb, .top.compact .stat .sl .long { display: none; }
+.top.compact .stat .sl .short { display: inline; }
+@media (max-width: 1099px) {
+  .brand { min-width: 0; padding: 0 14px; }
+  .top .tab, .top.tight .tab { padding: 0 10px; letter-spacing: .08em; }
+  .top .tab.set { min-width: 0; padding: 0 14px; }
+  .stat, .top.tight .stat { gap: 10px; padding: 0 10px; }
+  .spacer { min-width: 4px; }
+  .stat .l, .stat .swb > .lb, .stat .sl .long { display: none; }
+  .stat .sl .short { display: inline; }
+}
+/* still cut: the strip scrolls sideways, and a rule marks its edge */
+.top .tabs.ovf { border-right: 1px solid var(--line); }
+
+/* -- banner: connection errors, the drive line, notices, quiet warnings ---------------------- */
+#banner { grid-area: banner; max-height: 30vh; overflow-y: auto; border-bottom: 1px solid var(--line); }
+#banner:empty { display: none; }
+.bn {
+  display: flex; align-items: center; min-height: var(--h40); padding: 10px 20px;
+  border-bottom: 1px solid var(--sub); font-size: 14px; line-height: 20px;
+}
+.bn:last-child { border-bottom: 0; }
+.bn > .sq { align-self: flex-start; margin-top: 7px; top: 0; }
+.bn.err { color: var(--err); }
+.bn.q { color: var(--faint); font-size: 13px; }
+#banner .notice { margin: 12px 20px; }
+#banner .notice ul { margin-top: 8px; }
+#banner .notice li { font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 18px; color: var(--dim); }
+
+/* -- the view: the one scroll container ------------------------------------------------------ */
+#view { grid-area: view; min-height: 0; overflow: auto; }
+
+/* -- tray: confirm cards for this tab's captures, right above the capture bar ---------------- */
+#tray { grid-area: tray; max-height: 45vh; overflow-y: auto; border-top: 1px solid var(--line); }
+#tray:empty { display: none; }
+
+/* -- capture: the arm's 72px bottom action bar ---------------------------------------------- */
+.cap {
+  grid-area: cap; display: flex; align-items: flex-end; gap: 12px; min-height: var(--h72);
+  padding: 11px 12px 12px 18px; border-top: 1px solid var(--line); background: var(--ground);
+}
+.cap > .lb { flex: none; display: flex; align-items: center; height: var(--h48); line-height: 11px; }
+.cap textarea {
+  flex: 1 1 auto; min-width: 0; min-height: var(--h48); padding: 12px; line-height: 22px; resize: none; overflow-y: auto;
+}
+.cap textarea[rows="1"] { overflow-y: hidden; }
+.cap .msg {
+  flex: 0 1 260px; min-width: 0; min-height: var(--h48); display: flex; flex-direction: column; justify-content: center;
+  font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); white-space: normal;
+}
+.cap .msg .err:empty, .cap .msg .st:empty { display: none; }
+.cap .b.pr { flex: none; min-width: 112px; }
+@media (max-width: 1099px) { .cap .msg { flex-basis: 180px; } }
+@media (max-width: 759px) {
+  .cap { gap: 8px; padding-left: 12px; }
+  .cap > .lb { display: none; }
+  .cap .msg { flex-basis: 140px; }
+}
+
+/* -- reduced mode: one notice, capture stays ------------------------------------------------ */
+.vw.reduced { padding: 24px; }
+.vw.reduced .notice { max-width: 720px; }
+.vw.reduced .held { font-family: var(--mono); font-weight: 500; font-size: 13px; }
+
+/* -- layout hooks for the views (wave C) ------------------------------------------------------
+   .vw         a view's root. Without .split it flows and #view scrolls it.
+   .vw.split   columns that fill the view's height and scroll on their own:
+               .rail (240px, rule on its right; components.css), .main (the rest), .side (360px, rule
+               on its left; .side.w400 for 400px). Put them in that order; any of them is optional.
+   .pane       the standard 20px/24px inner padding of a column or a flowing view.
+   .actbar     a 72px action bar (label left, buttons right) at the foot of a column. */
+.vw { min-height: 100%; }
+.vw.split { display: flex; align-items: stretch; height: 100%; min-height: 0; }
+.vw.split > * { min-height: 0; overflow-y: auto; }
+.vw > .main { flex: 1 1 auto; min-width: 0; }
+.vw > .side { flex: none; width: 360px; border-left: 1px solid var(--line); }
+.vw > .side.w400 { width: 400px; }
+.pane { padding: 20px 24px; }
+.actbar {
+  display: flex; align-items: center; gap: 8px; min-height: var(--h72); padding: 11px 12px 12px 18px;
+  border-top: 1px solid var(--line); background: var(--ground);
+}
+.actbar > .grow { flex: 1 1 auto; min-width: 0; }
+
+/* Interim, until wave C gives every view a .vw root: old views' content keeps off the edges.
+   Delete this block once no view renders without one. */
+#view > :not(.vw) { margin-left: 24px; margin-right: 24px; }
+#view > :first-child:not(.vw) { margin-top: 20px; }
+#view > :last-child:not(.vw) { margin-bottom: 24px; }
+#view > :not(.vw) button:not(.b):not(.row):not(.tab):not(.swb):not(.linkish):not(.link),
+#tray > .card button:not(.b):not(.row):not(.swb):not(.linkish):not(.link) {
+  min-height: 36px; margin: 2px 4px 2px 0; padding: 0 12px; border: 1px solid var(--line2); border-radius: var(--r-btn);
+  font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+}
+#view > :not(.vw) button.primary, #tray > .card button.primary { background: var(--text); color: var(--ground); border-color: var(--text); }
+#tray > .card { padding: 12px 20px; border-bottom: 1px solid var(--sub); }
