@@ -476,8 +476,19 @@ def test_step_label(tmp_path):
     assert step_label("Grep", {"pattern": "servo"}, wt) == 'searching for "servo"'
     assert step_label("StructuredOutput", {"synopsis": "s"}, wt) == "wrapping up"
     assert step_label("Bash", {"command": "ls"}, wt) == "working"
-    long = step_label("Grep", {"pattern": "x" * 200}, wt)
-    assert len(long) == 80 and long.endswith("…")
+    long = step_label("Read", {"file_path": str(wt / ("deep/" * 30) / "notes.md")}, wt)
+    assert len(long) == 80 and long.startswith("reading …") and long.endswith("/deep/notes.md")
+    assert step_label("Read", {"file_path": str(wt)}, wt) == "reading"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows paths (the POSIX side is test_step_label)")
+def test_step_label_windows_paths(tmp_path):
+    from brainhub.filing import step_label
+    wt = tmp_path / "data" / "worktrees" / "e-1"
+    upper = str(wt).upper() + "\\Projects\\a.md"
+    assert step_label("Read", {"file_path": str(wt) + "\\projects\\a.md"}, wt) == "reading projects/a.md"
+    assert step_label("Read", {"file_path": str(wt).replace("\\", "/") + "/b.md"}, wt) == "reading b.md"
+    assert step_label("Read", {"file_path": upper}, wt) == "reading Projects/a.md"
 
 
 async def test_filing_reports_its_steps_and_clears_them(env):
@@ -491,12 +502,14 @@ async def test_filing_reports_its_steps_and_clears_them(env):
     def check(cwd):
         during.append(dict(worker.progress[env.entry.id]))
 
+    wt = env.paths.data / "worktrees" / env.entry.id  # the agent passes absolute paths
     runner = FakeRunner(json_result=GOOD_RESULT, on_run=check, steps=[
-        ("Read", {"file_path": "projects/robotarm/notes.md"}), ("StructuredOutput", {})])
+        ("Read", {"file_path": str(wt / "projects" / "robotarm" / "notes.md")}), ("StructuredOutput", {})])
     worker = FilingWorker(env.paths, env.store, env.repo, runner, broadcast,
                           on_commit=commit_hook(env.store, env.paths.brain, env.repo))
     await worker.file_entry(env.entry.id)
-    assert during[0]["step"] is None and datetime.fromisoformat(during[0]["started"])
+    started = datetime.fromisoformat(during[0]["started"])
+    assert during[0]["step"] is None and started.utcoffset() is not None  # the page parses it right across DST
     progress = [d for t, d in sent if t == "filing.progress"]
     assert progress == [{"entry_id": env.entry.id, "step": "reading projects/robotarm/notes.md"},
                         {"entry_id": env.entry.id, "step": "wrapping up"}]
@@ -505,6 +518,9 @@ async def test_filing_reports_its_steps_and_clears_them(env):
 
 
 async def test_failed_filing_clears_its_progress(env):
-    worker = env.worker(FakeRunner(raise_error=ClaudeError("boom")))
+    during = []
+    worker = env.worker(FakeRunner(raise_error=ClaudeError("boom"),
+                                   on_run=lambda cwd: during.append(env.entry.id in worker.progress)))
     await worker.file_entry(env.entry.id)
+    assert during == [True]
     assert env.store.get_filing(env.entry.id).status == "failed" and worker.progress == {}

@@ -124,8 +124,13 @@ def step_label(tool: str, tool_input, cwd: Path) -> str:
     else:
         fp = args.get("file_path")
         target = _note_path(fp, cwd) if isinstance(fp, str) and fp else ""
-    label = f"{verb} {target}" if target else _STEP_BARE.get(tool, verb)
-    return label if len(label) <= STEP_MAX else label[:STEP_MAX - 1] + "…"
+    if target == ".":
+        target = ""
+    if not target:
+        return _STEP_BARE.get(tool, verb)
+    room = STEP_MAX - len(verb) - 1
+    # Too long: keep the end, where the file name is.
+    return f"{verb} {target}" if len(target) <= room else f"{verb} …{target[-(room - 1):]}"
 
 
 # -- parsing -----------------------------------------------------------------
@@ -298,6 +303,7 @@ class FilingWorker:
         # entry id -> {"started", "step"} while it is being filed: a card opened mid-filing shows
         # the agent's latest step at once (memory only; filing.progress carries each new one).
         self.progress: dict[str, dict] = {}
+        self._sends: set[asyncio.Task] = set()  # progress broadcasts in flight
 
     def _remove_worktree(self, path: Path) -> None:
         """Unregister and delete a worktree, including a plain leftover folder git doesn't know."""
@@ -400,7 +406,10 @@ class FilingWorker:
             await t(self.store.delete_proposals, entry_id)
             filing.attempts += 1
             await t(self.store.upsert_filing, filing)
-            self.progress[entry_id] = {"started": datetime.now().isoformat(timespec="seconds"), "step": None}
+            # With its UTC offset: the page counts seconds from it, also in the hour that repeats
+            # when the clocks go back.
+            self.progress[entry_id] = {"started": datetime.now().astimezone().isoformat(timespec="seconds"),
+                                       "step": None}
             await self.broadcast("filing.started", {"entry_id": entry_id})
             # 4. isolated worktree at main HEAD
             if wt_path.exists():
@@ -415,7 +424,11 @@ class FilingWorker:
             async def on_step(tool: str, tool_input) -> None:
                 step = step_label(tool, tool_input, wt_path)
                 self.progress[entry_id]["step"] = step
-                await self.broadcast("filing.progress", {"entry_id": entry_id, "step": step})
+                # Sent in the background: a page that stops reading must never stall the loop that
+                # reads the agent's output (the run's timeout only guards that loop's reads).
+                task = asyncio.create_task(self.broadcast("filing.progress", {"entry_id": entry_id, "step": step}))
+                self._sends.add(task)
+                task.add_done_callback(self._sends.discard)
 
             raw = await self.runner.run_json(
                 build_filing_prompt(entry, m, open_items, correction, previous, fix_in_place),

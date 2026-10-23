@@ -87,10 +87,15 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
   }));
   unsubs.push(api.onEvent('ws.open', () => reload()));
 
+  // Events can trigger reloads milliseconds apart (filing.started, then a fast filing.failed): only
+  // the latest request may draw, or a stale "running" answer would leave the card counting forever.
+  let loads = 0;
   async function reload() {
     if (destroyed) return;
+    const mineLoad = ++loads;
     try {
       const [data, map] = await Promise.all([api.get(`/api/filings/${encodeURIComponent(entryId)}`), loadMap().catch(() => null)]);
+      if (mineLoad !== loads) return;
       s.data = data;
       s.map = map;
       s.progress = data.progress || null;
@@ -102,9 +107,10 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
         } catch (_) { /* the row falls back to the item id */ }
       }
     } catch (e) {
+      if (mineLoad !== loads) return;
       s.loadError = e.message;
     }
-    if (!destroyed) render();
+    if (!destroyed && mineLoad === loads) render();
   }
 
   const pending = () => (s.data ? s.data.proposals.filter((p) => p.status === 'proposed') : []);
@@ -363,9 +369,9 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     if (s.notice) root.appendChild(el('p', { class: 'status', role: 'status' }, s.notice));
     if (filing.status === 'failed') { root.appendChild(retryBox(filing)); return; }
     if (filing.status === 'queued' || filing.status === 'running') {
-      // Only the step is announced; the seconds tick quietly beside it.
-      statusEl = { text: el('span', {}), elapsed: el('span', { 'aria-hidden': 'true' }) };
-      root.appendChild(el('p', { class: 'status', role: 'status' }, statusEl.text, statusEl.elapsed));
+      // Only the step is announced; the seconds tick beside it, outside the live region.
+      statusEl = { text: el('span', { role: 'status' }), elapsed: el('span', { 'aria-hidden': 'true' }) };
+      root.appendChild(el('p', { class: 'status' }, statusEl.text, statusEl.elapsed));
       tick();
       return;
     }
