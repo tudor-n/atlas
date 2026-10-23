@@ -403,3 +403,29 @@ def test_malformed_map_only_costs_suggestions(store, paths):
     (paths.brain / "map.json").write_text('{"projects": [42, {"name": "no slug"}]}', encoding="utf-8")
     rows = tr.rows()
     assert len(rows) == 1 and rows[0]["suggest"] is None
+
+
+# -- phase 4: the voice hears status changes ---------------------------------------------------------
+def test_status_changes_reach_the_voice_callback(store, paths, now):
+    seen = []
+    tr = AgentTracker(store, paths, lambda: {"agents_end_linger_s": 60, "agents_stale_h": 12}, now,
+                      on_transition=seen.append)
+    tr.handle(ev("SessionStart"))
+    tr.handle(ev("UserPromptSubmit"))
+    tr.handle(ev("UserPromptSubmit"))  # still running: no change
+    tr.handle(ev("Notification", notification_type="permission_prompt", message="Allow rm -rf?"))
+    tr.handle(ev("Stop"))
+    got = [(t["before"], t["after"], t["kind"]) for t in seen]
+    assert got == [(None, "idle", None), ("idle", "running", None), ("running", "waiting", "permission_prompt"),
+                   ("waiting", "finished", None)]
+    assert all(t["session_id"] == "s1" and t["project_name"] == "proj" for t in seen)
+    assert all("Allow" not in str(t) for t in seen)  # the session's own text never reaches the voice
+
+
+def test_a_failing_voice_callback_never_costs_an_event(store, paths, now):
+    def boom(_):
+        raise RuntimeError("voice down")
+    tr = AgentTracker(store, paths, lambda: {"agents_end_linger_s": 60, "agents_stale_h": 12}, now,
+                      on_transition=boom)
+    assert tr.handle(ev("SessionStart")) is True
+    assert tr.rows()[0]["status"] == "idle"
