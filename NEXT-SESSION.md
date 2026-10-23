@@ -5,10 +5,9 @@ A short pointer, updated 2026-10-23. It is no longer the only thing carried betw
 ## Where things stand
 - **Phases 1 and 2 and the dual-boot port** (plan Tasks 1–12, PR #3) are merged into `master` (2026-10-22). CI runs on Ubuntu and Windows.
 - **What remains:**
-  1. **The owner's feedback from the Linux test drive** (below): fixed on branch `test-drive-fixes` (usage meter, speed). The owner merges it; then the next test drive checks the meter against claude.ai and the filing card's live progress.
-  2. The Windows half of the Claude Code memory spike (ruling D2), at a reboot into Windows. Work in a fresh Windows clone, never in `D:\BrainHub`.
-  3. The Windows-side checks: the widget, built hidden and then shown, behaves as before (D1); claude-sync's junctions, drive-letter keys and `D:\` defaults work for real (so far only CI ran them).
-  4. The rollout, with the owner: plan → Rollout (`docs/superpowers/plans/2026-10-22-brainhub-dual-boot.md`). Kubuntu (live copy to master, `runtime init`, the shell, the integration and its entrypoint checks, `claude-sync` and labelling one-OS notes, the setup wizard on the real root), then Windows, then design §10's verification (`app/README.md` → Verification), which also covers D1's open desktop checks.
+  1. **The owner's feedback from the Linux test drive** (below): fixed and merged into master (2026-10-23; usage meter, speed). The next test drive checks the meter against claude.ai and the filing card's live progress.
+  2. The Kubuntu rollout, with the owner: plan → Rollout (`docs/superpowers/plans/2026-10-22-brainhub-dual-boot.md`), its Kubuntu part: live copy to master, `runtime init`, the shell, the integration and its entrypoint checks, `claude-sync` and labelling one-OS notes, the setup wizard on the real root.
+  3. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while and will come back to Windows later. That covers the Windows half of the memory spike (ruling D2, in a fresh Windows clone, never in `D:\BrainHub`), the Windows-side checks (the widget built hidden and then shown, D1; claude-sync's junctions, drive-letter keys and `D:\` defaults for real), the Windows rollout and the Windows half of design §10's verification. Until then: code stays portable, CI keeps running on both OSes (the update step's gate needs both `test (…)` jobs green), and nothing is checked on Windows by hand.
 - **No real brain exists yet**: the setup wizard has never run on `/mnt/data/BrainHub` = `D:\BrainHub`.
 
 ## Owner feedback from the Linux test drive (2026-10-22, evening)

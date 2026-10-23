@@ -2,7 +2,7 @@
 
 A local "second brain" for one person (the owner), on a dual-boot laptop: Kubuntu 26.04 (the daily driver, where development happens) and Windows 11. The owner writes freely. A headless Claude Code agent files each entry into a git-versioned Markdown brain and proposes tasks and dates. The owner confirms them. Later the owner asks questions and gets their own words back, with citations. Phase 2 adds a usage meter, an Agents panel fed by the owner's Claude Code hooks, a desktop widget and a Tauri desktop shell. The dual-boot port makes it one lifeline on both OSes: the same master commit, one shared root on `D:`, the same features, and Claude Code memory, skills and settings shared through `claude-sync`.
 
-**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. Next: the owner's test-drive fixes (branch `test-drive-fixes`, rulings 20–23 in `phase2-decisions.md`) get merged and checked in the next test drive, then the Windows half of the memory spike (ruling D2), the Windows-side checks, then the rollout with the owner (plan → Rollout).**
+**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. The owner's test-drive fixes are merged too (rulings 20–23 in `phase2-decisions.md`). Next: the Kubuntu rollout with the owner (plan → Rollout). Everything on Windows is on hold: the owner uses Kubuntu only for a while (2026-10-23).**
 
 > `../NEXT-SESSION.md` is a short pointer: where things stand and the standing rules.
 
@@ -155,10 +155,10 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 ## Where things stand
 - **Phases 1 and 2 are merged** into master (phase 2 via PR #2).
 - **The dual-boot port is merged** (plan Tasks 1–12, PR #3, 2026-10-22); CI runs on both OSes.
-- **The owner's Linux test drive** (2026-10-22), fixed on branch `test-drive-fixes`: the usage meter lag (rulings 20–21), and filing/recall speed (rulings 22–23: no non-essential traffic in the hub's runs, live filing progress). Numbers in `app/README.md` → Measured → Test-drive follow-up.
+- **The owner's Linux test drive** (2026-10-22), fixed and merged (2026-10-23): the usage meter lag (rulings 20–21), and filing/recall speed (rulings 22–23: no non-essential traffic in the hub's runs, live filing progress). Numbers in `app/README.md` → Measured → Test-drive follow-up.
 - **Next:**
-  1. The Windows half of the memory spike (D2), at a scheduled reboot, and the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real).
-  2. The rollout with the owner (plan → Rollout): live copy to master, `runtime init`, the shell, the integration, `claude-sync`, then the setup wizard on the real root, on Kubuntu and then Windows. It includes the phase 2 checks (Where and the status line for terminal and VS Code sessions on both OSes; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and design §10's verification.
+  1. The Kubuntu rollout with the owner (plan → Rollout): live copy to master, `runtime init`, the shell, the integration, `claude-sync`, then the setup wizard on the real root. It includes the phase 2 checks for Kubuntu (Where and the status line for terminal and VS Code sessions; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and the Kubuntu half of design §10's verification.
+  2. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while: the Windows half of the memory spike (D2), the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real), the Windows rollout and its half of §10. Meanwhile, code stays portable and CI keeps running on both OSes.
   3. Calibration (still open from phase 1): the owner collects "wrote X, it extracted Y, expected Z" cases; tune `prompts/filing.md` and the Settings defaults.
   4. Phase 3 (spec §12): the tablet (SM-T110, ES5-only) with its AGENTS tab, LAN binding and pairing, measurement requests. It must reach the hub at one fixed address whichever OS is booted (design §8.3).
 - **Later phases:** voice (Kokoro) and notifications, Google Calendar, phone.
