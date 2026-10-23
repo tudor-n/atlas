@@ -302,3 +302,40 @@ async def test_a_failing_usage_callback_never_breaks_a_run(tmp_path):
                             json_schema={}, timeout_s=20, **_KW) == {"n": 1}
     assert [c async for c in r.stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
                                            timeout_s=20, **_KW)] == []
+
+
+async def test_run_json_keeps_unicode_line_separators(tmp_path):
+    """JSON.stringify leaves U+2028, U+2029 and U+0085 raw; only \\n ends a stream line (review)."""
+    body = ("import sys,json\nsys.stdin.read()\n"
+            "d={'type':'result','structured_output':{'t':'a\\u2028b\\u2029c\\x85d'}}\n"
+            "sys.stdout.buffer.write(json.dumps(d,ensure_ascii=False).encode('utf-8')+b'\\n')\n")
+    out = await ClaudeRunner(_fake_cli(tmp_path, body)).run_json(
+        "x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md", json_schema={}, timeout_s=20, **_KW)
+    assert out == {"t": "a\u2028b\u2029c\x85d"}
+
+
+async def test_run_json_reports_usage_seen_before_a_timeout(tmp_path):
+    seen = []
+
+    async def on_rate_limit(info):
+        seen.append(info)
+
+    body = ("import sys,json,time\nsys.stdin.read()\n"
+            f"print(json.dumps({{'type':'rate_limit_event','rate_limit_info':{_RATE!r}}}),flush=True)\n"
+            "time.sleep(60)\n")
+    with pytest.raises(ClaudeError, match="timed out"):
+        await ClaudeRunner(_fake_cli(tmp_path, body), on_rate_limit=on_rate_limit).run_json(
+            "x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md", json_schema={}, timeout_s=2, **_KW)
+    assert seen == [_RATE]
+
+
+async def test_failed_run_names_the_clis_own_error(tmp_path):
+    """In stream-json mode the CLI's error text is in its result event, not on stderr."""
+    cli = _fake_cli(tmp_path, _lines({"type": "result", "subtype": "error_during_execution", "is_error": True,
+                                      "result": "API Error: overloaded"}, exit_code=1))
+    with pytest.raises(ClaudeError, match="exited 1.*overloaded"):
+        await ClaudeRunner(cli).run_json("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                         json_schema={}, timeout_s=20, **_KW)
+    with pytest.raises(ClaudeError, match="exited 1.*overloaded"):
+        [c async for c in ClaudeRunner(cli).stream_text("x", cwd=tmp_path, system_prompt_file=tmp_path / "p.md",
+                                                        timeout_s=20, **_KW)]

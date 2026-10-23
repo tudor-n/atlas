@@ -106,3 +106,14 @@ async def test_integration_view_says_when_paths_are_old(client, tmp_path, monkey
     assert r.status == 200 and (await r.json())["paths_current"] is False
     r = await client.post("/api/integration/install", json={})
     assert r.status == 400 and "runtime init" in (await r.json())["error"]
+
+
+async def test_last_usage_update_means_the_status_line(client):
+    """The hub's own runs feed the meter too (ruling 21), but Settings' "Last usage update" must keep
+    saying whether the status line integration is posting."""
+    from brainhub.routes import record_usage
+    payload = {"rate_limits": {"five_hour": {"used_percentage": 7, "resets_at": 4_000_000_000}}}
+    await record_usage(client.server.app, payload)  # what a claude run does
+    assert (await (await client.get("/api/integration")).json())["last_usage_at"] is None
+    assert (await client.post("/api/usage", json=payload)).status == 204  # a status line post (stale here)
+    assert (await (await client.get("/api/integration")).json())["last_usage_at"] is not None

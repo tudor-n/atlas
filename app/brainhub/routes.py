@@ -612,7 +612,11 @@ async def record_usage(app: web.Application, payload: dict) -> None:
 
 
 async def post_usage(request: web.Request) -> web.Response:
-    await record_usage(request.app, await body_dict(request))
+    body = await body_dict(request)
+    # Settings' "Last usage update" says whether the status line integration posts; the hub's
+    # own runs feed the meter too, so they can't be the clock for it (memory only).
+    request.app["statusline_seen"]["at"] = datetime.now().isoformat(timespec="seconds")
+    await record_usage(request.app, body)
     return web.Response(status=204)
 
 
@@ -677,7 +681,7 @@ def _integration_view(app: web.Application) -> dict:
     # No legacy adoption here: moving the passthrough file on a GET would cut the live status line
     # off from it until a reinstall. install/uninstall adopt and rewrite the line together.
     view = ci.status(app["claude_settings_path"], port=app["port"])
-    return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["usage"].updated_at()}
+    return {**view, "last_hook_at": app["agents"].last_event_at(), "last_usage_at": app["statusline_seen"].get("at")}
 
 
 async def get_integration(request: web.Request) -> web.Response:

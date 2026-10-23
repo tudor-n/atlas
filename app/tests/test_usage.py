@@ -188,3 +188,38 @@ def test_rate_limits_from_run_event():
 def test_rate_limits_from_odd_events(info):
     from brainhub.usage import rate_limits_from_event
     assert rate_limits_from_event(info) is None
+
+
+def test_one_window_even_if_resets_at_drifts(tmp_path):
+    """The status line and the hub's runs might not agree to the second on a window's reset. A new
+    window can only start after the old one ends, so resets under an hour apart are one window."""
+    store, _ = make(tmp_path)
+    store.update(_five(30, resets=T + 3600))
+    assert store.update(_five(29, resets=T + 3601)) is False
+    assert store.update(_five(29, resets=T + 3599)) is False
+    assert store.view(80, URL)["five_hour"]["used"] == 30
+    assert store.update(_five(31, resets=T + 3599)) is True
+    assert store.view(80, URL)["five_hour"]["used"] == 31
+    assert store.update(_five(2, resets=T + 3600 + 3600)) is True  # an hour later: a new window
+
+
+def test_readings_are_rounded_so_equal_sources_agree(tmp_path):
+    store, clock = make(tmp_path)
+    store.update(_five(29.0))
+    stamp = store.updated_at()
+    clock.t = T + 60
+    assert store.update(_five(28.999999999999996)) is False  # 0.29 * 100 from some encoder
+    assert store.updated_at() != stamp  # the same reading: it confirms the value
+
+
+def test_stale_reading_after_reload(tmp_path):
+    store, _ = make(tmp_path)
+    store.update(_five(40))
+    again, _ = make(tmp_path)
+    assert again.update(_five(35)) is False and again.view(80, URL)["five_hour"]["used"] == 40
+
+
+def test_run_event_over_the_limit_is_clamped():
+    from brainhub.usage import rate_limits_from_event
+    info = {"unifiedWindows": {"five_hour": {"utilization": 1.2, "resetsAt": T + 3600}}}
+    assert rate_limits_from_event(info) == {"five_hour": {"used_percentage": 100, "resets_at": T + 3600}}

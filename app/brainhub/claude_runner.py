@@ -28,6 +28,7 @@ Real output shapes (claude 2.1.304, smoke-checked with --model haiku):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -176,51 +177,17 @@ class ClaudeRunner:
     def _tail(stderr: bytes) -> str:
         return stderr.decode("utf-8", "replace")[-_STDERR_TAIL:].strip()
 
-    async def run_json(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
-                       allowed_tools: list[str], json_schema: dict, max_turns: int,
-                       timeout_s: int) -> dict:
-        args = build_args(model=model, system_prompt_file=system_prompt_file,
-                          allowed_tools=allowed_tools, max_turns=max_turns,
-                          json_schema=json_schema, stream=False)
-        proc = await self._spawn(args, prompt, cwd)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout_s)
-        except asyncio.TimeoutError:
-            await self._kill(proc)
-            raise ClaudeError(f"claude timed out after {timeout_s}s") from None
-        except BaseException:
-            await self._kill(proc)
-            raise
-        events = []
-        for line in out.decode("utf-8", "replace").splitlines():
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(ev, dict):
-                events.append(ev)
-                if ev.get("type") == "rate_limit_event":
-                    await self._rate_limit(ev)  # a failed run used the plan too
-        if proc.returncode != 0:
-            raise ClaudeError(f"claude exited {proc.returncode}: {self._tail(err)}")
-        if not events:
-            raise ClaudeError("unparsable claude output: no JSON object")
-        data = next((ev for ev in reversed(events) if ev.get("type") == "result"), {})
-        structured = data.get("structured_output")
-        if not isinstance(structured, dict):
-            raise ClaudeError(
-                f"claude returned no structured output (subtype={data.get('subtype')!r}, "
-                f"is_error={data.get('is_error')!r}, result={str(data.get('result'))[:300]!r})")
-        return structured
+    async def _events(self, args: list[str], prompt: str, cwd: Path,
+                      timeout_s: int) -> AsyncIterator[dict]:
+        """Run claude and yield each stdout line that is a JSON object, as it arrives.
 
-    async def stream_text(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
-                          allowed_tools: list[str], max_turns: int,
-                          timeout_s: int) -> AsyncIterator[str]:
-        args = build_args(model=model, system_prompt_file=system_prompt_file,
-                          allowed_tools=allowed_tools, max_turns=max_turns,
-                          json_schema=None, stream=True)
+        Only "\n" ends a line: the CLI leaves U+2028, U+2029 and U+0085 raw inside its JSON.
+        rate_limit_events go to on_rate_limit as they come, so a run that fails or times out still
+        reports its usage. A nonzero exit raises ClaudeError naming the CLI's own error (its result
+        event) and the stderr tail; the timeout kills the run's process tree and raises too."""
         proc = await self._spawn(args, prompt, cwd)
         stderr_buf = bytearray()
+        error_text = ""
 
         async def drain():
             # Drain stderr concurrently so a chatty child cannot block on a full pipe.
@@ -244,10 +211,58 @@ class ClaudeRunner:
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(ev, dict) and ev.get("type") == "rate_limit_event":
-                    await self._rate_limit(ev)
+                if not isinstance(ev, dict):
                     continue
-                if not isinstance(ev, dict) or ev.get("type") != "stream_event":
+                if ev.get("type") == "rate_limit_event":
+                    await self._rate_limit(ev)
+                elif ev.get("type") == "result" and ev.get("is_error") and isinstance(ev.get("result"), str):
+                    error_text = ev["result"][:300]
+                yield ev
+            await asyncio.wait_for(proc.wait(), max(deadline - time.monotonic(), 0.1))
+            await asyncio.wait_for(drain_task, max(deadline - time.monotonic(), 0.1))
+            if proc.returncode != 0:
+                detail = " | ".join(x for x in (error_text, self._tail(bytes(stderr_buf))) if x)
+                raise ClaudeError(f"claude exited {proc.returncode}: {detail}")
+        except asyncio.TimeoutError:
+            await self._kill(proc)
+            raise ClaudeError(f"claude timed out after {timeout_s}s") from None
+        finally:
+            if proc.returncode is None:
+                await self._kill(proc)
+            drain_task.cancel()
+
+    async def run_json(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
+                       allowed_tools: list[str], json_schema: dict, max_turns: int,
+                       timeout_s: int) -> dict:
+        args = build_args(model=model, system_prompt_file=system_prompt_file,
+                          allowed_tools=allowed_tools, max_turns=max_turns,
+                          json_schema=json_schema, stream=False)
+        seen, data = False, None
+        async with contextlib.aclosing(self._events(args, prompt, cwd, timeout_s)) as events:
+            async for ev in events:
+                seen = True
+                if ev.get("type") == "result":
+                    data = ev  # the last one counts
+        if not seen:
+            raise ClaudeError("unparsable claude output: no JSON object")
+        if data is None:
+            raise ClaudeError("claude returned no structured output (no result event)")
+        structured = data.get("structured_output")
+        if not isinstance(structured, dict):
+            raise ClaudeError(
+                f"claude returned no structured output (subtype={data.get('subtype')!r}, "
+                f"is_error={data.get('is_error')!r}, result={str(data.get('result'))[:300]!r})")
+        return structured
+
+    async def stream_text(self, prompt: str, *, cwd: Path, model: str, system_prompt_file: Path,
+                          allowed_tools: list[str], max_turns: int,
+                          timeout_s: int) -> AsyncIterator[str]:
+        args = build_args(model=model, system_prompt_file=system_prompt_file,
+                          allowed_tools=allowed_tools, max_turns=max_turns,
+                          json_schema=None, stream=True)
+        async with contextlib.aclosing(self._events(args, prompt, cwd, timeout_s)) as events:
+            async for ev in events:
+                if ev.get("type") != "stream_event":
                     continue
                 inner = ev.get("event")
                 if not isinstance(inner, dict):
@@ -259,14 +274,3 @@ class ClaudeRunner:
                     text = delta.get("text")
                     if text:
                         yield text
-            await asyncio.wait_for(proc.wait(), max(deadline - time.monotonic(), 0.1))
-            await asyncio.wait_for(drain_task, max(deadline - time.monotonic(), 0.1))
-            if proc.returncode != 0:
-                raise ClaudeError(f"claude exited {proc.returncode}: {self._tail(bytes(stderr_buf))}")
-        except asyncio.TimeoutError:
-            await self._kill(proc)
-            raise ClaudeError(f"claude timed out after {timeout_s}s") from None
-        finally:
-            if proc.returncode is None:
-                await self._kill(proc)
-            drain_task.cancel()

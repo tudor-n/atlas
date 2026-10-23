@@ -13,6 +13,9 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 WINDOWS = ("five_hour", "seven_day")
 MAX_RESETS = 4_102_444_800  # year 2100: keeps datetime.fromtimestamp safe
+# A new window starts only after the old one ends (5 h or 7 days later), so two readings whose
+# resets are closer than this are the same window, even if the sources disagree by a second.
+SAME_WINDOW_S = 3600
 
 
 def _num(v) -> bool:
@@ -27,14 +30,15 @@ def _clean(raw) -> dict | None:
         resets = int(resets)  # an integral float (1800003600.0) is still a whole epoch second
     if not _num(used) or not 0 <= used <= 100 or type(resets) is not int or not 0 < resets < MAX_RESETS:
         return None
-    return {"used_percentage": float(used), "resets_at": resets}
+    # Rounded: the status line and the hub's runs report the same reading (0.29 → 28.999999999999996).
+    return {"used_percentage": round(float(used), 2), "resets_at": resets}
 
 
 def _stale(new: dict, held: dict) -> bool:
     """Every Claude Code session posts its own last response's numbers, so readings arrive out of
     order. Usage only rises inside a window: a reading from an earlier window, or lower in the
     same one, is an older response, never news (owner feedback, 2026-10-22)."""
-    if new["resets_at"] != held["resets_at"]:
+    if abs(new["resets_at"] - held["resets_at"]) >= SAME_WINDOW_S:
         return new["resets_at"] < held["resets_at"]
     return new["used_percentage"] < held["used_percentage"]
 
@@ -50,7 +54,9 @@ def rate_limits_from_event(info) -> dict | None:
     for w in WINDOWS:
         win = windows.get(w)
         if isinstance(win, dict) and _num(win.get("utilization")):
-            out[w] = {"used_percentage": round(win["utilization"] * 100, 2), "resets_at": win.get("resetsAt")}
+            # Over the limit (overage) can report more than 1: the meter shows it as full.
+            out[w] = {"used_percentage": min(round(win["utilization"] * 100, 2), 100),
+                      "resets_at": win.get("resetsAt")}
     return out or None
 
 

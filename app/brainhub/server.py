@@ -320,11 +320,20 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
                     app["sockets"].discard(ws)
 
     app["usage"] = UsageStore(paths.data / "usage.json")
+    app["statusline_seen"] = {}  # "at": the last status line post (memory only)
 
     async def usage_from_run(info: dict) -> None:
-        # The hub's own claude runs use the plan too, and no status line reports them.
+        # The hub's own claude runs use the plan too, and no status line reports them. Recorded in
+        # the background: an fsync or a slow page must never hold up the answer or the filing.
         if limits := rate_limits_from_event(info):
-            await record_usage(app, {"rate_limits": limits})
+            task = asyncio.create_task(record_usage(app, {"rate_limits": limits}))
+            app["background"].add(task)
+            task.add_done_callback(_usage_recorded)
+
+    def _usage_recorded(task: asyncio.Task) -> None:
+        app["background"].discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.warning("could not record usage from a claude run: %s", task.exception())
 
     backup = BackupPusher(repo, lambda: load_settings(paths), broadcast)
     app.update(paths=paths, store=store, repo=repo, broadcast=broadcast, backup=backup,
