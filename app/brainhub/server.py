@@ -142,6 +142,7 @@ def _startup_sync(app: web.Application) -> list[str]:
     step("git attributes", _ensure_gitattributes, app)
     step("restoring items", store.restore_items_if_empty, paths.brain)
     step("restoring proposals", store.restore_proposals_if_empty, paths.brain)
+    step("restoring tablet requests", store.restore_tablet_if_empty, paths.brain)
     step("held captures", _flush_held, app)
     step("raw log", _backfill_log, app)
     step("notes index", _rebuild_notes, app)
