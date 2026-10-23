@@ -13,7 +13,7 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `docs/superpowers/specs/2026-10-21-brainhub-phase2-design.md` | Phase 2 made concrete: hook client, installer, agent statuses, usage, widget, desktop shell. |
 | `docs/superpowers/specs/2026-10-21-brainhub-dual-boot-design.md` | Where it runs and how, on both OSes: shared vs per-OS data, live copy and updates, guards, Claude Code parity. Amends the spec's §4, §11, §13.1 and §14. |
 | `docs/superpowers/specs/2026-10-23-brainhub-phase3-design.md` | Phase 3, the workbench tablet: LAN access and pairing, the ES5 tablet page, measurement requests, tablet notes, the arm UI's HOME. |
-| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md`, `phase3-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12; phase 3: T1–T16), plus known residuals. Read them before changing core behaviour. |
+| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md`, `phase3-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12; phase 3: T1–T27), plus known residuals. Read them before changing core behaviour. |
 | `app/README.md` | How to set up, run and test on each OS, where data lives, the drive banner, verification drills, "Known limitations" and "Measured". |
 | `app/desktop/README.md` | Building, configuring and running the desktop shell (both OSes, runtime mode). |
 | `docs/superpowers/plans/2026-10-20-brainhub-phase1.md`, `…/2026-10-21-brainhub-phase2.md`, `…/2026-10-22-brainhub-dual-boot.md` | The plans as written. Rulings in the decisions docs override them. |
@@ -99,8 +99,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 **Kubuntu**, from `~/dev/BrainHub/app` (uv; Python 3.14 from `.python-version`):
 - **Setup:** `uv sync --locked --extra test` (makes `.venv`).
 - **Run:** `BRAINHUB_STATE_DIR=/tmp/bh-state-x uv run --no-sync python -m brainhub --root /tmp/bh-test-x [--port 8090]`, then open http://127.0.0.1:8090 (widget page: `/widget`).
-- **Python tests:** `uv run --no-sync python -m pytest -q` (944 passed, 18 skipped at the end of the phase 3 build; the skips are the Windows-only halves). Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
-- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs` (60 passing). Check a file's syntax with `node --check <file>`.
+- **Python tests:** `uv run --no-sync python -m pytest -q` (966 passed, 18 skipped at the end of the phase 3 build and its reviews; the skips are the Windows-only halves). Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
+- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs` (62 passing). Check a file's syntax with `node --check <file>`.
 - **Rust (desktop shell):** in `desktop/src-tauri`: `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test` (39 passing) and `cargo build --release`. Never build into `src-tauri/target`.
 
 **Windows**, from the dev clone's `app` (uv, installed with `winget install astral-sh.uv`):
