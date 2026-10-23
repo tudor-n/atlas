@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -23,7 +24,17 @@ DEFAULT_SETTINGS: dict = {
     # at tablet_address (the laptop's fixed home address), only while the laptop holds it.
     "tablet_lan": False, "tablet_address": "",
     "tablet_units": ["mm", "cm", "m", "°", "g", "kg", "V", "A", "mA", "Ω", "s"],
+    # Phase 4: the voice. Inert until the voice files are downloaded (Settings → Voice). The blend,
+    # speed and quote styles are the owner's: Atlas's voice (`atlas_jv2`), British English.
+    "voice_enabled": True, "voice_sass": True, "voice_sass_readback": False,
+    "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True},
+    "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
+    "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
 }
+
+VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback")
+VOICE_MODELS: tuple[str, ...] = ("int8", "fp32")
+_VOICE_ID = re.compile(r"^[a-z]{2}_[a-z]{2,20}$")  # Kokoro's ids: bm_george, af_heart, …
 
 # Code locations come from the installed package, never from the data root (--root may be any folder).
 _PKG = Path(__file__).resolve().parent
@@ -40,6 +51,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "recall_top_n": (1, 50), "default_lead_days": (0, 60), "nudge_days": (1, 60),
     "backup_debounce_s": (0, 86400),
     "usage_warn_pct": (1, 100), "agents_end_linger_s": (0, 3600), "agents_stale_h": (1, 168),
+    "voice_finish_min_s": (0, 3600), "voice_volume": (0, 100),
 }
 
 
@@ -89,6 +101,10 @@ def _private_ipv4(addr: str) -> bool:
     return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
 
 
+def _finite_number(v) -> bool:
+    return type(v) in (int, float) and math.isfinite(v)
+
+
 def validate_setting(key: str, value) -> None:
     """Raise ValueError unless `value` is acceptable for setting `key`."""
     default = DEFAULT_SETTINGS[key]
@@ -117,6 +133,27 @@ def validate_setting(key: str, value) -> None:
                       for v in value))
         if not ok:
             raise ValueError("tablet_units must be 1-20 distinct units of 1-6 characters, no spaces")
+        return
+    if key == "voice_events":
+        ok = (isinstance(value, dict) and set(value) == set(VOICE_EVENTS)
+              and all(type(v) is bool for v in value.values()))
+        if not ok:
+            raise ValueError("voice_events must say true or false for each of " + ", ".join(VOICE_EVENTS))
+        return
+    if key == "voice_blend":
+        ok = (isinstance(value, dict) and 1 <= len(value) <= 3
+              and all(isinstance(k, str) and _VOICE_ID.match(k) for k in value)
+              and all(_finite_number(v) and v > 0 for v in value.values()))
+        if not ok:
+            raise ValueError("voice_blend must be 1-3 Kokoro voices (like bm_george) with weights above 0")
+        return
+    if key == "voice_speed":
+        if not (_finite_number(value) and 0.5 <= value <= 2.0):
+            raise ValueError("voice_speed must be a number from 0.5 to 2")
+        return
+    if key == "voice_model":
+        if value not in VOICE_MODELS:
+            raise ValueError("voice_model must be " + " or ".join(VOICE_MODELS))
         return
     if key in ("fable_usage_url", "arm_url"):
         rx = _FABLE_URL if key == "fable_usage_url" else _ARM_URL
