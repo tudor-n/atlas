@@ -1,17 +1,42 @@
-// Settings → Voice (phase 4 design §7.1): the download, the switches, which events speak, the
-// blend (Atlas's voice by default), speed, volume, Play sample, pause, and the quote file.
+// Settings → Voice (phase 4 design §7.1, phase 4.5 §4): the download, the switches, which events
+// speak, the blend (Atlas's voice by default), speed, volume, Play sample, pause, and the quote file.
+// `ui` is Settings' section context: its action bar (SAVE and the status line) and the rail's dot.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
+import { button, switchEl, meter } from '../components/ui.js';
 import { EVENT_LABELS, blendRows, readBlend, voiceName, statusLine, mb } from './voice-model.js';
+import { voiceDot } from './settings-model.js';
+import { prefRow, groupHead, intro, failLine } from './settings-sections.js';
 
-export async function renderVoiceSettings(box, isDead) {
-  const msg = el('div', { role: 'alert' });
+const SEGMENTS = 20;
+
+export async function renderVoiceSettings(box, isDead, ui) {
+  const { bar, setDot = () => {} } = ui;
   let v = null;
   let s = null;
+  // The status line and the download bar are kept apart from the form, so a progress tick or a
+  // status change elsewhere updates them without redrawing (and losing) unsaved edits.
+  const statusDot = el('span', { class: 'dot', 'aria-hidden': 'true' });
+  const statusText = el('span', {});
+  const status = el('p', { class: 'st-status', 'aria-live': 'polite' }, statusDot, statusText);
+  const meterBox = el('div', { class: 'st-meter' });
+  const form = el('div', {});
+  box.append(status, meterBox, form);
+  const say = (text, ok) => bar.say(text, ok);
 
-  function say(text, ok) {
-    clear(msg);
-    if (text) msg.appendChild(el('div', { class: ok ? 'status' : 'error' }, text));
+  function drawStatus() {
+    const line = statusLine(v);
+    statusText.textContent = line.text;
+    status.className = line.kind === 'error' ? 'st-status err' : 'st-status';
+    const k = voiceDot(v);
+    statusDot.className = k ? `dot ${k}` : 'dot';
+    setDot('voice', k);
+    clear(meterBox);
+    const d = (v && v.download) || {};
+    if (d.running) {
+      const filled = d.total ? (d.done / d.total) * SEGMENTS : 0;
+      meterBox.appendChild(meter(SEGMENTS, filled, { label: line.text }));
+    }
   }
 
   async function act(fn, done) {
@@ -27,51 +52,50 @@ export async function renderVoiceSettings(box, isDead) {
       [v, s] = await Promise.all([api.get('/api/voice'), api.get('/api/settings')]);
       if (!isDead()) draw();
     } catch (e) {
-      if (!isDead()) clear(box).appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't read the voice settings: ${e.message}`));
+      if (!isDead()) { clear(form).appendChild(failLine(`Couldn't read the voice settings: ${e.message}`)); bar.set(); }
     }
   }
 
   function draw() {
-    clear(box);
-    const line = statusLine(v);
-    box.appendChild(el('p', { class: line.kind, 'aria-live': 'polite' }, line.text));
-    if (!v.available) return;
+    clear(form);
+    drawStatus();
+    if (!v.available) { bar.set(); return; }
 
     // -- the one-time download
     const d = v.download || {};
     if (!v.installed && !d.running) {
-      box.appendChild(el('div', { class: 'actions' }, el('button', { type: 'button', class: 'primary', onclick: () => act(
-        () => api.post('/api/voice/download', {}), null) }, `Download the voice (${mb(v.missing_bytes)})`)));
+      form.appendChild(el('div', { class: 'st-dl' }, button(`DOWNLOAD THE VOICE (${mb(v.missing_bytes)})`, { onclick: () => act(
+        () => api.post('/api/voice/download', {}), null) })));
     }
 
     // -- switches and events
-    const on = el('input', { type: 'checkbox', id: 'voice-on', checked: s.voice_enabled || null });
-    const sass = el('input', { type: 'checkbox', id: 'voice-sass', checked: s.voice_sass || null });
-    const sassRb = el('input', { type: 'checkbox', id: 'voice-sass-rb', checked: s.voice_sass_readback || null });
-    const events = EVENT_LABELS.map(([key, text]) => ({ key, box: el('input', { type: 'checkbox', id: `voice-ev-${key}`, checked: s.voice_events[key] || null }), text }));
-    const finishMin = el('input', { type: 'number', id: 'voice-finish', min: '0', max: '60', step: 'any', value: String(+(s.voice_finish_min_s / 60).toFixed(2)) });
+    const sw = (on, id, title) => { const n = switchEl({ on: !!on, title }); n.id = id; return n; };
+    const on = sw(s.voice_enabled, 'voice-on', 'Voice on');
+    const sass = sw(s.voice_sass, 'voice-sass', 'Add a quip after the information');
+    const sassRb = sw(s.voice_sass_readback, 'voice-sass-rb', 'Quips on tablet readbacks too');
+    const events = EVENT_LABELS.map(([key, text]) => ({ key, text, box: sw(s.voice_events[key], `voice-ev-${key}`, text) }));
+    const finishMin = el('input', { type: 'number', id: 'voice-finish', class: 'm num', min: '0', max: '60', step: 'any', value: String(+(s.voice_finish_min_s / 60).toFixed(2)) });
 
     // -- the blend
     const rows = blendRows(s.voice_blend);
-    const rowsBox = el('div', {});
+    const rowsBox = el('div', { class: 'blend' });
     const editors = [];
     function addRow(id, pct) {
       const n = editors.length + 1;
       const select = el('select', { 'aria-label': `Voice ${n}` }, el('option', { value: '' }, '(none)'),
         v.voices.map((x) => el('option', { value: x, selected: x === id || null }, voiceName(x))));
-      const share = el('input', { type: 'number', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': `Voice ${n}: share in %` });
-      const row = el('div', { class: 'voice-line' }, select, share, el('span', { class: 'meta' }, '%'));
+      const share = el('input', { type: 'number', class: 'm pct', min: '1', max: '100', step: '1', value: String(pct), 'aria-label': `Voice ${n}: share in %` });
       editors.push({ select, share });
-      rowsBox.appendChild(row);
+      rowsBox.appendChild(el('div', { class: 'pair' }, select, share, el('span', { class: 'u' }, '%')));
     }
     rows.forEach((r) => addRow(r.id, r.pct));
-    const addBtn = el('button', { type: 'button', onclick: () => { if (editors.length < 3) addRow('', 20); } }, 'Add a voice');
+    const addBtn = button('ADD A VOICE', { size: 40, onclick: () => { if (editors.length < 3) addRow('', 20); } });
 
     const speed = el('input', { type: 'range', id: 'voice-speed', min: '0.5', max: '2', step: '0.05', value: String(s.voice_speed) });
-    const speedOut = el('span', { class: 'meta' }, `${s.voice_speed}×`);
+    const speedOut = el('span', { class: 'pv m out' }, `${s.voice_speed}×`);
     speed.oninput = () => { speedOut.textContent = `${speed.value}×`; };
     const volume = el('input', { type: 'range', id: 'voice-volume', min: '0', max: '100', step: '1', value: String(s.voice_volume) });
-    const volOut = el('span', { class: 'meta' }, `${s.voice_volume} %`);
+    const volOut = el('span', { class: 'pv m out' }, `${s.voice_volume} %`);
     volume.oninput = () => { volOut.textContent = `${volume.value} %`; };
     const model = el('select', { id: 'voice-model' },
       el('option', { value: 'int8', selected: s.voice_model === 'int8' || null }, `Standard (${mb(v.sizes.int8)})`),
@@ -84,8 +108,8 @@ export async function renderVoiceSettings(box, isDead) {
       const mins = Number(finishMin.value);
       if (finishMin.value.trim() === '' || !Number.isFinite(mins) || mins < 0 || mins > 60) throw new Error('Long run: minutes, 0 to 60.');
       return {
-        voice_enabled: on.checked, voice_sass: sass.checked, voice_sass_readback: sassRb.checked,
-        voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.checked])),
+        voice_enabled: on.isOn(), voice_sass: sass.isOn(), voice_sass_readback: sassRb.isOn(),
+        voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.isOn()])),
         voice_finish_min_s: Math.round(mins * 60), voice_blend: b.blend, voice_speed: Number(speed.value),
         voice_volume: Number(volume.value), voice_model: model.value,
       };
@@ -98,34 +122,43 @@ export async function renderVoiceSettings(box, isDead) {
     }, 'Playing a sample…');
 
     const pause = v.paused_until
-      ? el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/pause', { resume: true }), 'Resumed.') }, 'Resume')
-      : [el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/pause', { minutes: 60 }), 'Paused for an hour.') }, 'Pause for an hour'),
-        el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/pause', { until: 'morning' }), 'Paused until morning.') }, 'Pause until morning')];
+      ? button('RESUME', { size: 40, onclick: () => act(() => api.post('/api/voice/pause', { resume: true }), 'Resumed.') })
+      : [button('PAUSE FOR AN HOUR', { size: 40, onclick: () => act(() => api.post('/api/voice/pause', { minutes: 60 }), 'Paused for an hour.') }),
+        button('PAUSE UNTIL MORNING', { size: 40, onclick: () => act(() => api.post('/api/voice/pause', { until: 'morning' }), 'Paused until morning.') })];
 
-    box.appendChild(el('div', {},
-      el('p', { class: 'muted' }, 'BrainHub speaks through the PC speakers when an agent needs you or finishes a long run, when a reminder is due, '
-        + 'and to read back what you type on the tablet. Nothing is spoken during quiet hours (see Preferences).'),
-      el('div', { class: 'pref' }, el('label', { class: 'check', for: 'voice-on' }, on, 'Voice on')),
-      el('fieldset', {}, el('legend', {}, 'Speak when'),
-        events.map((e) => el('label', { class: 'check', for: e.box.id }, e.box, e.text)),
-        el('label', { class: 'voice-line', for: 'voice-finish' }, el('span', {}, 'A long run is at least'), finishMin, 'minutes')),
-      el('fieldset', {}, el('legend', {}, 'Sass'),
-        el('label', { class: 'check', for: 'voice-sass' }, sass, 'Add a quip after the information'),
-        el('label', { class: 'check', for: 'voice-sass-rb' }, sassRb, 'Quips on tablet readbacks too'),
-        el('div', { class: 'actions' }, el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/edit-quotes', {}), 'Opened the quote file.') }, 'Edit quotes'))),
-      el('fieldset', {}, el('legend', {}, 'Voice'), rowsBox, el('div', { class: 'actions' }, addBtn),
-        el('label', { class: 'voice-line', for: 'voice-speed' }, el('span', {}, 'Speed'), speed, speedOut),
-        el('label', { class: 'voice-line', for: 'voice-volume' }, el('span', {}, 'Volume'), volume, volOut),
-        el('label', { class: 'voice-line', for: 'voice-model' }, el('span', {}, 'Model'), model)),
-      el('div', { class: 'actions' },
-        el('button', { type: 'button', class: 'primary', onclick: save }, 'Save'),
-        el('button', { type: 'button', onclick: sample, disabled: !v.installed || null }, 'Play sample'),
-        el('button', { type: 'button', onclick: () => act(() => api.post('/api/voice/stop', {}), null) }, 'Stop'),
-        pause),
-      v.quote_problems.length
-        ? el('div', { class: 'quiet-note' }, 'The quote file has problems (those lines are skipped):', el('ul', {}, v.quote_problems.map((p) => el('li', {}, p))))
-        : null,
-      msg));
+    const swRow = (text, node, hint) => prefRow(text, node, { forId: node.id, hint });
+    form.append(
+      intro('BrainHub speaks through the PC speakers when an agent needs you or finishes a long run, when a reminder is due, '
+        + 'and to read back what you type on the tablet. Nothing is spoken during quiet hours (see ',
+      el('a', { href: '#/settings/preferences' }, 'Preferences'), ').'),
+      el('div', { class: 'pfs' }, swRow('VOICE ON', on)),
+      el('section', { class: 'st-grp' }, groupHead('SPEAK WHEN'), el('div', { class: 'pfs' },
+        events.map((e) => prefRow(e.text, e.box, { forId: e.box.id, cls: 'pf-t' })),
+        prefRow('A LONG RUN IS AT LEAST', el('div', { class: 'pair' }, finishMin, el('span', { class: 'u' }, 'MINUTES')),
+          { forId: 'voice-finish', hint: 'How long an agent must have run before "finished" is spoken.' }))),
+      el('section', { class: 'st-grp' }, groupHead('SASS'), el('div', { class: 'pfs' },
+        prefRow('Add a quip after the information', sass, { forId: sass.id, cls: 'pf-t' }),
+        prefRow('Quips on tablet readbacks too', sassRb, { forId: sassRb.id, cls: 'pf-t' }),
+        prefRow('QUOTES', button('EDIT QUOTES', { size: 40, onclick: () => act(() => api.post('/api/voice/edit-quotes', {}), 'Opened the quote file.') }),
+          { hint: 'Opens the quote file the quips come from.' }),
+        v.quote_problems.length
+          ? el('div', { class: 'st-warns', role: 'status' },
+            el('p', { class: 'st-warn' }, el('span', { class: 'sq' }), 'The quote file has problems (those lines are skipped):'),
+            el('ul', {}, v.quote_problems.map((p) => el('li', {}, p))))
+          : null)),
+      el('section', { class: 'st-grp' }, groupHead('VOICE'), el('div', { class: 'pfs' },
+        prefRow('BLEND', el('div', {}, rowsBox, addBtn), { hint: 'Up to three voices, mixed by share.', cls: 'pf-top' }),
+        prefRow('SPEED', el('div', { class: 'pair' }, speed, speedOut), { forId: 'voice-speed' }),
+        prefRow('VOLUME', el('div', { class: 'pair' }, volume, volOut), { forId: 'voice-volume' }),
+        prefRow('MODEL', model, { forId: 'voice-model' }))),
+      el('section', { class: 'st-grp' }, groupHead('LISTEN'), el('div', { class: 'pfs' },
+        prefRow('SAMPLE', el('div', { class: 'pair' },
+          button('PLAY SAMPLE', { size: 40, onclick: sample, disabled: !v.installed }),
+          button('STOP', { size: 40, onclick: () => act(() => api.post('/api/voice/stop', {}), null) })),
+        { hint: 'Plays the voice as set above, saved or not.' }),
+        prefRow('PAUSE', el('div', { class: 'pair' }, pause),
+          { hint: v.paused_until ? 'Paused now.' : 'Silences every line for a while, then the voice comes back on its own.' }))));
+    bar.set(button('SAVE', { primary: true, onclick: save }));
   }
 
   await load();
@@ -141,7 +174,7 @@ export async function renderVoiceSettings(box, isDead) {
       const next = { ...v, download: data.download };
       if (shape(next, s) !== shape(v, s)) { await load(); return; }  // a download started or ended
       v = next;
-      box.firstChild.textContent = statusLine(v).text;
+      drawStatus();
       return;
     }
     let nv, ns;
@@ -149,8 +182,6 @@ export async function renderVoiceSettings(box, isDead) {
     if (isDead()) return;
     if (shape(nv, ns) !== shape(v, s)) { await load(); return; }
     v = nv;
-    const line = statusLine(v);
-    box.firstChild.textContent = line.text;
-    box.firstChild.className = line.kind;
+    drawStatus();
   });
 }

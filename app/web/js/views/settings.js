@@ -1,372 +1,91 @@
-// Settings: brain-map editor, hierarchy tree, preferences and backup status.
+// Settings (phase 4.5 design §4): a 240px rail of sections with status dots, and the one selected
+// section on the right with its own action bar. Each section is its own route, #/settings/<section>
+// (nav-model.settingsSection; #/settings is the brain map), and only that section is loaded.
+// The old in-page anchors #/settings/tablet and #/settings/voice are sections, and their roots keep
+// the ids `tablet` and `voice`.
 import * as api from '../api.js';
-import { el, clear } from '../dom.js';
-import { createMapEditors, normalizeMap, hasErrors, savedNodes } from '../components/map-editor.js';
-import { runtimeText } from './runtime-model.js';
-import { renderClaudeSync } from './claude-sync.js';
+import { el } from '../dom.js';
+import { sectionHead } from '../components/ui.js';
+import { SETTINGS_SECTIONS, settingsSection } from '../nav-model.js';
+import { backupDot, integrationDot, tabletDot, voiceDot, syncDot } from './settings-model.js';
+import { syncNotes } from './claude-sync-model.js';
+import {
+  sectionBar, groupHead, mapSection, hierarchySection, preferencesSection, backupSection, claudeSection, aboutSection,
+} from './settings-sections.js';
 import { renderTabletSettings } from './tablet-settings.js';
 import { renderVoiceSettings } from './voice-settings.js';
+import { renderClaudeSync } from './claude-sync.js';
 
-const MODELS = ['haiku', 'sonnet', 'opus'];
-const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
-const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
-const OWN_SECTION = /^(tablet|voice)_/;
-const HINTS = {
-  port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
-  claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after BrainHub restarts.',
-  quiet_hours: 'The voice stays silent in these hours, and date-only reminders speak when they end.',
-  backup_debounce_s: 'Seconds to wait after a change before pushing.',
-  nudge_days: 'Days before an open item gets a nudge.',
-  default_lead_days: 'Default days of notice for deadlines.',
-  recall_top_n: 'How many notes recall looks at.',
-  usage_warn_pct: 'Usage at or above this % shows as a warning.',
-  agents_end_linger_s: 'Seconds a closed session stays listed.',
-  agents_stale_h: 'Hours without any event before a session is dropped.',
-  arm_url: 'Robot arm server address (opened from the widget).',
-  widget_tiles: 'Tiles shown in the expanded widget.',
+const RENDER = {
+  map: mapSection,
+  hierarchy: hierarchySection,
+  preferences: preferencesSection,
+  backup: backupSection,
+  claude: claudeSection,
+  tablet: (ctx) => renderTabletSettings(ctx.body, ctx.isDead, ctx),
+  voice: (ctx) => renderVoiceSettings(ctx.body, ctx.isDead, ctx),
+  sync: (ctx) => renderClaudeSync(ctx.body, ctx.isDead, ctx),
+  about: aboutSection,
 };
-const label = (key) => key.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+// The heading over each section (the rail's labels are short).
+const TITLE = {
+  map: 'BRAIN MAP', hierarchy: 'HIERARCHY', preferences: 'PREFERENCES', backup: 'BACKUP',
+  claude: 'CLAUDE CODE INTEGRATION', tablet: 'TABLET', voice: 'VOICE', sync: 'CLAUDE CODE SYNC', about: 'ABOUT',
+};
 
-// -- Hierarchy tree ---------------------------------------------------------------------------
-function counts(n) {
-  return `${n.files} ${n.files === 1 ? 'file' : 'files'} · ${n.items} ${n.items === 1 ? 'item' : 'items'}`;
-}
+// The rail's dots for the sections that have a health of their own. Each check is independent and
+// quiet: a failed fetch just leaves its dot off.
+const DOTS = {
+  claude: async () => integrationDot(await api.get('/api/integration')),
+  tablet: async () => tabletDot(await api.get('/api/tablet-lan')),
+  voice: async () => voiceDot(await api.get('/api/voice')),
+  sync: async () => { const v = await api.get('/api/claude-sync'); return syncDot(v, syncNotes(v)); },
+};
 
-function treeNode(n, open) {
-  const text = el('span', {}, n.name, ' ', el('span', { class: 'meta' }, counts(n)));
-  if (n.children.length) {
-    return el('li', {}, el('details', { open: open || null },
-      el('summary', {}, text),
-      el('ul', { class: 'tree' }, n.children.map((c) => treeNode(c, false)))));
-  }
-  const body = n.kind === 'project'
-    ? el('a', { href: `#/project/${encodeURIComponent(n.slug)}` }, n.name)
-    : el('span', {}, n.name);
-  return el('li', { class: 'leaf' }, body, ' ', el('span', { class: 'meta' }, counts(n)));
-}
-
-// -- Preferences fields -----------------------------------------------------------------------
-// Builds one control per settings key. read() returns the current value, or throws Error(message).
-function buildField(key, value) {
-  const hint = HINTS[key] ? el('div', { class: 'meta' }, HINTS[key]) : null;
-  const wrap = (control) => el('div', { class: 'pref' }, el('label', { class: 'field' }, label(key), control), hint);
-
-  if (key === 'quiet_hours') {
-    const a = el('input', { type: 'time', value: value[0] });
-    const b = el('input', { type: 'time', value: value[1] });
-    return {
-      node: el('div', { class: 'pref' }, el('div', { class: 'edit-grid' },
-        el('label', { class: 'field' }, 'Quiet hours from', a), el('label', { class: 'field' }, 'Until', b)), hint),
-      read() {
-        if (!a.value || !b.value) throw new Error('Pick both quiet-hours times.');
-        return [a.value, b.value];
-      },
-    };
-  }
-  if (key === 'widget_tiles' && Array.isArray(value)) {
-    const boxes = WIDGET_TILES.map((t) => ({ t, box: el('input', { type: 'checkbox', checked: value.includes(t) }) }));
-    return {
-      node: el('div', { class: 'pref' }, el('fieldset', {}, el('legend', {}, label(key)),
-        boxes.map(({ t, box }) => el('label', { class: 'field' }, box, ' ', label(t)))), hint),
-      read() {
-        const on = new Set(boxes.filter((b) => b.box.checked).map((b) => b.t));
-        if (!on.size) throw new Error('Pick at least one widget tile.');
-        return [...value.filter((t) => on.has(t)), ...WIDGET_TILES.filter((t) => on.has(t) && !value.includes(t))];
-      },
-    };
-  }
-  if (typeof value === 'number') {
-    const input = el('input', { type: 'number', value: String(value), step: 'any' });
-    return {
-      node: wrap(input),
-      read() {
-        const n = Number(input.value);
-        if (input.value.trim() === '' || !Number.isFinite(n)) throw new Error(`${label(key)} must be a number.`);
-        return n;
-      },
-    };
-  }
-  if (key.endsWith('_model')) {
-    const custom = el('input', { type: 'text', value: MODELS.includes(value) ? '' : String(value ?? ''),
-      placeholder: 'model name', 'aria-label': `${label(key)} (custom name)`, spellcheck: 'false' });
-    const select = el('select', { onchange: sync },
-      [...MODELS, 'custom'].map((m) => el('option', { value: m, selected: (MODELS.includes(value) ? value : 'custom') === m }, m)));
-    function sync() { custom.hidden = select.value !== 'custom'; }
-    sync();
-    return {
-      node: el('div', { class: 'pref' }, el('label', { class: 'field' }, label(key), select), custom, hint),
-      read() {
-        if (select.value !== 'custom') return select.value;
-        if (!custom.value.trim()) throw new Error(`${label(key)}: type a model name or pick one from the list.`);
-        return custom.value.trim();
-      },
-    };
-  }
-  // strings, and the nullable backup_remote (empty means null)
-  const input = el('input', { type: 'text', value: value ?? '', spellcheck: 'false',
-    placeholder: key === 'backup_remote' ? 'https://github.com/you/brainhub-backup.git' : null });
-  return {
-    node: wrap(input),
-    read() {
-      const v = input.value.trim();
-      if (key === 'backup_remote') return v || null;
-      if (key === 'claude_path' && !v) throw new Error('Claude path must not be empty.');
-      return v;
-    },
-  };
-}
-
-export async function render(container) {
+export async function render(container, params = []) {
+  const id = settingsSection(params[0]);
   let dead = false;
   const subs = [];
-  const cleanup = () => { dead = true; for (const off of subs) off(); };
+  const isDead = () => dead;
 
-  container.appendChild(el('h1', {}, 'Settings'));
-  const hintLine = el('p', { class: 'muted' });
-  container.appendChild(hintLine);
-  // ---- Runtime: one quiet line, only when the hub runs from a runtime slot (filled below).
-  const runtimeLine = el('p', { class: 'muted', hidden: true });
-  container.appendChild(runtimeLine);
+  const dots = {};
+  const rail = el('nav', { class: 'rail st-rail', 'aria-label': 'Settings sections' }, sectionHead('SETTINGS'),
+    SETTINGS_SECTIONS.map((s) => {
+      dots[s.id] = el('span', { class: 'dot', hidden: true, 'aria-hidden': 'true' });
+      const cur = s.id === id;
+      return el('a', { class: cur ? 'row cur' : 'row', href: `#/settings/${s.id}`, 'data-press': '', 'aria-current': cur ? 'page' : null },
+        el('span', { class: 'grow' }, s.label), dots[s.id]);
+    }));
+  const setDot = (sid, kind) => {
+    const d = dots[sid];
+    if (!d) return;
+    d.className = kind ? `dot ${kind}` : 'dot';
+    d.hidden = !kind;
+  };
 
-  // ---- Brain map
-  const mapMsg = el('div', { role: 'alert' });
-  const mapBox = el('div', {});
-  container.appendChild(el('h2', {}, 'Brain map'));
-  container.appendChild(mapBox);
+  const head = groupHead(TITLE[id]);
+  head.classList.add('st-head');
+  const body = el('div', { class: 'st-body', id });
+  const bar = sectionBar(SETTINGS_SECTIONS.find((s) => s.id === id).label);
+  container.appendChild(el('div', { class: 'vw split settings' }, rail,
+    el('div', { class: 'main st-main' }, head, el('div', { class: 'st-scroll' }, body), bar.node)));
 
-  // ---- Hierarchy
-  const treeBox = el('div', {});
-  container.appendChild(el('h2', {}, 'Hierarchy'));
-  container.appendChild(treeBox);
-
-  async function loadTree() {
-    try {
-      const h = await api.get('/api/hierarchy');
-      if (dead) return;
-      clear(treeBox).appendChild(el('ul', { class: 'tree root' }, treeNode(h, true)));
-    } catch (e) {
-      if (!dead) clear(treeBox).appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't load the hierarchy: ${e.message}`));
-    }
-  }
-
-  // ---- Preferences and backup
-  const prefBox = el('div', {});
-  const prefMsg = el('div', { role: 'alert' });
-  const backupBox = el('div', {});
-  const backupMsg = el('div', { role: 'alert' });
-  const statusBox = el('div', {});
-  container.appendChild(el('h2', {}, 'Preferences'));
-  container.appendChild(prefBox);
-  container.appendChild(el('h2', {}, 'Backup'));
-  container.appendChild(backupBox);
-
-  let current = {};
-  const fields = {};
-
-  function say(box, text, ok) {
-    clear(box);
-    if (text) box.appendChild(el('div', { class: ok ? 'status' : 'error' }, text));
-  }
-
-  // Saves only the keys whose value changed. Server errors show inline.
-  async function saveKeys(keys, box) {
-    const patch = {};
-    try {
-      for (const k of keys) {
-        const v = fields[k].read();
-        if (JSON.stringify(v) !== JSON.stringify(current[k])) patch[k] = v;
-      }
-    } catch (e) {
-      say(box, e.message);
-      return false;
-    }
-    if (!Object.keys(patch).length) { say(box, 'Nothing changed.', true); return true; }
-    try {
-      current = await api.put('/api/settings', patch);
-      say(box, 'Saved.', true);
-      return true;
-    } catch (e) {
-      say(box, e.message);
-      return false;
-    }
-  }
-
-  function drawBackupStatus(b) {
-    clear(statusBox);
-    if (!b) return;
-    const when = b.last_ok ? new Date(b.last_ok).toLocaleString() : 'never';
-    statusBox.appendChild(el('dl', { class: 'review-list' },
-      el('dt', {}, 'Remote'), el('dd', {}, b.remote_set ? 'set' : 'not set'),
-      el('dt', {}, 'Last successful push'), el('dd', {}, when),
-      el('dt', {}, 'Waiting to push'), el('dd', {}, b.pending ? 'yes' : 'no'),
-      el('dt', {}, 'Last error'), el('dd', {}, b.last_error || 'none')));
-    if (b.last_error) statusBox.appendChild(el('div', { class: 'error' }, b.last_error));
-  }
-
-  async function refreshStatus() {
-    try {
-      const s = await api.get('/api/state');
-      if (dead) return;
-      drawBackupStatus(s.backup);
-    } catch (e) {
-      if (!dead) say(backupMsg, `Couldn't read the backup status: ${e.message}`);
-    }
-  }
-
-  const pushBtn = el('button', { type: 'button', onclick: async () => {
-    pushBtn.disabled = true;
-    say(backupMsg, '');
-    try {
-      const b = await api.post('/api/backup/push', {});
-      if (dead) return;
-      drawBackupStatus(b);
-      if (!b.remote_set) say(backupMsg, 'Set a backup remote above and save it first.');
-      else if (b.last_error) {
-        say(backupMsg, b.pending ? 'The push failed. The error is shown above; BrainHub will keep retrying.'
-          : 'The push failed. The error is shown above.');
-      }
-      else say(backupMsg, 'Pushed.', true);
-    } catch (e) {
-      say(backupMsg, `Couldn't push: ${e.message}`);
-    } finally {
-      pushBtn.disabled = false;
-    }
-  } }, 'Push now');
-
-  // Load everything; each part reports its own failure.
   let state = {};
   try { state = await api.get('/api/state'); } catch (_) { /* the shell banner already says so */ }
-  if (dead) return cleanup;
-  if (state.brain_path) {
-    hintLine.appendChild(document.createTextNode('Open '));
-    hintLine.appendChild(el('code', {}, state.brain_path));
-    hintLine.appendChild(document.createTextNode(' in Obsidian for a graph view.'));
+  if (dead) return () => {};
+  setDot('backup', backupDot(state.backup));
+  for (const [sid, check] of Object.entries(DOTS)) {
+    check().then((k) => { if (!dead) setDot(sid, k); }, () => {});
   }
-  runtimeLine.textContent = runtimeText(state.runtime);
-  runtimeLine.hidden = !runtimeLine.textContent;
+  subs.push(api.onEvent('backup.status', ({ data }) => { if (!dead) setDot('backup', backupDot(data)); }));
 
+  const ctx = { body, bar, state, head, isDead, setDot };
   try {
-    const map = normalizeMap(await api.get('/api/map'));
-    if (dead) return cleanup;
-    const saved = savedNodes(map);  // these slugs are read-only; new rows still auto-slug
-    const editors = createMapEditors(map, { onChange: () => say(mapMsg, ''), isExisting: (n) => saved.has(n), os: state.os });
-    const saveBtn = el('button', { type: 'button', class: 'primary', onclick: async () => {
-      if (hasErrors(editors.validateAndShow())) { say(mapMsg, 'Fix the problems above, then save.'); return; }
-      saveBtn.disabled = true;
-      try {
-        await api.put('/api/map', map);
-        for (const n of savedNodes(map)) saved.add(n);  // now on the server: lock their slugs
-        for (const k of ['areas', 'projects', 'courses', 'people']) editors[k].refresh();
-        say(mapMsg, 'Saved. Folders are created and the change is committed.', true);
-        loadTree();
-      } catch (e) {
-        say(mapMsg, e.message);
-      } finally {
-        saveBtn.disabled = false;
-      }
-    } }, 'Save brain map');
-    mapBox.appendChild(el('div', {},
-      el('h3', {}, 'Areas'), editors.areas.node,
-      el('h3', {}, 'Projects'), editors.projects.node,
-      el('h3', {}, 'Uni courses'), editors.courses.node,
-      el('h3', {}, 'People'), editors.people.node,
-      el('div', { class: 'actions' }, saveBtn), mapMsg));
+    const off = await RENDER[id](ctx);
+    if (typeof off === 'function') subs.push(off);
   } catch (e) {
-    mapBox.appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't load the brain map: ${e.message}`));
+    console.error(e);
+    if (!dead) bar.say(`Couldn't load this section: ${e.message}`);
   }
-
-  await loadTree();
-
-  try {
-    current = await api.get('/api/settings');
-    if (dead) return cleanup;
-    for (const [k, v] of Object.entries(current)) if (!OWN_SECTION.test(k)) fields[k] = buildField(k, v);
-    // The tablet's and the voice's keys have their own sections below.
-    const prefKeys = Object.keys(current).filter((k) => !BACKUP_KEYS.includes(k) && !OWN_SECTION.test(k));
-    prefBox.appendChild(el('div', {}, prefKeys.map((k) => fields[k].node),
-      el('div', { class: 'actions' }, el('button', { type: 'button', class: 'primary', onclick: () => saveKeys(prefKeys, prefMsg) }, 'Save preferences')),
-      prefMsg));
-    backupBox.appendChild(el('div', {}, BACKUP_KEYS.filter((k) => fields[k]).map((k) => fields[k].node),
-      el('p', { class: 'muted' }, 'Create an empty private repo first, then paste its URL.'),
-      el('div', { class: 'actions' },
-        el('button', { type: 'button', class: 'primary', onclick: async () => { if (await saveKeys(BACKUP_KEYS, backupMsg)) refreshStatus(); } }, 'Save backup settings'),
-        pushBtn),
-      backupMsg, statusBox));
-    drawBackupStatus(state.backup);
-  } catch (e) {
-    prefBox.appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't load the preferences: ${e.message}`));
-  }
-
-  // ---- Claude Code integration
-  const intBox = el('div', {});
-  const intMsg = el('div', { role: 'alert' });
-  container.appendChild(el('h2', {}, 'Claude Code integration'));
-  container.appendChild(intBox);
-
-  const whenText = (iso) => (iso ? new Date(iso).toLocaleString() : 'never');
-  function drawIntegration(s) {
-    clear(intBox);
-    const ev = (s.events || []).length ? ` (${s.events.join(', ')})` : '';
-    const port = s.port_matches ? 'yes' : (s.hooks_installed ? 'no. Install again so Claude Code reports to the right port.' : 'no');
-    const run = (path, verb) => async (ev2) => {
-      const btn = ev2.currentTarget;
-      btn.disabled = true;
-      say(intMsg, '');
-      try {
-        const next = await api.post(path, {});
-        if (!dead) { drawIntegration(next); say(intMsg, verb, true); }
-      } catch (e) {
-        if (!dead) { btn.disabled = false; say(intMsg, e.message); }
-      }
-    };
-    intBox.appendChild(el('div', {},
-      el('p', { class: 'muted' }, "Adds BrainHub's hooks and status line to your Claude Code user settings. A backup of the file is made first."),
-      el('dl', { class: 'review-list' },
-        el('dt', {}, 'Hooks'), el('dd', {}, s.hooks_installed ? `installed${ev}` : 'not installed'),
-        el('dt', {}, 'Status line'), el('dd', {}, s.statusline_installed ? 'installed' : 'not installed'),
-        el('dt', {}, 'Port matches'), el('dd', {}, port),
-        el('dt', {}, 'Last hook event'), el('dd', {}, whenText(s.last_hook_at)),
-        el('dt', {}, 'Last usage update'), el('dd', {}, whenText(s.last_usage_at)),
-        el('dt', {}, 'Settings file'), el('dd', {}, el('code', {}, s.settings_path || ''))),
-      // Quiet: installed before `runtime init`, or its interpreter or script has moved since.
-      (s.hooks_installed || s.statusline_installed) && s.paths_current === false
-        ? el('p', { class: 'quiet-note' }, 'Reinstall: the installed hooks point at an old Python or script.')
-        : null,
-      el('div', { class: 'actions' },
-        el('button', { type: 'button', class: 'primary', onclick: run('/api/integration/install', 'Installed.') }, 'Install'),
-        el('button', { type: 'button', onclick: run('/api/integration/uninstall', 'Removed.') }, 'Remove')),
-      intMsg));
-  }
-  async function loadIntegration() {
-    try {
-      const s = await api.get('/api/integration');
-      if (!dead) drawIntegration(s);
-    } catch (e) {
-      if (!dead) clear(intBox).appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't read the integration status: ${e.message}`));
-    }
-  }
-  await loadIntegration();
-
-  // ---- the workbench tablet (phase 3): Wi-Fi access, pairing, devices, units
-  const tabletBox = el('div', {});
-  container.appendChild(el('h2', { id: 'tablet' }, 'Tablet'));
-  container.appendChild(tabletBox);
-  subs.push(await renderTabletSettings(tabletBox, () => dead));
-
-  // ---- the voice (phase 4): download, switches, events, blend, sample, pause, quotes
-  const voiceBox = el('div', {});
-  container.appendChild(el('h2', { id: 'voice' }, 'Voice'));
-  container.appendChild(voiceBox);
-  subs.push(await renderVoiceSettings(voiceBox, () => dead));
-
-  // ---- Claude Code sync (claude-sync: shared memory, skills and settings across the OSes)
-  const syncBox = el('div', {});
-  container.appendChild(el('h2', {}, 'Claude Code sync'));
-  container.appendChild(syncBox);
-  await renderClaudeSync(syncBox, () => dead);
-
-  subs.push(api.onEvent('map.changed', () => loadTree()));
-  subs.push(api.onEvent('items.changed', () => loadTree()));
-  subs.push(api.onEvent('backup.status', ({ data }) => drawBackupStatus(data)));
-  return cleanup;
+  return () => { dead = true; for (const off of subs) off(); };
 }

@@ -2,6 +2,9 @@
 // State survives a reload in localStorage (best effort) and is cleared after a successful Finish.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
+import { button, notice } from '../components/ui.js';
+import { prefRow } from './settings-sections.js';
+import { stepState } from './settings-model.js';
 import { createMapEditors, defaultMap, normalizeMap, hasErrors, validateMap } from '../components/map-editor.js';
 
 const KEY = 'brainhub.setup.v1';
@@ -54,26 +57,37 @@ export async function render(container) {
     os,
   });
 
-  const bar = el('ol', { class: 'wizard-steps', 'aria-label': 'Setup steps' });
-  const body = el('div', {});
-  const stepErr = el('div', { role: 'alert' });
-  const nav = el('div', { class: 'wizard-nav' });
-  container.appendChild(el('div', {}, el('h1', {}, 'Set up BrainHub'),
-    el('p', { class: 'muted' }, 'A few minutes now means your notes land in the right place. You can change everything later in Settings.'),
-    bar, body, stepErr, nav));
+  const bar = el('ol', { class: 'sp-steps', 'aria-label': 'Setup steps' });
+  const kicker = el('span', { class: 'lb' });
+  const title = el('h1', {});
+  const hint = el('p', { class: 'sp-hint' });
+  const body = el('div', { class: 'sp-body' });
+  const stepErr = el('div', { class: 'sp-err', role: 'alert' });
+  const back = button('BACK', { onclick: () => go(st.step - 1) });
+  const fwd = button('NEXT', { primary: true });
+  container.appendChild(el('div', { class: 'vw setup' },
+    el('div', { class: 'sp-scroll' }, el('div', { class: 'sp-col' },
+      el('div', { class: 'sp-intro' }, el('span', { class: 'lb' }, 'SET UP BRAINHUB'),
+        el('p', { class: 'sp-lead' }, 'A few minutes now means your notes land in the right place. You can change everything later in Settings.')),
+      bar,
+      el('header', { class: 'sp-head' }, kicker, title, hint),
+      body, stepErr)),
+    el('div', { class: 'actbar sp-bar' }, el('div', { class: 'sp-col sp-nav' }, back, el('span', { class: 'grow' }), fwd))));
+  fwd.addEventListener('click', () => {
+    if (done) { location.hash = '#/today'; return; }
+    if (st.step < STEPS.length - 1) next(); else finish();
+  });
 
   // Step 5 inputs
-  const qFrom = el('input', { type: 'time', value: st.quiet_hours[0], oninput: () => { st.quiet_hours[0] = qFrom.value; save(); } });
-  const qTo = el('input', { type: 'time', value: st.quiet_hours[1], oninput: () => { st.quiet_hours[1] = qTo.value; save(); } });
-  const remote = el('input', { type: 'text', value: st.backup_remote, spellcheck: 'false', placeholder: 'https://github.com/you/brainhub-backup.git',
+  const qFrom = el('input', { type: 'time', id: 'sp-quiet', class: 'm', value: st.quiet_hours[0], 'aria-label': 'Quiet from', oninput: () => { st.quiet_hours[0] = qFrom.value; save(); } });
+  const qTo = el('input', { type: 'time', class: 'm', value: st.quiet_hours[1], 'aria-label': 'Until', oninput: () => { st.quiet_hours[1] = qTo.value; save(); } });
+  const remote = el('input', { type: 'text', id: 'sp-remote', class: 'm wide', value: st.backup_remote, spellcheck: 'false', placeholder: 'https://github.com/you/brainhub-backup.git',
     oninput: () => { st.backup_remote = remote.value; save(); } });
-  const prefsBox = el('div', {},
-    el('p', { class: 'muted' }, 'Quiet hours are stored now and used later, when BrainHub starts sending reminders.'),
-    el('div', { class: 'edit-grid' },
-      el('label', { class: 'field' }, 'Quiet from', qFrom), el('label', { class: 'field' }, 'Until', qTo)),
-    el('h3', {}, 'Backup (optional)'),
-    el('p', { class: 'muted' }, 'To back up your brain to GitHub, create an empty private repo first, then paste its URL here. Leave it blank to skip.'),
-    el('label', { class: 'field' }, 'Private GitHub repo URL', remote));
+  const prefsBox = el('div', { class: 'pfs' },
+    prefRow('QUIET HOURS', el('div', { class: 'pair' }, qFrom, el('span', { class: 'lb' }, 'TO'), qTo),
+      { forId: 'sp-quiet', hint: 'Quiet hours are stored now and used later, when BrainHub starts sending reminders.' }),
+    prefRow('BACKUP (OPTIONAL)', remote, { forId: 'sp-remote',
+      hint: 'To back up your brain to GitHub, create an empty private repo first, then paste its URL here. Leave it blank to skip.' }));
 
   const sections = [
     ['Areas are the top-level folders. The four defaults stay; add your own or rename any.', editors.areas.node],
@@ -82,12 +96,12 @@ export async function render(container) {
     ['People you often write about, and the projects they belong to.', editors.people.node],
   ];
 
-  const errList = (list) => list.map((m) => el('div', { class: 'error' }, m));
+  const errList = (list) => list.map((m) => el('p', { class: 'err' }, m));
 
   function showServerErrors() {
     clear(stepErr);
     const relevant = st.step === STEPS.length - 1 ? serverErrors : serverErrors.filter((m) => stepFor(m) === st.step);
-    stepErr.appendChild(el('div', {}, errList(relevant)));
+    stepErr.append(...errList(relevant));
   }
 
   function quietError() {
@@ -107,24 +121,26 @@ export async function render(container) {
     const list = (items) => (items.length ? items.join(', ') : 'none');
     const errs = validateMap(m);
     const problems = [];
+    const fix = (i) => button('FIX', { size: 40, onclick: () => go(i) });
     STEPS.slice(0, 4).forEach((title, i) => {
       for (const msg of [errs.areas, errs.projects, errs.courses, errs.people][i]) {
-        problems.push(el('div', { class: 'error' }, `${title}: ${msg} `,
-          el('button', { type: 'button', class: 'linkish', onclick: () => go(i) }, 'Fix')));
+        problems.push(el('div', { class: 'sp-prob' }, el('p', { class: 'err' }, `${title}: ${msg}`), fix(i)));
       }
     });
-    if (quietError()) problems.push(el('div', { class: 'error' }, `${STEPS[4]}: ${quietError()} `,
-      el('button', { type: 'button', class: 'linkish', onclick: () => go(4) }, 'Fix')));
+    if (quietError()) problems.push(el('div', { class: 'sp-prob' }, el('p', { class: 'err' }, `${STEPS[4]}: ${quietError()}`), fix(4)));
+    const val = (text, mono) => el('span', { class: mono ? 'pv m' : 'pv' }, text);
+    const edit = (i) => button('EDIT', { size: 40, onclick: () => go(i) });
+    const line = (lbl, v, i) => el('div', { class: 'pf sp-rv' }, el('div', { class: 'pfl' }, el('span', { class: 'lb' }, lbl)),
+      el('div', { class: 'pfc' }, v), edit(i));
     return el('div', {},
-      el('dl', { class: 'review-list' },
-        el('dt', {}, 'Areas'), el('dd', {}, list(m.areas.map((a) => a.name))),
-        el('dt', {}, 'Projects'), el('dd', {}, list(m.projects.map((p) => p.name + (p.is_company ? ' (company)' : '')))),
-        el('dt', {}, 'Uni courses'), el('dd', {}, list(m.courses.map((c) => c.name))),
-        el('dt', {}, 'People'), el('dd', {}, list(m.people.map((p) => p.name +
-          (p.projects.length ? ` (${p.projects.join(', ')})` : '')))),
-        el('dt', {}, 'Quiet hours'), el('dd', {}, `${st.quiet_hours[0]} to ${st.quiet_hours[1]}`),
-        el('dt', {}, 'Backup'), el('dd', {}, st.backup_remote.trim() || 'not set')),
-      problems);
+      problems.length ? el('div', { class: 'sp-probs' }, problems) : null,
+      el('div', { class: 'pfs' },
+        line('AREAS', val(list(m.areas.map((a) => a.name))), 0),
+        line('PROJECTS', val(list(m.projects.map((p) => p.name + (p.is_company ? ' (company)' : '')))), 1),
+        line('UNI COURSES', val(list(m.courses.map((c) => c.name))), 2),
+        line('PEOPLE', val(list(m.people.map((p) => p.name + (p.projects.length ? ` (${p.projects.join(', ')})` : '')))), 3),
+        line('QUIET HOURS', val(`${st.quiet_hours[0]} to ${st.quiet_hours[1]}`, true), 4),
+        line('BACKUP', val(st.backup_remote.trim() || 'not set', !!st.backup_remote.trim()), 4)));
   }
 
   function go(i) {
@@ -138,7 +154,7 @@ export async function render(container) {
     if (st.step <= 3) editors.validateAndShow();
     if (errs.length) {
       clear(stepErr);
-      if (st.step === 4) stepErr.appendChild(el('div', {}, errList(errs)));
+      if (st.step === 4) stepErr.append(...errList(errs));
       return;
     }
     go(st.step + 1);
@@ -177,36 +193,49 @@ export async function render(container) {
     location.hash = '#/today';
   }
 
-  function draw() {
+  // The progress bar: one 4px segment and a label per step, done / current / to do.
+  function drawSteps() {
     clear(bar);
-    STEPS.forEach((t, i) => bar.appendChild(el('li', { 'aria-current': i === st.step ? 'step' : null, class: i === st.step ? 'on' : '' }, t)));
+    STEPS.forEach((t, i) => {
+      const k = stepState(i, st.step);
+      bar.appendChild(el('li', { class: k, 'aria-current': k === 'cur' ? 'step' : null },
+        el('i', { 'aria-hidden': 'true' }), el('span', { class: 'sl' }, el('span', { class: 'm' }, String(i + 1)), ' ', t)));
+    });
+  }
+
+  function draw() {
     clear(body);
-    clear(nav);
     clear(stepErr);
     if (done) {
       clear(bar);
-      body.appendChild(el('p', { class: 'banner' }, done));
-      nav.appendChild(el('button', { type: 'button', class: 'primary', onclick: () => { location.hash = '#/today'; } }, 'Open Today'));
+      kicker.textContent = 'ALMOST DONE';
+      title.textContent = 'Your brain is set up';
+      hint.textContent = '';
+      body.appendChild(notice(done, { title: 'QUIET HOURS' }));
+      back.hidden = true;
+      fwd.textContent = 'OPEN TODAY';
+      fwd.disabled = false;
       return;
     }
-    body.appendChild(el('h2', {}, `Step ${st.step + 1} of ${STEPS.length}: ${STEPS[st.step]}`));
+    drawSteps();
+    kicker.textContent = `STEP ${st.step + 1} OF ${STEPS.length}`;
+    title.textContent = STEPS[st.step];
     if (st.step < 4) {
-      const [hint, node] = sections[st.step];
-      body.appendChild(el('p', { class: 'muted' }, hint));
+      const [text, node] = sections[st.step];
+      hint.textContent = text;
       if (st.step === 3) editors.people.refresh();
       body.appendChild(node);
     } else if (st.step === 4) {
+      hint.textContent = 'When the voice stays silent, and where the brain is backed up.';
       body.appendChild(prefsBox);
     } else {
+      hint.textContent = 'Check everything once. Finish creates the brain and its folders.';
       body.appendChild(reviewNode());
     }
-    nav.appendChild(el('button', { type: 'button', disabled: st.step === 0 || finishing, onclick: () => go(st.step - 1) }, 'Back'));
-    if (st.step < STEPS.length - 1) {
-      nav.appendChild(el('button', { type: 'button', class: 'primary', onclick: next }, 'Next'));
-    } else {
-      nav.appendChild(el('button', { type: 'button', class: 'primary', disabled: finishing, onclick: finish },
-        finishing ? 'Setting up...' : 'Finish'));
-    }
+    back.disabled = st.step === 0 || finishing;
+    const last = st.step === STEPS.length - 1;
+    fwd.textContent = last ? (finishing ? 'SETTING UP…' : 'FINISH') : 'NEXT';
+    fwd.disabled = last && finishing;
     showServerErrors();
   }
 

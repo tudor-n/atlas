@@ -120,43 +120,63 @@ export function savedNodes(map) {
   return new Set([...map.areas, ...map.projects, ...map.courses, ...map.people]);
 }
 
-const field = (text, input, cls) => el('label', { class: `field ${cls || ''}` }, text, input);
+// -- the editors (phase 4.5 design §4: hairline rows) ---------------------------------------------
+// Each editor is a column header (NAME, FOLDER NAME), then one hairline row per entry: the name and
+// folder-name fields and REMOVE on the first line, a project's folders and company toggle or a
+// person's project toggles on the second. The CSS is in css/views/settings.css (shared with setup).
 
-// Generic list editor over the array at map[key].
-function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, onRemove, changed }) {
+const field = (text, input, cls) => el('label', { class: cls ? `field ${cls}` : 'field' }, el('span', { class: 'lb' }, text), input);
+
+// An on/off toggle (outlined, white when on), like the arm's .pl buttons.
+function toggle(text, on, onflip, title) {
+  const b = el('button', { type: 'button', class: on ? 'b h40 tg on' : 'b h40 tg', 'aria-pressed': on ? 'true' : 'false', title }, text);
+  b.addEventListener('click', () => {
+    const next = !b.classList.contains('on');
+    b.classList.toggle('on', next);
+    b.setAttribute('aria-pressed', next ? 'true' : 'false');
+    onflip(next);
+  });
+  return b;
+}
+
+// Generic list editor over the array at map[key]. makeRow(item) -> {main: [name, slug], extra: node|null}.
+function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, lockedText, onRemove, changed }) {
+  const cols = el('div', { class: 'ecols', 'aria-hidden': 'true' },
+    el('span', { class: 'lb' }, 'NAME'), el('span', { class: 'lb' }, 'FOLDER NAME'), el('span'));
   const rows = el('div', { class: 'erows' });
-  const errBox = el('div', { role: 'alert' });
-  const node = el('div', { class: 'editor' }, rows, errBox,
-    el('button', { type: 'button', class: 'add', onclick: () => {
-      map[key].push(blank());
-      draw();
-      changed();
-      const last = rows.lastElementChild;
-      const first = last && last.querySelector('input[type="text"]');
-      if (first) first.focus();
-    } }, addText));
+  const errBox = el('div', { class: 'eerr', role: 'alert' });
+  const addBtn = el('button', { type: 'button', class: 'b h40 add', onclick: () => {
+    map[key].push(blank());
+    draw();
+    changed();
+    const last = rows.lastElementChild;
+    const first = last && last.querySelector('input[type="text"]');
+    if (first) first.focus();
+  } }, addText);
+  const node = el('div', { class: 'editor' }, cols, rows, errBox, el('div', { class: 'eadd' }, addBtn));
 
   function draw() {
     clear(rows);
-    if (!map[key].length) rows.appendChild(el('p', { class: 'empty' }, `No ${label}s yet.`));
+    cols.hidden = !map[key].length;
+    if (!map[key].length) rows.appendChild(el('div', { class: 'empty' }, `No ${label}s yet.`));
     for (const item of map[key]) {
-      const row = el('div', { class: 'erow' }, makeRow(item));
-      if (!canRemove || canRemove(item)) {
-        row.appendChild(el('button', { type: 'button', class: 'remove', 'aria-label': `Remove ${label} ${item.name || item.slug || ''}`.trim(),
+      const { main, extra } = makeRow(item);
+      const end = !canRemove || canRemove(item)
+        ? el('button', { type: 'button', class: 'b h40 remove', 'aria-label': `Remove ${label} ${item.name || item.slug || ''}`.trim(),
           onclick: () => {
             map[key] = map[key].filter((x) => x !== item);
             if (onRemove) onRemove(item);
             draw();
             changed();
-          } }, 'Remove'));
-      }
-      rows.appendChild(row);
+          } }, 'Remove')
+        : el('span', { class: 'lb elock' }, lockedText || '');
+      rows.appendChild(el('div', { class: 'erow' }, el('div', { class: 'e1' }, main, end), extra ? el('div', { class: 'e2' }, extra) : null));
     }
   }
   draw();
   return {
     node, refresh: draw,
-    setErrors(list) { clear(errBox); for (const m of list) errBox.appendChild(el('div', { class: 'error' }, m)); },
+    setErrors(list) { clear(errBox); for (const m of list) errBox.appendChild(el('p', { class: 'err' }, m)); },
   };
 }
 
@@ -164,8 +184,9 @@ function rowsEditor({ map, key, label, addText, makeRow, blank, canRemove, onRem
 // it follows the name; once the owner edits it, it stays put. `slugChanged(old, new)` is optional.
 // A locked slug (a default area, or a node already saved on the server) is read-only: renaming its
 // folder would strand the notes and items filed under it, so only the display name changes.
-function nameSlug(item, { slugLocked, slugChanged, changed }) {
-  const slugInput = el('input', { type: 'text', value: item.slug, readonly: slugLocked || null, spellcheck: 'false',
+function nameSlug(item, { slugLocked, slugChanged, changed, label }) {
+  const slugInput = el('input', { type: 'text', class: 'm slug', value: item.slug, readonly: slugLocked || null, spellcheck: 'false',
+    'aria-label': `Folder name of the ${label}`,
     title: slugLocked ? "Saved folder names can't change; edit the name instead." : null,
     oninput: () => {
       const old = item.slug;
@@ -173,7 +194,7 @@ function nameSlug(item, { slugLocked, slugChanged, changed }) {
       if (slugChanged) slugChanged(old, item.slug);
       changed();
     } });
-  const nameInput = el('input', { type: 'text', value: item.name,
+  const nameInput = el('input', { type: 'text', value: item.name, 'aria-label': `Name of the ${label}`,
     oninput: () => {
       const old = item.slug;
       const followed = !slugLocked && item.slug === slugify(item.name);
@@ -185,13 +206,13 @@ function nameSlug(item, { slugLocked, slugChanged, changed }) {
       }
       changed();
     } });
-  return [field('Name', nameInput, 'grow'), field('Folder name', slugInput, 'slug')];
+  return [nameInput, slugInput];
 }
 
 // createMapEditors(map, {onChange, isExisting, os}) -> {areas, projects, courses, people, validate, validateAndShow}
 // Each editor has {node, refresh, setErrors}. onChange fires after every edit (callers persist or clear errors).
 // isExisting(node) is true for nodes already saved on the server (Settings): their slug is read-only.
-// os is the hub's OS (state.os): its folder column is labelled "(this PC)".
+// os is the hub's OS (state.os): its folder column comes first, labelled "(this PC)".
 export function createMapEditors(map, { onChange, isExisting = () => false, os = null } = {}) {
   let live = false;  // show errors while typing only after a first failed Next/Save
   const editors = {};
@@ -203,29 +224,29 @@ export function createMapEditors(map, { onChange, isExisting = () => false, os =
   }
 
   editors.areas = rowsEditor({
-    map, key: 'areas', label: 'area', addText: 'Add an area', changed,
+    map, key: 'areas', label: 'area', addText: 'Add an area', changed, lockedText: 'DEFAULT',
     blank: () => ({ slug: '', name: '' }),
     canRemove: (a) => !DEFAULT_AREAS.includes(a.slug),
-    makeRow: (a) => nameSlug(a, { slugLocked: DEFAULT_AREAS.includes(a.slug) || isExisting(a), changed }),
+    makeRow: (a) => ({ main: nameSlug(a, { slugLocked: DEFAULT_AREAS.includes(a.slug) || isExisting(a), changed, label: 'area' }) }),
   });
 
   const renameRefs = (from, to) => renameProjectRefs(map, from, to);
   const projectsChanged = () => { editors.people.refresh(); changed(); };
+  const osOrder = os && OS_NAMES.includes(os) ? [os, ...OS_NAMES.filter((x) => x !== os)] : OS_NAMES;
   editors.projects = rowsEditor({
     map, key: 'projects', label: 'project', addText: 'Add a project', changed: projectsChanged,
     blank: () => ({ slug: '', name: '', is_company: false, os_folders: { windows: [], linux: [] } }),
     onRemove: (p) => dropProjectRefs(map, p.slug),
     makeRow: (p) => {
-      const company = el('input', { type: 'checkbox', checked: p.is_company === true,
-        onchange: () => {
-          if (company.checked) for (const o of map.projects) o.is_company = false;
-          p.is_company = company.checked;
-          editors.projects.refresh();
-          changed();
-        } });
+      const company = toggle('Company', p.is_company === true, (on) => {
+        if (on) for (const o of map.projects) o.is_company = false;
+        p.is_company = on;
+        editors.projects.refresh();
+        changed();
+      }, 'This is my company (one project at most)');
       // One column per OS; each OS matches sessions against its own column only.
       const folders = (col) => {
-        const box = el('textarea', { rows: 2, spellcheck: 'false', value: ((p.os_folders && p.os_folders[col]) || []).join('\n'),
+        const box = el('textarea', { rows: 2, class: 'm', spellcheck: 'false', value: ((p.os_folders && p.os_folders[col]) || []).join('\n'),
           placeholder: `Optional, one per line, like ${OS_EXAMPLE[col]}`,
           oninput: () => {
             p.os_folders = { ...p.os_folders, [col]: box.value.split('\n').map((s) => s.trim()).filter(Boolean) };
@@ -234,36 +255,35 @@ export function createMapEditors(map, { onChange, isExisting = () => false, os =
           } });
         return field(`Folders on ${OS_LABEL[col]}${col === os ? ' (this PC)' : ''}`, box, 'grow');
       };
-      return [
-        nameSlug(p, { slugLocked: isExisting(p), slugChanged: renameRefs, changed: projectsChanged }),
-        el('label', { class: 'check' }, company, 'This is my company'),
-        el('div', { class: 'wide edit-grid' }, OS_NAMES.map(folders)),
-      ];
+      return {
+        main: nameSlug(p, { slugLocked: isExisting(p), slugChanged: renameRefs, changed: projectsChanged, label: 'project' }),
+        extra: [osOrder.map(folders), el('div', { class: 'field co' }, company)],
+      };
     },
   });
 
   editors.courses = rowsEditor({
     map, key: 'courses', label: 'course', addText: 'Add a course', changed,
     blank: () => ({ slug: '', name: '' }),
-    makeRow: (c) => nameSlug(c, { slugLocked: isExisting(c), changed }),
+    makeRow: (c) => ({ main: nameSlug(c, { slugLocked: isExisting(c), changed, label: 'course' }) }),
   });
 
   editors.people = rowsEditor({
     map, key: 'people', label: 'person', addText: 'Add a person', changed,
     blank: () => ({ slug: '', name: '', projects: [] }),
     makeRow: (p) => {
-      const boxes = map.projects.length
-        ? map.projects.map((proj) => {
-          const cb = el('input', { type: 'checkbox', checked: p.projects.includes(proj.slug),
-            onchange: () => {
-              p.projects = p.projects.filter((r) => r !== proj.slug);
-              if (cb.checked) p.projects.push(proj.slug);
-              changed();
-            } });
-          return el('label', { class: 'check' }, cb, proj.name || proj.slug || '(unnamed project)');
-        })
-        : el('span', { class: 'muted small' }, 'Add projects first to link a person to them.');
-      return [nameSlug(p, { slugLocked: isExisting(p), changed }), el('div', { class: 'wide' }, el('div', { class: 'meta' }, 'Projects'), boxes)];
+      const links = map.projects.length
+        ? map.projects.map((proj) => toggle(proj.name || proj.slug || '(unnamed project)', p.projects.includes(proj.slug), (on) => {
+          p.projects = p.projects.filter((r) => r !== proj.slug);
+          if (on) p.projects.push(proj.slug);
+          changed();
+        }))
+        : el('span', { class: 'f' }, 'Add projects first to link a person to them.');
+      return {
+        main: nameSlug(p, { slugLocked: isExisting(p), changed, label: 'person' }),
+        extra: el('div', { class: 'links', role: 'group', 'aria-label': `Projects of ${p.name || 'this person'}` },
+          el('span', { class: 'lb' }, 'Projects'), links),
+      };
     },
   });
 
