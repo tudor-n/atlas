@@ -44,7 +44,11 @@ Not in phase 4:
 | Settings | `quiet_hours` already exists (`["23:00","08:00"]`, validated) and is unused until now | `config.py` |
 | Tray | Open, Show/Hide widget, Start at login, Restart hub, Quit: there's no pause item yet | `desktop/src-tauri/src/lib.rs` |
 
-Still to check during the build: the int8 model sounds as good as fp32 to the owner (§11), and the Windows wheels of `onnxruntime`/`espeakng-loader` for 3.14 install in CI.
+| **The owner's listening test** | Three sample sets in the Atlas blend: **A** Atlas's own engine (PyTorch `kokoro`, misaki G2P) with the first-draft lines; **B** the same engine with rewritten lines; **C** `kokoro-onnx` (espeak G2P) with the rewritten lines. Separately, misaki G2P fed into `kokoro-onnx` was better than espeak with the first-draft lines, "but not the best". **The owner picked C (owner):** it flows, with no audible pause before the quip. int8 vs fp32: "either sounds fine" **(owner)**. So most of the unnaturalness was the wording, not the engine (§4.1 wording rules). | samples in the session scratchpad |
+| misaki is heavy | `misaki[en]` pulls PyTorch (a 5.7 GB venv), needs a spaCy model, and doesn't know made-up words ("robotarm" → ❓ without the espeak fallback). Not used. | scratch venv |
+| **espeak-ng's path limit** | espeak-ng keeps its data path in a 160-byte buffer: a data path of 160 characters or more is silently cut, and phonemizing then fails ("Error processing file '/home/runner/…/phontab'"). It is the path to `site-packages/espeakng_loader/espeak-ng-data`. BrainHub's slot venvs are about 100 characters on Linux and about 110 on Windows, but the worker must check it (§3). | `strace` of the spike |
+
+Still to check during the build: the Windows wheels of `onnxruntime`/`espeakng-loader` for 3.14 install in CI.
 
 ## 3. Architecture
 
@@ -60,7 +64,9 @@ hub events ──► Announcer (rules: on/off, which events, quiet hours, pause,
 ```
 
 - **(my call) The voice runs in a child process**, not inside the hub. Its model takes memory (about 300 MB with int8), so it starts on the first line and exits after 10 minutes with nothing to say. A crash or a missing audio device never takes the hub down: the line is dropped, logged, and shown as one quiet line in Settings ("voice: no audio device").
-- **(my call) `kokoro-onnx`, not PyTorch `kokoro`.** It gives the same voices and the same blend with no 2 GB torch and no CUDA, and it runs fast enough on CPU. It becomes a normal hub dependency, so both runtime slots and CI get it.
+- **`kokoro-onnx` with its espeak G2P, not PyTorch `kokoro` or misaki (owner, from the listening test, §2).** It gives the same voices and the same blend with no PyTorch and no CUDA, and it runs fast enough on CPU. It becomes a normal hub dependency, so both runtime slots and CI get it.
+- **The espeak path guard:** when the `espeak-ng-data` path is 160 characters or longer, the worker copies that folder once to a short per-OS path (`<state>/voice/espeak-ng-data`, or the temp folder if the state path is long too) and points espeak there. It's a test case, never a silent failure.
+- **Info and quip are synthesised as two clips** and joined with 0.4 s of silence, exactly as in sample C. That way, the quip is never phrased as part of the information sentence.
 - **The child is killed with the hub**, through a process group on POSIX and `taskkill /T` on Windows (the portability rules).
 
 ## 4. When it speaks (the Announcer, `brainhub/voice.py`)
@@ -68,11 +74,18 @@ hub events ──► Announcer (rules: on/off, which events, quiet hours, pause,
 ### 4.1 Events
 | Event | Trigger | Line (info first) |
 |---|---|---|
-| `agent_waiting` | a row enters `waiting` (permission, idle prompt or error). Once per waiting stretch. | "{project} needs you." Plus "It's asking permission." for a permission prompt. |
-| `agent_finished` | `running` → `finished`, where the running stretch lasted ≥ `voice_finish_min_s` (default 120) | "{project} finished, after {duration}." |
-| `reminder` | an open item's reminder time passes while the hub runs (§4.3) | "Reminder: {text}." with ", due {when}" when it has a due date |
-| `readback` | a tablet note or measurement answer is saved | answer: "{label}, {value} {unit words}. Saved." (one clause per field). Note: "Note saved: {text}." |
+| `agent_waiting` | a row enters `waiting` (permission, idle prompt or error). Once per waiting stretch. | "{project} needs you." Plus "It's asking for permission." for a permission prompt. |
+| `agent_finished` | `running` → `finished`, where the running stretch lasted ≥ `voice_finish_min_s` (default 120) | "{project} has finished. It took {duration}." |
+| `reminder` | an open item's reminder time passes while the hub runs (§4.3) | "A reminder. {text}." plus "It's due {when}." when it has a due date |
+| `readback` | a tablet note or measurement answer is saved | answer: "{label}. {value} {unit words}." per field, then "Saved." Note: "Note saved." then the note's text. |
 
+- **Wording rules (from the listening test, §2).** Every line, and every quote in §5, follows them:
+  - short spoken sentences, each ending in a full stop: "Robot arm has finished. It took forty-two minutes.";
+  - no colons, dashes or bracketed asides;
+  - no wordplay that relies on emphasis ("today-today");
+  - numbers and durations in words where espeak would read them oddly ("forty-two minutes", "an hour and ten minutes").
+  
+  A project is spoken by its display name from the map, split at case changes and at `-`/`_` ("robotarm" stays as written, so the owner's map names should be words). The table in §4.1 shows the shape of each line, not its final text.
 - **The voice never reads agent-supplied text** (titles, notification messages, branch names). It reads only the project name the owner gave in the map, or the folder name when there isn't one. Agent text is untrusted (rule 6), and reading it aloud would be both noisy and odd.
 - `{text}` is the owner's own words: item text, tablet notes. Lines are capped at about 200 characters, and longer ones end with "… and more".
 - Units are spoken as words: mm → millimetres, ° → degrees, Ω → ohms, and so on. The map is in `voice.py`, and unknown units are read as written.
@@ -101,7 +114,7 @@ hub events ──► Announcer (rules: on/off, which events, quiet hours, pause,
 - **One plain file that the owner edits**, in the brain, so it's backed up and shared by both OSes. **(my call)** `_voice/` becomes a protected path, like `_items/`: the filing agent can't touch it.
 - The hub seeds it on first start when it's missing, and commits that. It never overwrites the file.
 - Format: a `## <event>` heading per pool (`agent_waiting`, `agent_finished`, `reminder`, `readback`, `catch_up`), then one quote per line. Lines starting with `#` are comments. Placeholders are `{project}`, `{duration}`, `{count}`, `{text}` and `{time_of_day}`.
-- **At least 100 quotes**, spread across the pools and mixed across the three styles **(owner)**: dry butler, sarcastic friend, ship's computer. They're written once, during the build.
+- **At least 100 quotes**, spread across the pools and mixed across the three styles **(owner)**: dry butler, sarcastic friend, ship's computer. They're written once, during the build, to the wording rules in §4.1, and a sample of them is played to the owner before the merge.
 - **No repeats until a pool has cycled:** each pool is shuffled, and the position is kept in the state folder's `voice.json`. Editing the file reshuffles that pool.
 - A quote whose placeholder can't be filled is skipped. A broken file is never fatal: the info line still plays, and Settings shows one quiet warning with the line number.
 - **(my call) A one-minute cooldown on quips:** after a quip, the next line within 60 s plays without one, so a busy stretch doesn't turn into a comedy set.
@@ -113,7 +126,7 @@ hub events ──► Announcer (rules: on/off, which events, quiet hours, pause,
   - It checks each file's sha256 before using it.
   - Files go into shared `data/voice/`, so both OSes use one download (OS-neutral files, dual-boot §8.3).
   - It writes to a `.part` file and renames it after the check passes.
-- **(my call) The int8 model is the default.** It's faster and a quarter of the size. If the owner hears a difference in the samples (§11), Settings offers "Higher quality (330 MB)" for fp32.
+- **The int8 model is the default:** it's faster and a quarter of the size, and the owner heard no difference ("either sounds fine", §2). Settings still offers "Higher quality (330 MB)" for fp32.
 - Until the files are present, voice shows "not installed" and nothing is spoken. No other feature depends on it.
 
 ## 7. Controls
@@ -167,7 +180,7 @@ All of them are PC-only, under `local_only` and outside `/api/tablet/` (rule 5).
 
 ## 11. Rollout (with the owner, after the merge)
 1. The widget update pulls the merge. Settings → **Voice** → **Download voice**.
-2. **Listen:** press Play sample with the int8 model, then with fp32. The owner picks one.
+2. **Listen:** press Play sample in the Atlas blend.
 3. Check a line of each kind: an agent that needs you (any permission prompt), an agent that finishes after 2 minutes, a reminder set for a minute ahead, and a tablet note.
 4. Try the tray pause, then quiet hours (set them to start a minute from now).
 5. Read through the quote file and change what doesn't land.
