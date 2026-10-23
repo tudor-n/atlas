@@ -1,74 +1,134 @@
-// Ask (spec 5.4): instant hits, then a streamed answer with citation links, then "Dig deeper".
+// Ask (spec 5.4; phase 4.5 §4): instant hits, then a streamed answer with citation links, then
+// "Dig deeper". Layout: a 56px query bar; below it a MATCHES rail (360px) and the ANSWER pane.
+// The note viewer replaces the answer pane until ‹ BACK (or Esc).
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { answerNodes, hitList } from '../components/text.js';
+import { answerNodes, hitList, noteText } from '../components/text.js';
+import { button, sectionHead, emptyRow, dot } from '../components/ui.js';
 
 export function render(container) {
   let closeStream = null;
   let lastQ = '';
+  let noteSeq = 0;
 
   const input = el('input', { id: 'ask-q', type: 'text', autocomplete: 'off', required: true,
     placeholder: 'What did I say about the wrist servo?' });
-  const form = el('form', { class: 'ask-form', onsubmit: (ev) => { ev.preventDefault(); ask(); } },
-    el('div', { class: 'grow' }, el('label', { for: 'ask-q' }, 'Ask your brain'), input),
-    el('button', { class: 'primary', type: 'submit' }, 'Ask'));
-  const hitsBody = el('div', {});
-  const hitsBox = el('section', { hidden: true }, el('h2', {}, 'Matches'), hitsBody);
-  const answer = el('div', { class: 'answer', 'aria-live': 'polite' });
-  const answerBox = el('section', { hidden: true }, el('h2', {}, 'Answer'), answer);
-  const deeper = el('div', { class: 'answer', 'aria-live': 'polite' });
-  const deeperBox = el('section', { hidden: true }, el('h2', {}, 'Deeper search'), deeper);
-  const noteBox = el('section', { hidden: true });
-  const status = el('p', { class: 'status', role: 'status' });
-  const errBox = el('div', { class: 'error', role: 'alert' });
-  const actions = el('div', { class: 'ask-actions' });
+  const form = el('form', { class: 'ask-bar', onsubmit: (ev) => { ev.preventDefault(); ask(); } },
+    el('label', { class: 'sr', for: 'ask-q' }, 'Ask your brain'), input,
+    button('Ask', { primary: true, type: 'submit', cls: 'ask-go' }));
 
-  container.appendChild(el('div', {}, el('h1', {}, 'Ask'), form, status, errBox,
-    hitsBox, answerBox, actions, deeperBox, noteBox));
+  // MATCHES rail
+  const hitsCount = el('span', { class: 'n' });
+  const hitsBody = el('div', {}, emptyRow('Matches show here as soon as you ask.'));
+  const rail = el('section', { class: 'rail ask-rail', 'aria-label': 'Matches' },
+    el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Matches'), hitsCount), hitsBody);
+
+  // ANSWER pane: status in the section header, the answer, actions, then DEEPER SEARCH
+  const status = el('span', { class: 'dl ask-st', role: 'status' });
+  const answer = el('div', { class: 'read ask-a', 'aria-live': 'polite' });
+  const errBox = el('div', { class: 'ask-err err', role: 'alert' });
+  const actions = el('div', { class: 'ask-act' });
+  const deeperStatus = el('span', { class: 'dl ask-st', role: 'status' });
+  const deeper = el('div', { class: 'read ask-a', 'aria-live': 'polite' });
+  const deeperErr = el('div', { class: 'ask-err err', role: 'alert' });
+  const deeperAct = el('div', { class: 'ask-act' });
+  const deeperBox = el('section', { class: 'ask-deeper', hidden: true },
+    el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Deeper search'), deeperStatus),
+    el('div', { class: 'pane' }, deeper, deeperErr, deeperAct));
+  const quickUi = { st: status, err: errBox, act: actions };
+  const deeperUi = { st: deeperStatus, err: deeperErr, act: deeperAct };
+  const answerBox = el('section', { class: 'ask-answer' },
+    el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Answer'), status),
+    el('div', { class: 'pane' },
+      el('p', { class: 'ask-hint f' }, 'Answers quote your own words, with a citation for each claim.'),
+      answer, errBox, actions),
+    deeperBox);
+
+  // note viewer (replaces the answer pane)
+  const noteRef = el('span', { class: 'ask-ref' });
+  const noteBody = el('div', { class: 'pane' });
+  const noteBox = el('section', { class: 'ask-note', hidden: true, 'aria-label': 'Note' },
+    el('div', { class: 'ask-note-h' }, button('‹ Back', { size: 40, onclick: closeNote }), noteRef),
+    noteBody);
+
+  const main = el('div', { class: 'main' }, answerBox, noteBox);
+  const root = el('div', { class: 'vw ask' }, form, el('div', { class: 'vw split ask-split' }, rail, main));
+  root.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !noteBox.hidden) { ev.preventDefault(); closeNote(); }
+  });
+  container.appendChild(root);
   input.focus();
 
   function stop() { if (closeStream) { closeStream(); closeStream = null; } }
 
+  function markHit(ref) {
+    for (const n of hitsBody.querySelectorAll('.hit')) n.classList.toggle('cur', !!ref && n.dataset.ref === ref);
+  }
+
   function showNote(ref, text) {
-    clear(noteBox).hidden = false;
-    noteBox.appendChild(el('h2', {}, ref));
-    noteBox.appendChild(el('pre', { class: 'verbatim' }, text));
-    if (typeof noteBox.scrollIntoView === 'function') noteBox.scrollIntoView({ block: 'nearest' });
+    noteRef.textContent = ref;
+    clear(noteBody).appendChild(noteText(text));
+    answerBox.hidden = true;
+    noteBox.hidden = false;
+    main.scrollTop = 0;
+    markHit(ref);
+    const back = noteBox.querySelector('.b');
+    if (back) back.focus();
+  }
+
+  function closeNote() {
+    noteSeq++;
+    noteBox.hidden = true;
+    answerBox.hidden = false;
+    markHit(null);
   }
 
   // Always the file as it is now, never the indexed copy (which may predate an edit).
   async function openNote(ref) {
+    const mine = ++noteSeq;
+    let text;
     try {
       const notes = await api.get(`/api/notes?prefix=${encodeURIComponent(ref.split('#')[0])}`);
-      showNote(ref, notes.length ? notes[0].text : 'That note was not found.');
+      text = notes.length ? notes[0].text : 'That note was not found.';
     } catch (e) {
-      showNote(ref, `Couldn't open that note: ${e.message}`);
+      text = `Couldn't open that note: ${e.message}`;
     }
+    if (mine === noteSeq) showNote(ref, text);
   }
 
+  const setStatus = (node, kind, text) => {
+    clear(node);
+    if (text) node.append(dot(kind), text);
+  };
+
   // Streams `path` into `target`. The text is re-linked on every chunk, since a ref may span chunks.
-  function run(path, target, { onHits, onDone } = {}) {
+  function run(path, target, ui, { onHits, onDone } = {}) {
+    const { st, err, act } = ui;
     stop();
-    errBox.textContent = '';
-    clear(actions);
+    err.textContent = '';
+    clear(act);
     let text = '';
     let failed = false;
-    const paint = () => { clear(target).appendChild(el('div', { class: 'answer-text' }, answerNodes(text, openNote))); };
-    status.textContent = 'Searching…';
+    const paint = () => { clear(target).append(...answerNodes(text, openNote)); };
+    setStatus(st, '', 'SEARCHING');
     closeStream = api.sse(path, {
-      hits: (data) => { if (onHits) onHits(data); status.textContent = 'Thinking…'; },
-      delta: (chunk) => { text += typeof chunk === 'string' ? chunk : ''; paint(); },
+      hits: (data) => { if (onHits) onHits(data); setStatus(st, 'g', 'THINKING'); },
+      delta: (chunk) => {
+        text += typeof chunk === 'string' ? chunk : '';
+        paint();
+        setStatus(st, 'g', 'STREAMING');
+      },
       error: (msg) => {
         failed = true;
         stop();
-        status.textContent = '';
-        errBox.textContent = `Couldn't get an answer: ${msg}`;
-        actions.appendChild(el('button', { type: 'button', onclick: () => run(path, target, { onHits, onDone }) }, 'Retry'));
+        setStatus(st, '', '');
+        err.textContent = `Couldn't get an answer: ${msg}`;
+        act.appendChild(button('Retry', { onclick: () => run(path, target, ui, { onHits, onDone }) }));
       },
       done: () => {
         closeStream = null;
         if (failed) return;
-        status.textContent = '';
+        setStatus(st, '', 'DONE');
         if (onDone) onDone();
       },
     });
@@ -78,20 +138,25 @@ export function render(container) {
     const q = input.value.trim();
     if (!q) return;
     lastQ = q;
-    hitsBox.hidden = false;
-    clear(hitsBody);
+    closeNote();
+    hitsCount.textContent = '';
+    clear(hitsBody).appendChild(emptyRow('Searching…'));
     clear(answer);
-    answerBox.hidden = false;
+    root.classList.add('asked');
     deeperBox.hidden = true;
-    noteBox.hidden = true;
     clear(deeper);
-    run(`/api/ask?q=${encodeURIComponent(q)}`, answer, {
+    setStatus(deeperStatus, '', '');
+    deeperErr.textContent = '';
+    clear(deeperAct);
+    run(`/api/ask?q=${encodeURIComponent(q)}`, answer, quickUi, {
       onHits: (data) => {
-        clear(hitsBody).appendChild(hitList(Array.isArray(data) ? data : [], (h) => openNote(h.ref)));
+        const hits = Array.isArray(data) ? data : [];
+        hitsCount.textContent = String(hits.length);
+        clear(hitsBody).appendChild(hitList(hits, (h) => openNote(h.ref)));
       },
       onDone: () => {
-        actions.appendChild(el('button', { type: 'button', onclick: dig }, 'Dig deeper'));
-        actions.appendChild(el('span', { class: 'meta' }, ' Slower, and uses more of your Claude allowance.'));
+        actions.appendChild(button('Dig deeper', { amber: true, onclick: dig }));
+        actions.appendChild(el('span', { class: 'ask-cost f' }, 'Slower, and uses more of your Claude allowance.'));
       },
     });
   }
@@ -99,7 +164,9 @@ export function render(container) {
   function dig() {
     deeperBox.hidden = false;
     clear(deeper);
-    run(`/api/ask/deeper?q=${encodeURIComponent(lastQ)}`, deeper);
+    clear(actions);  // one dig at a time; RETRY sits under the deeper answer if it fails
+    run(`/api/ask/deeper?q=${encodeURIComponent(lastQ)}`, deeper, deeperUi);
+    if (typeof deeperBox.scrollIntoView === 'function') deeperBox.scrollIntoView({ block: 'nearest' });
   }
 
   return stop;

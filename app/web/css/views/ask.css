@@ -1,1 +1,49 @@
-/* ASK view (phase 4.5 design §4): filled by wave C; the shell's layout hooks are in css/app.css. */
+/* ASK view (phase 4.5 design §4): a 56px query bar; below it a 360px MATCHES rail and the ANSWER
+   pane. The hit rows, citations and note text are styled in journal.css (shared with Journal and
+   Browse). */
+.vw.ask { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+/* -- the query bar ------------------------------------------------------------------------- */
+.ask-bar {
+  flex: none; display: flex; align-items: center; gap: 12px; padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.ask-bar input[type="text"] { flex: 1 1 auto; min-width: 0; height: var(--h56); padding: 0 16px; font-size: 17px; }
+.ask-bar .b.ask-go { flex: none; height: var(--h56); line-height: 54px; min-width: 112px; }
+
+/* -- the split below it ---------------------------------------------------------------------- */
+.vw.split.ask-split { flex: 1 1 auto; height: auto; min-height: 0; }
+.ask-split > .rail.ask-rail { width: 360px; }
+.ask-split > .main { display: flex; flex-direction: column; }
+.ask-answer, .ask-note { flex: none; }
+
+/* the section header's right side: the stream's status, a dot and mono 12 dim */
+.ask-st:empty { display: none; }
+
+.ask-hint { max-width: 72ch; }
+.vw.ask.asked .ask-hint { display: none; }
+.ask-a { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-a:empty { display: none; }
+.ask-err { font-size: 15px; line-height: 21px; max-width: 72ch; }
+.ask-err:empty { display: none; }
+.ask-a + .ask-err:not(:empty), .ask-hint + .ask-a + .ask-err:not(:empty) { margin-top: 12px; }
+
+/* DIG DEEPER / RETRY and the cost note */
+.ask-act { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.ask-act:empty { display: none; }
+.ask-a:not(:empty) ~ .ask-act, .ask-err:not(:empty) ~ .ask-act { margin-top: 20px; }
+.ask-cost { font-size: 13px; line-height: 18px; }
+
+.ask-deeper { border-top: 1px solid var(--line); }
+
+/* -- the note viewer: ‹ BACK and the ref, then the note ------------------------------------- */
+.ask-note-h {
+  position: sticky; top: 0; display: flex; align-items: center; gap: 16px; min-height: var(--h56);
+  padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--ground);
+}
+.ask-ref {
+  min-width: 0; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1099px) { .ask-bar { padding: 12px 16px; } }
