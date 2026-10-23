@@ -1,4 +1,5 @@
-"""Install/remove BrainHub's Claude Code hooks and status line in the owner's user settings."""
+"""Install/remove BrainHub's Claude Code hooks and status line in the owner's user settings, and
+(phase 3) the `brainhub-request` command with its one line in the owner's user CLAUDE.md."""
 from __future__ import annotations
 
 import json
@@ -27,6 +28,17 @@ _OURS = re.compile(rf"(?:^|[\s/\"'])(?:{re.escape(OUR_SUFFIX)}|{re.escape(STABLE
 # (osdirs.state_dir()), never in the shared data/ folder (dual-boot design §6.2).
 STATE_FILE = "claude_integration.json"
 PASSTHROUGH_FILE = "statusline_passthrough.txt"
+
+
+# Phase 3: measurement requests (spec §7.3). The command is a wrapper in osdirs.bin_dir() around the
+# stable copy of request_client.py; the CLAUDE.md beside the target settings.json gets one line.
+REQUEST_SCRIPT = "request_client.py"
+WRAPPER_MARK = "written by `brainhub integration install`"
+MD_BEGIN = "<!-- brainhub: measurement requests (managed by `brainhub integration install`) -->"
+MD_END = "<!-- /brainhub -->"
+MD_LINE = ("Need measurements from the owner's workbench (lengths, angles, IDs)? Run "
+           "`brainhub-request \"<title>\" \"<item>\"…`; answers arrive later in BrainHub, not here.")
+_MD_BLOCK = re.compile(rf"\n*{re.escape(MD_BEGIN)}.*?{re.escape(MD_END)}\n?", re.S)
 
 
 class IntegrationError(Exception):
@@ -92,6 +104,96 @@ def hook_paths(state_dir: Path | None = None) -> tuple[str, str]:
     if (state / "runtime" / "current.json").is_file() and script.is_file():
         return str(base_python()), str(script)
     return str(console_python(Path(sys.executable))), str(hook_script())
+
+
+def request_paths(state_dir: Path | None = None) -> tuple[str, str]:
+    """`(python, script)` for brainhub-request, chosen like hook_paths(): in runtime mode the base
+    interpreter and the stable `<state>/hook/request_client.py` the update step keeps; otherwise this
+    venv's python and the package's copy."""
+    state = Path(state_dir) if state_dir is not None else osdirs.state_dir()
+    script = state / "hook" / REQUEST_SCRIPT
+    if (state / "runtime" / "current.json").is_file() and script.is_file():
+        return str(base_python()), str(script)
+    return str(console_python(Path(sys.executable))), str(Path(__file__).with_name(REQUEST_SCRIPT))
+
+
+def wrapper_path(bin_dir: Path) -> Path:
+    return Path(bin_dir) / ("brainhub-request.cmd" if sys.platform == "win32" else "brainhub-request")
+
+
+def wrapper_text(python: str, script: str, port: int) -> str:
+    if sys.platform == "win32":
+        return (f"@rem brainhub-request: measurement requests for the workbench tablet ({WRAPPER_MARK})\r\n"
+                f'@"{python}" -I -S "{script}" --port {port} %*\r\n')
+    return ("#!/bin/sh\n"
+            f"# brainhub-request: measurement requests for the workbench tablet ({WRAPPER_MARK})\n"
+            f"exec {shlex.join([python, '-I', '-S', script, '--port', str(port)])} \"$@\"\n")
+
+
+def _wrapper_is_ours(path: Path) -> bool:
+    try:
+        return WRAPPER_MARK in path.read_text(encoding="utf-8", errors="replace")[:400]
+    except OSError:
+        return False
+
+
+def _backup(path: Path, now: Callable[[], datetime]) -> None:
+    if path.exists():
+        stamp = now().strftime("%Y%m%d-%H%M%S")
+        target, n = path.with_name(f"{path.name}.brainhub-backup-{stamp}"), 1
+        while target.exists():
+            n += 1
+            target = path.with_name(f"{path.name}.brainhub-backup-{stamp}-{n}")
+        shutil.copy2(path, target)
+
+
+def _md_without_ours(text: str) -> str:
+    return _MD_BLOCK.sub("\n", text).rstrip("\n")
+
+
+def install_request_command(claude_md: Path, bin_dir: Path, *, python: str, script: str, port: int,
+                            now: Callable[[], datetime] = datetime.now) -> None:
+    """Write the brainhub-request wrapper (refusing to replace a file of the same name that isn't
+    ours) and our one CLAUDE.md line between markers, keeping everything else in the file. The file
+    is backed up before it changes, as settings.json is."""
+    wrapper = wrapper_path(bin_dir)
+    if wrapper.exists() and not _wrapper_is_ours(wrapper):
+        raise IntegrationError(f"{wrapper} exists and isn't BrainHub's; nothing was changed")
+    claude_md = Path(claude_md)
+    old = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
+    rest = _md_without_ours(old)
+    new = (rest + "\n\n" if rest.strip() else "") + f"{MD_BEGIN}\n{MD_LINE}\n{MD_END}\n"
+    if new != old:
+        _backup(claude_md, now)
+        _atomic_write(claude_md, new)
+    _atomic_write(wrapper, wrapper_text(python, script, port))
+    if sys.platform != "win32":
+        os.chmod(wrapper, 0o755)
+
+
+def uninstall_request_command(claude_md: Path, bin_dir: Path, *,
+                              now: Callable[[], datetime] = datetime.now) -> None:
+    wrapper = wrapper_path(bin_dir)
+    if wrapper.exists() and _wrapper_is_ours(wrapper):
+        wrapper.unlink()
+    claude_md = Path(claude_md)
+    if claude_md.exists():
+        old = claude_md.read_text(encoding="utf-8")
+        if MD_BEGIN in old:
+            rest = _md_without_ours(old)
+            _backup(claude_md, now)
+            if rest.strip():
+                _atomic_write(claude_md, rest + "\n")
+            else:
+                claude_md.unlink()  # it held only our line
+
+
+def request_command_status(claude_md: Path, bin_dir: Path) -> bool:
+    try:
+        md = Path(claude_md).read_text(encoding="utf-8") if Path(claude_md).exists() else ""
+    except OSError:
+        md = ""
+    return MD_BEGIN in md and _wrapper_is_ours(wrapper_path(bin_dir))
 
 
 def hook_entry(python: str, script: str, port: int, *, is_async: bool) -> dict:
@@ -301,6 +403,9 @@ def install(settings_path: Path, *, python: str, script: str, port: int, state_d
     _atomic_write(state_dir / STATE_FILE, json.dumps(
         {"previous_statusline": previous, "installed_at": installed_at or now().replace(microsecond=0).isoformat()}, indent=2))
     _write_settings(settings_path, obj, now)
+    r_python, r_script = request_paths(state_dir)
+    install_request_command(settings_path.parent / "CLAUDE.md", osdirs.bin_dir(),
+                            python=r_python, script=r_script, port=port, now=now)
     return status(settings_path, port=port, state_dir=state_dir)
 
 
@@ -325,6 +430,7 @@ def uninstall(settings_path: Path, *, state_dir: Path, data_dir: Path | None = N
         _write_settings(settings_path, obj, now)
     for name in (STATE_FILE, PASSTHROUGH_FILE):
         (state_dir / name).unlink(missing_ok=True)
+    uninstall_request_command(settings_path.parent / "CLAUDE.md", osdirs.bin_dir(), now=now)
     return status(settings_path, port=0, state_dir=state_dir)
 
 
@@ -369,4 +475,5 @@ def status(settings_path: Path, *, port: int, state_dir: Path | None = None) -> 
     return {"settings_path": str(settings_path), "hooks_installed": bool(events), "events": events,
             "statusline_installed": line_ours, "port_matches": bool(events) and port_ok,
             "paths_current": (bool(events) or line_ours) and current,
-            "previous_statusline": line_ours and "--passthrough-file" in command}
+            "previous_statusline": line_ours and "--passthrough-file" in command,
+            "request_command": request_command_status(settings_path.parent / "CLAUDE.md", osdirs.bin_dir())}

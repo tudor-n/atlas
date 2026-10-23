@@ -504,20 +504,30 @@ def refresh(live, state):
     write_json(os.path.join(state, "runtime", "current.json"), {"slot": slot, "commit": head, "deps": deps})
 
 
+HOOK_FILES = ("hook_client.py", "request_client.py")  # stdlib scripts run as files (P4; phase 3)
+
+
 def install_hook(state, cur):
-    """Copy the current slot's hook client to the stable `<state>/hook/hook_client.py` (P4),
-    when it differs. Run every time, so a copy that failed once is put right on the next start."""
-    src = os.path.join(slot_dir(state, cur["slot"]), "app", "brainhub", "hook_client.py")
-    dst = os.path.join(state, "hook", "hook_client.py")
-    with open(src, "rb") as f:
-        data = f.read()
-    try:
-        with open(dst, "rb") as f:
-            if f.read() == data:
-                return
-    except OSError:
-        pass
-    write_bytes(dst, data)
+    """Copy the current slot's hook client and brainhub-request script to the stable
+    `<state>/hook/` (P4), each when it differs. Run every time, so a copy that failed once is put
+    right on the next start. A slot from before phase 3 has no request_client.py: skipped."""
+    for name in HOOK_FILES:
+        src = os.path.join(slot_dir(state, cur["slot"]), "app", "brainhub", name)
+        dst = os.path.join(state, "hook", name)
+        try:
+            with open(src, "rb") as f:
+                data = f.read()
+        except FileNotFoundError:
+            if name == "hook_client.py":
+                raise
+            continue
+        try:
+            with open(dst, "rb") as f:
+                if f.read() == data:
+                    continue
+        except OSError:
+            pass
+        write_bytes(dst, data)
 
 
 SHELL_FILES = ("Cargo.toml", "Cargo.lock", "build.rs", "tauri.conf.json")

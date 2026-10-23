@@ -796,6 +796,18 @@ def test_hook_client_copied_after_flip(w):
     assert not list(hook.parent.glob("*.tmp"))
 
 
+def test_request_client_copied_once_a_slot_has_it(w):
+    """Phase 3: brainhub-request's script sits beside the hook client. A slot from before phase 3
+    has none, and that is no error."""
+    req = w.state / "hook" / "request_client.py"
+    w.step()
+    assert not req.exists() and (w.state / "hook" / "hook_client.py").exists()
+    w.gh(GREEN)
+    w.commit({"app/brainhub/request_client.py": "# request v1\n"})
+    w.step()
+    assert req.read_text(encoding="utf-8") == "# request v1\n"
+
+
 def test_update_json_records_the_check(w):
     w.step()
     update = w.update()

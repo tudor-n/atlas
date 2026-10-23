@@ -61,6 +61,12 @@ def config_dir() -> Path:
     return _xdg("XDG_CONFIG_HOME", ".config") / "brainhub"
 
 
+def bin_dir() -> Path:
+    """Where `integration install` puts the `brainhub-request` command: $BRAINHUB_BIN_DIR, else
+    ~/.local/bin on both OSes (Claude Code's native installer puts `claude` there too)."""
+    return _env_path("BRAINHUB_BIN_DIR") or Path.home() / ".local" / "bin"
+
+
 def _linux_boot_id() -> str:
     value = LINUX_BOOT_ID.read_text("ascii").strip()
     if not value:
