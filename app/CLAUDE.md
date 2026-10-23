@@ -2,7 +2,7 @@
 
 A local "second brain" for one person (the owner), on a dual-boot laptop: Kubuntu 26.04 (the daily driver, where development happens) and Windows 11. The owner writes freely. A headless Claude Code agent files each entry into a git-versioned Markdown brain and proposes tasks and dates. The owner confirms them. Later the owner asks questions and gets their own words back, with citations. Phase 2 adds a usage meter, an Agents panel fed by the owner's Claude Code hooks, a desktop widget and a Tauri desktop shell. The dual-boot port makes it one lifeline on both OSes: the same master commit, one shared root on `D:`, the same features, and Claude Code memory, skills and settings shared through `claude-sync`.
 
-**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. The owner's test-drive fixes are merged too (rulings 20–23 in `phase2-decisions.md`). Next: the Kubuntu rollout with the owner (plan → Rollout). Everything on Windows is on hold: the owner uses Kubuntu only for a while (2026-10-23).**
+**Phases 1 and 2 and the dual-boot port (PR #3) are merged into master. The owner's test-drive fixes are merged too (rulings 20–23 in `phase2-decisions.md`). The Kubuntu rollout is done except the setup wizard, which the owner runs. **Phase 3 (the workbench tablet) is built on branch `phase-3`** (design and decisions: `specs/2026-10-23-brainhub-phase3-design.md`, `phase3-decisions.md`), and the arm UI's HOME link is on the arm repo's branch `brainhub-home`. Everything on Windows is on hold: the owner uses Kubuntu only for a while (2026-10-23).**
 
 > `../NEXT-SESSION.md` is a short pointer: where things stand and the standing rules.
 
@@ -12,7 +12,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `docs/superpowers/specs/2026-10-20-brainhub-design.md` | **The spec, the binding authority.** Intent, goals, anti-goals, all 6 phases. |
 | `docs/superpowers/specs/2026-10-21-brainhub-phase2-design.md` | Phase 2 made concrete: hook client, installer, agent statuses, usage, widget, desktop shell. |
 | `docs/superpowers/specs/2026-10-21-brainhub-dual-boot-design.md` | Where it runs and how, on both OSes: shared vs per-OS data, live copy and updates, guards, Claude Code parity. Amends the spec's §4, §11, §13.1 and §14. |
-| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12), plus known residuals. Read them before changing core behaviour. |
+| `docs/superpowers/specs/2026-10-23-brainhub-phase3-design.md` | Phase 3, the workbench tablet: LAN access and pairing, the ES5 tablet page, measurement requests, tablet notes, the arm UI's HOME. |
+| `docs/superpowers/phase1-decisions.md`, `phase2-decisions.md`, `dual-boot-decisions.md`, `phase3-decisions.md` | Every build-time ruling that amended the plans (dual boot: D1–D12; phase 3: T1–T16), plus known residuals. Read them before changing core behaviour. |
 | `app/README.md` | How to set up, run and test on each OS, where data lives, the drive banner, verification drills, "Known limitations" and "Measured". |
 | `app/desktop/README.md` | Building, configuring and running the desktop shell (both OSes, runtime mode). |
 | `docs/superpowers/plans/2026-10-20-brainhub-phase1.md`, `…/2026-10-21-brainhub-phase2.md`, `…/2026-10-22-brainhub-dual-boot.md` | The plans as written. Rulings in the decisions docs override them. |
@@ -29,7 +30,10 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
    - Paths invalid on Windows or clashing by case fail the filing before the cherry-pick (`filing.invalid_windows_paths`, D7).
    - Never call `discard_changes()` on the main repo.
 4. **Every hub commit re-indexes the `.md` files it changed** (`on_commit(sha)` in `server.py`). Recall must never quote stale text.
-5. **Security:** the server binds `127.0.0.1` only. The `local_only` middleware checks Host and Origin, and JSON bodies require `Content-Type: application/json`, otherwise 415. Keep it that way. Phase 3 adds LAN pairing.
+5. **Security:** the server binds `127.0.0.1`. The `local_only` middleware checks Host and Origin, and JSON bodies require `Content-Type: application/json`, otherwise 415. Keep it that way.
+   - Phase 3 adds one more listener, at `tablet_address`, only while **Tablet over Wi-Fi** is on and the laptop holds that address (`tablet.LanSite`, checked every 15 s).
+   - `tablet.lan_guard` (the outermost middleware) judges a request by the local socket it arrived on. A LAN request may reach only `/tablet`, its whitelisted files and `/api/tablet/*`, at the LAN Host, from its own Origin, and (past the page and `POST /api/tablet/pair`) only with a paired device's `bh_device` cookie. Everything else gets 403, even when paired.
+   - Never widen that surface; PC-only tablet endpoints live outside the `/api/tablet/` prefix (`/api/tablet-lan`, `/api/tablet-notes`, `/api/devices`, `/api/requests`).
 6. **UI:** user and agent text is set via `textContent` only (see `web/js/dom.js`, `el()`). Never `innerHTML` with data. No build step: plain ES modules. Agent-supplied strings (cwd, title, branch, notification message) count as agent text.
 7. **Claude runs only via the `claude` CLI** on the owner's subscription:
    - `ANTHROPIC_API_KEY` is stripped from the environment, and `--bare` is never used.
@@ -42,9 +46,9 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 10. **Don't put a `CLAUDE.md` at the repo root** (`~/dev/BrainHub`, or the live copy `D:\BrainHub`). The filing agent's worktrees live under `<root>/data/…`, so it could load that file into the agent. This file lives in `app/` on purpose. Start dev sessions in `~/dev/BrainHub/app` (on Windows, in the dev clone's `app`).
 11. **The hook client (`brainhub/hook_client.py`) is silent, always exits 0, and is stdlib-only.** It runs as a file (`python -I -S hook_client.py …`), never imports from `brainhub`, swallows every exception, and in `event` mode never writes to stdout or stderr (stdout on SessionStart/UserPromptSubmit would be injected into the owner's agent). It sends only the allow-listed fields: never prompts, tool data or transcripts. The status line mode prints exactly one line. In runtime mode the hooks run the stable copy `<state>/hook/hook_client.py` with the slot venv's base interpreter (P4, D10).
 12. **Never write the owner's real Claude Code or BrainHub files from tests or manual checks:**
-   - Claude Code: `~/.claude/settings.json` on Kubuntu and `%USERPROFILE%\.claude\settings.json` on Windows, and on both `~/.claude/settings.local.json`, `~/.claude/projects/**` and `~/.claude/skills/**`;
-   - the state folder (`~/.local/share/brainhub`, `%LOCALAPPDATA%\BrainHub`), the config folder (`~/.config/brainhub`, `%LOCALAPPDATA%\BrainHub`), the shared Claude store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`), and `~/.config/autostart` or the HKCU Run key (never tick "Start at login" in a test run).
-   - Use `integration … --settings <temp file>`, `desktop-config --target <temp file>`, `claude-sync` with temp `--shared`, `--claude-dir`, `--home` and `--projects-root`, and temp `BRAINHUB_STATE_DIR`, `BRAINHUB_CONFIG_DIR`, `BRAINHUB_SHARED_DIR` and `CLAUDE_CONFIG_DIR`. `tests/conftest.py` sets those four (and `LOCALAPPDATA`) to temp folders for every test.
+   - Claude Code: `~/.claude/settings.json` on Kubuntu and `%USERPROFILE%\.claude\settings.json` on Windows, and on both `~/.claude/settings.local.json`, `~/.claude/CLAUDE.md` (phase 3 adds a line there), `~/.claude/projects/**` and `~/.claude/skills/**`;
+   - the state folder (`~/.local/share/brainhub`, `%LOCALAPPDATA%\BrainHub`), the config folder (`~/.config/brainhub`, `%LOCALAPPDATA%\BrainHub`), the shared Claude store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`), `~/.local/bin/brainhub-request`, and `~/.config/autostart` or the HKCU Run key (never tick "Start at login" in a test run).
+   - Use `integration … --settings <temp file>`, `desktop-config --target <temp file>`, `claude-sync` with temp `--shared`, `--claude-dir`, `--home` and `--projects-root`, and temp `BRAINHUB_STATE_DIR`, `BRAINHUB_CONFIG_DIR`, `BRAINHUB_SHARED_DIR`, `BRAINHUB_BIN_DIR` and `CLAUDE_CONFIG_DIR`. `tests/conftest.py` sets those five (and `LOCALAPPDATA`) to temp folders for every test. A manual tablet check uses a scratch hub on another port with its own state; turning on its LAN site at the laptop's address is fine (ufw keeps it local).
    - The desktop exe writes its web view data and window position to the real folders regardless of env vars (Windows `%LOCALAPPDATA%\dev.brainhub.desktop` and `%APPDATA%\dev.brainhub.desktop\.window-state.json`; Linux `~/.local/share/dev.brainhub.desktop`, `~/.config/dev.brainhub.desktop` and `$XDG_RUNTIME_DIR/tray-icon`): delete them after a manual run if they weren't there before.
    - A real `claude -p` creates an empty `~/.claude/projects/<key of its cwd>/memory/` even with `--no-session-persistence` (D10): remove it after an e2e.
 13. **The hub ignores events whose entrypoint starts with `sdk-`** (`claude -p` and SDK runs), and events whose cwd is inside its own `data/` or `brain/`. Claude Code sets `CLAUDE_CODE_ENTRYPOINT` itself for hook processes (`sdk-cli` under `-p`), so an e2e that needs rows must force it inside the hook command (see `app/README.md` → Measured).
@@ -95,8 +99,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 **Kubuntu**, from `~/dev/BrainHub/app` (uv; Python 3.14 from `.python-version`):
 - **Setup:** `uv sync --locked --extra test` (makes `.venv`).
 - **Run:** `BRAINHUB_STATE_DIR=/tmp/bh-state-x uv run --no-sync python -m brainhub --root /tmp/bh-test-x [--port 8090]`, then open http://127.0.0.1:8090 (widget page: `/widget`).
-- **Python tests:** `uv run --no-sync python -m pytest -q` (789 passed, 16 skipped at the end of the dual-boot build; the skips are the Windows-only halves). Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
-- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs` (43 passing). Check a file's syntax with `node --check <file>`.
+- **Python tests:** `uv run --no-sync python -m pytest -q` (944 passed, 18 skipped at the end of the phase 3 build; the skips are the Windows-only halves). Only if parallel runs clash on ports: run each in its own network namespace, `unshare -rn sh -c 'ip link set lo up; uv run --no-sync python -m pytest -q'`. It runs as root inside the namespace, so the 5 chmod-based read-only tests skip there (784 passed, 21 skipped).
+- **JS tests:** `source ~/.nvm/nvm.sh` first, then `node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs` (60 passing). Check a file's syntax with `node --check <file>`.
 - **Rust (desktop shell):** in `desktop/src-tauri`: `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo test` (39 passing) and `cargo build --release`. Never build into `src-tauri/target`.
 
 **Windows**, from the dev clone's `app` (uv, installed with `winget install astral-sh.uv`):
@@ -139,6 +143,9 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `brainhub/agents.py` | `AgentTracker`: hook event → status, project/branch/part/where resolution (this OS's folders), `suggest_link`, `os`/`boot` per row, `end_previous_boot`, linger and stale pruning. |
 | `brainhub/widget.py` | `/api/widget` summary (synopsis, attention, tiles; ended sessions don't count) and the cached arm reachability probe (15 s reachable, 60 s offline). |
 | `brainhub/hook_client.py` | Silent stdlib hook and status line client (rule 11). |
+| `brainhub/tablet.py` | Phase 3's way in: `Pairing` (codes, device token hashes), `holds_address`, `LanSite` (the LAN listener that follows the address), `lan_guard`, `TabletFeed` (the long-poll version). |
+| `brainhub/tablet_routes.py`, `tablet_view.py` | The tablet API (state, wait, notes, answers, ignore, pair), the page's files, the PC endpoints (requests, tablet notes, devices, LAN status); `tablet_view` builds the page's ready-made strings. |
+| `brainhub/request_client.py` | `brainhub-request`: stdlib, runs as a file; an agent asks for workbench measurements (it says what happened, unlike the hook client). |
 | `brainhub/claude_integration.py` | Install/uninstall/status of our hooks and status line in a Claude Code settings file (backup, atomic write, per-hook ownership); state in the state folder; `hook_paths()` (runtime vs dev), `paths_current`. |
 | `brainhub/desktop_config.py` | Writes `desktop.json` in the config folder, legacy or runtime mode. |
 | `brainhub/update_step.py` | The stdlib-only update step (rule 15): pull, slot refresh, hook copy, `update.json`, `shell_source`. |
@@ -150,6 +157,8 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 | `web/js/views/usage.js`, `agents.js`, `agents-model.js` | Usage meters; Agents table with inline part/Where edits and "link to …"; their pure helpers (tested). |
 | `web/js/views/settings.js`, `runtime-model.js`, `claude-sync.js`, `claude-sync-model.js` | Settings, with the Runtime line and the Claude Code sync section (per-OS keys, quiet notes). |
 | `web/widget.html`, `widget.css`, `js/widget.js`, `js/widget-model.js` | The widget page; `widget-model.js` holds the pure synopsis/tile/popup logic (tested). |
+| `web/tablet/` | The tablet page: **ES5 only** for the SM-T110's Android 4.2 WebKit (`tests/test_tablet_es5.py` refuses newer syntax, missing APIs and CSS). `tablet.js` (screens, in-page keyboard, long-poll), `kb.js` and `logic.js` (pure, node-tested via `module.exports`), `tablet.css` (fixed 1024×600 layout). |
+| `web/js/views/tablet.js`, `tablet-settings.js`, `tablet-model.js` | The PC's Tablet view and Settings → Tablet; pure helpers (tested). |
 | `desktop/` | Tauri v2 shell: `src-tauri/src/lib.rs` (window, tray, autostart, XWayland, SIGTERM/SIGINT quit, `xdg-open`, watch loop, work-area clamp), `supervisor.rs` (hub start/restart with backoff, exit 75, SIGTERM stop, `hub.log` in the state folder; runtime mode: claude-sync at start, update step, slot spawn), `config.rs` (`desktop.json`, per-OS folders), `claude_watch.rs` (settings watch, 10-minute claude-sync), `shell_source.rs` + `build.rs` (shell source digest), `capabilities/widget.json`, `dist/` (the "Starting BrainHub…" page). |
 
 ## Where things stand
@@ -157,10 +166,10 @@ A local "second brain" for one person (the owner), on a dual-boot laptop: Kubunt
 - **The dual-boot port is merged** (plan Tasks 1–12, PR #3, 2026-10-22); CI runs on both OSes.
 - **The owner's Linux test drive** (2026-10-22), fixed and merged (2026-10-23): the usage meter lag (rulings 20–21), and filing/recall speed (rulings 22–23: no non-essential traffic in the hub's runs, live filing progress). Numbers in `app/README.md` → Measured → Test-drive follow-up.
 - **Next:**
-  1. The Kubuntu rollout with the owner (plan → Rollout): live copy to master, `runtime init`, the shell, the integration, `claude-sync`, then the setup wizard on the real root. It includes the phase 2 checks for Kubuntu (Where and the status line for terminal and VS Code sessions; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and the Kubuntu half of design §10's verification.
+  1. The Kubuntu rollout with the owner (plan → Rollout): done on 2026-10-23 (live copy to master, `runtime init`, the shell, the integration; `claude-sync` waits for Windows) except the setup wizard on the real root, which the owner runs. It includes the phase 2 checks for Kubuntu (Where and the status line for terminal and VS Code sessions; fix `WHERE_BY_ENTRYPOINT` from the raw entrypoints) and the Kubuntu half of design §10's verification.
   2. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while: the Windows half of the memory spike (D2), the Windows-side checks (D1's "still to check", claude-sync's junctions and drive-letter keys for real), the Windows rollout and its half of §10. Meanwhile, code stays portable and CI keeps running on both OSes.
   3. Calibration (still open from phase 1): the owner collects "wrote X, it extracted Y, expected Z" cases; tune `prompts/filing.md` and the Settings defaults.
-  4. Phase 3 (spec §12): the tablet (SM-T110, ES5-only) with its AGENTS tab, LAN binding and pairing, measurement requests. It must reach the hub at one fixed address whichever OS is booted (design §8.3).
+  4. **Phase 3 is built** on branch `phase-3` (and the arm repo's `brainhub-home`); the owner merges both. Then its rollout (design §11): router reservation, ufw, Settings, Fully Kiosk and pairing, `integration install`, the arm server restart and the ROBOT/HOME round trip, and the device checks in `phase3-decisions.md` → Residuals.
 - **Later phases:** voice (Kokoro) and notifications, Google Calendar, phone.
 
 ## How the owner likes to work

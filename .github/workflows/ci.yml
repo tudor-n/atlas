@@ -41,7 +41,7 @@ jobs:
           node-version: 24
       - name: node tests
         shell: bash
-        run: node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs
+        run: node --test web/js/components/*.test.mjs web/js/views/*.test.mjs web/js/*.test.mjs web/tablet/*.test.mjs
 
   changes:
     runs-on: ubuntu-latest

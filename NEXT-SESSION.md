@@ -6,7 +6,18 @@ A short pointer, updated 2026-10-23. It is no longer the only thing carried betw
 - **Phases 1 and 2 and the dual-boot port** (plan Tasks 1–12, PR #3) are merged into `master` (2026-10-22). CI runs on Ubuntu and Windows.
 - **What remains:**
   1. **The owner's feedback from the Linux test drive** (below): fixed and merged into master (2026-10-23; usage meter, speed). The next test drive checks the meter against claude.ai and the filing card's live progress.
-  2. The Kubuntu rollout, with the owner: plan → Rollout (`docs/superpowers/plans/2026-10-22-brainhub-dual-boot.md`), its Kubuntu part: live copy to master, `runtime init`, the shell, the integration and its entrypoint checks, `claude-sync` and labelling one-OS notes, the setup wizard on the real root.
+  2. **The Kubuntu rollout: done on 2026-10-23 except the setup wizard**, which the owner runs in the app (http://127.0.0.1:8090).
+     - The live copy `/mnt/data/BrainHub` is on master, with its old branches deleted.
+     - Runtime slot A is in `~/.local/share/brainhub`.
+     - The widget is built from the live copy into `~/.cache/brainhub-target/release/brainhub-desktop`. The owner starts it by hand: no autostart (their choice).
+     - The integration is installed for real; its backup is `~/.claude/settings.json.brainhub-backup-20261023-113616`.
+     - A terminal session showed Where = terminal, entrypoint `cli`. Still to check: a VS Code session (Where = IDE).
+     - `claude-sync` waits for Windows (the owner's choice): without the shared store, its runs change nothing.
+  4. **Phase 3, the workbench tablet: built on branch `phase-3`** (not pushed). Plus the arm repo's `brainhub-home` branch in `~/dev/RobotArmControl` (not pushed; `index.html` only).
+     - Design, plan and decisions: `docs/superpowers/specs/2026-10-23-brainhub-phase3-design.md`, `plans/2026-10-23-brainhub-phase3.md`, `phase3-decisions.md`.
+     - Checked in headless Chrome over a real LAN site (`app/README.md` → Measured → Phase 3).
+     - Subagent reviews come after the build (the owner's instruction), then the owner merges.
+     - **Its rollout needs the owner** (design §11; `app/README.md` → Phase 3): reserve `192.168.0.200` for MAC `24:b2:b9:cd:c5:69` in the router; `sudo ufw allow from 192.168.0.0/24 to any port 8090 proto tcp`; Settings → Tablet; the Fully Kiosk start URL `http://192.168.0.200:8090/tablet`; pair; reinstall the integration (adds `brainhub-request` and its `CLAUDE.md` line); merge the arm branch and restart `server.py`; then the device checks in `phase3-decisions.md` → Residuals.
   3. **On hold (owner, 2026-10-23): everything on Windows.** The owner uses Kubuntu only for a while and will come back to Windows later. That covers the Windows half of the memory spike (ruling D2, in a fresh Windows clone, never in `D:\BrainHub`), the Windows-side checks (the widget built hidden and then shown, D1; claude-sync's junctions, drive-letter keys and `D:\` defaults for real), the Windows rollout and the Windows half of design §10's verification. Until then: code stays portable, CI keeps running on both OSes (the update step's gate needs both `test (…)` jobs green), and nothing is checked on Windows by hand.
 - **No real brain exists yet**: the setup wizard has never run on `/mnt/data/BrainHub` = `D:\BrainHub`.
 
