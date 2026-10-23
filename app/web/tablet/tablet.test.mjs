@@ -121,3 +121,21 @@ test('storage that throws or is missing falls back', () => {
   const junk = memory(); junk.setItem('q', '{"not":"a list"}');
   assert.deepEqual(new SendQueue(new Store(junk), 'q').items, []);
 });
+
+test('new units never touch the text being typed (review)', () => {
+  const k = new Keyboard(['mm']);
+  k.reset('', 'number', false, 200);
+  k.press('4', 0); k.press('2', 0);
+  k.setUnits(['cm', 'mm']);
+  assert.equal(k.text, '42');
+  assert.equal(k.mode, 'num');
+  k.press('unit:cm', 0);
+  assert.equal(k.text, '42 cm');
+});
+
+test('a refused answer kept as a note goes back to the front of the queue', () => {
+  const q = new SendQueue(new Store(memory()), 'q');
+  q.push({ kind: 'note', text: 'later' });
+  q.unshift({ kind: 'note', text: 'first' });
+  assert.equal(q.peek().text, 'first');
+});

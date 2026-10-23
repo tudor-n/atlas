@@ -828,6 +828,8 @@ async def readonly_guard(request: web.Request, handler):
         return await handler(request)  # a tablet note or answer: its handler holds it (phase 3)
     if method == "POST" and path in _IGNORED_POSTS:
         return await ignored(request)
+    if request.get("lan") and "device" not in request:
+        return err(503, "BrainHub can't take that right now")  # nothing about the drive before pairing
     return await unavailable(request)
 
 

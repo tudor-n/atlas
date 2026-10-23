@@ -107,6 +107,13 @@ def _flush_held(app: web.Application) -> None:
     for entry_id in done.appended:
         if entry_id not in done.tablet:  # tablet notes are kept, never filed automatically (phase 3)
             app["worker"].mark_queued(entry_id)
+    store = app["store"]
+    for entry_id, request_id in done.answers.items():  # answers held while the root was read-only
+        req = store.get_request(request_id)
+        if req and req["status"] == "open":
+            store.set_request_answered(request_id, entry_id)
+    if done.answers:
+        store.export_tablet(app["paths"].brain)
     if done.elsewhere:
         n = len(done.elsewhere)
         folders = ", ".join(sorted({r["root"]["path"] for r in done.elsewhere}))
@@ -331,6 +338,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     # Phase 3: the tablet's pairing, its LAN listener (serve() hands it the runner) and change feed.
     app["feed"] = TabletFeed()
     app["pairing"] = Pairing(store)
+    app["answer_lock"] = asyncio.Lock()  # one answer at a time: two at once must not both land
     app["lan"] = LanSite(lambda: load_settings(paths), lambda: app["port"])
 
     async def usage_from_run(info: dict) -> None:

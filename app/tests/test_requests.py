@@ -195,3 +195,60 @@ def test_request_paths_in_runtime_mode(tmp_path):
     (state / "hook" / "request_client.py").write_text("", encoding="utf-8")
     python, script = ci.request_paths(state)
     assert script == str(state / "hook" / "request_client.py") and python == str(ci.base_python())
+
+
+# -- review: the CLAUDE.md block, edited only when it is exactly one whole-line pair -------------
+def test_a_damaged_block_is_refused_and_nothing_is_eaten(tmp_path):
+    md = tmp_path / "CLAUDE.md"
+    text = f"# rules\n{ci.MD_BEGIN}\n{ci.MD_LINE}\n(I removed the end marker)\nmore of my own notes\n"
+    md.write_text(text, encoding="utf-8")
+    with pytest.raises(ci.IntegrationError, match="CLAUDE.md"):
+        ci.install_request_command(md, tmp_path / "b", python="py", script="s", port=1)
+    with pytest.raises(ci.IntegrationError, match="CLAUDE.md"):
+        ci.uninstall_request_command(md, tmp_path / "b")
+    assert md.read_text(encoding="utf-8") == text
+
+
+def test_a_marker_quoted_in_my_own_text_is_left_alone(tmp_path):
+    md = tmp_path / "CLAUDE.md"
+    text = f"I once saw `{ci.MD_BEGIN}` in a file.\n"
+    md.write_text(text, encoding="utf-8")
+    ci.install_request_command(md, tmp_path / "b", python="py", script="s", port=1)
+    ci.uninstall_request_command(md, tmp_path / "b")
+    assert md.read_text(encoding="utf-8") == text
+
+
+def test_the_block_keeps_its_place_and_the_file_its_line_endings(tmp_path):
+    md = tmp_path / "CLAUDE.md"
+    md.write_bytes(b"# top\r\n\r\n")
+    ci.install_request_command(md, tmp_path / "b", python="py", script="s", port=1)
+    with open(md, "a", encoding="utf-8", newline="") as f:
+        f.write("# below, written later\r\n")
+    ci.install_request_command(md, tmp_path / "b", python="py", script="s", port=2)
+    raw = md.read_bytes()
+    assert b"\n" not in raw.replace(b"\r\n", b"")  # still CRLF throughout
+    lines = raw.decode("utf-8").split("\r\n")
+    assert lines.index(ci.MD_BEGIN) < lines.index("# below, written later")  # not moved to the end
+    assert raw.decode("utf-8").count(ci.MD_BEGIN) == 1
+
+
+def test_a_foreign_wrapper_is_found_before_settings_are_touched(tmp_path):
+    settings = _settings(tmp_path)
+    settings.write_text('{"theme": "dark"}', encoding="utf-8")
+    wrapper = ci.wrapper_path(osdirs.bin_dir())
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    with pytest.raises(ci.IntegrationError, match="isn't BrainHub's"):
+        ci.install(settings, python=sys.executable, script="x.py", port=8090, state_dir=osdirs.state_dir())
+    assert settings.read_text(encoding="utf-8") == '{"theme": "dark"}'
+    assert not list(settings.parent.glob("settings.json.brainhub-backup-*"))
+
+
+def test_windows_wrappers_and_percent_signs():
+    """Claude Code's Bash tool on Windows is Git Bash, which never tries .cmd for a bare name: an
+    extensionless sh shim goes beside the .cmd. A % in a path is doubled for cmd."""
+    files = ci.wrapper_files(r"C:\Py 3\python.exe", r"C:\100%\request_client.py", 8090, windows=True)
+    assert set(files) == {"brainhub-request.cmd", "brainhub-request"}
+    assert '"C:\\100%%\\request_client.py"' in files["brainhub-request.cmd"]
+    assert files["brainhub-request"].startswith("#!/bin/sh\n") and "'C:/Py 3/python.exe'" in files["brainhub-request"]
+    assert list(ci.wrapper_files("/usr/bin/python3", "/s.py", 1, windows=False)) == ["brainhub-request"]

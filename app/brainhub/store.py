@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS requests(
     created TEXT NOT NULL, status TEXT NOT NULL, answer_entry TEXT);
 CREATE TABLE IF NOT EXISTS tablet_hidden(
     kind TEXT NOT NULL, ref TEXT NOT NULL, hidden_at TEXT NOT NULL, PRIMARY KEY(kind, ref));
+CREATE TABLE IF NOT EXISTS tablet_sends(
+    client_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, at TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
     kind UNINDEXED, ref UNINDEXED, date UNINDEXED, body,
     tokenize='unicode61 remove_diacritics 2');
@@ -492,6 +494,18 @@ class Store:
             r = self._db.execute("SELECT * FROM requests WHERE answer_entry=?", (entry_id,)).fetchone()
         return self._request(r) if r else None
 
+    # what the tablet sent, by its own id: a resend after a lost response is never written twice
+    def sent_entry(self, client_id: str) -> str | None:
+        with self._lock:
+            r = self._db.execute("SELECT entry_id FROM tablet_sends WHERE client_id=?", (client_id,)).fetchone()
+        return r["entry_id"] if r else None
+
+    def record_sent(self, client_id: str, entry_id: str) -> None:
+        if self.readonly:
+            return
+        with self._lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO tablet_sends VALUES(?,?,?)", (client_id, entry_id, _now()))
+
     # IGNORE on the tablet: hidden, never deleted (spec §3.3)
     def hide(self, kind: str, ref: str) -> None:
         if kind not in HIDDEN_KINDS:
@@ -658,12 +672,12 @@ class Store:
         exported: their token hashes stay in hub.db, out of the brain's backup (phase 3 decisions)."""
         out = Path(brain) / "_items"
         out.mkdir(parents=True, exist_ok=True)
-        with self._lock:
+        with self._lock:  # snapshot and write together: two exports at once can't leave a stale file
             requests = sorted(self.list_requests(), key=lambda r: r["id"])
             hidden = [dict(r) for r in self._db.execute(
                 "SELECT kind, ref, hidden_at FROM tablet_hidden ORDER BY kind, ref").fetchall()]
-        _write_if_changed(out / "requests.json", requests)
-        _write_if_changed(out / "tablet.json", {"hidden": hidden})
+            _write_if_changed(out / "requests.json", requests)
+            _write_if_changed(out / "tablet.json", {"hidden": hidden})
 
     def restore_tablet_if_empty(self, brain: Path) -> int:
         """Rebuild requests and IGNOREs from their exports, each only into an empty table. A
@@ -714,11 +728,15 @@ class Store:
 
 
 def _write_if_changed(path: Path, data) -> None:
+    """Deterministic JSON, rewritten only when it changed, and atomically: a reader (or a crash)
+    never sees half a file."""
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     if path.exists() and path.read_text(encoding="utf-8", errors="replace") == text:
         return
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
+    os.replace(tmp, path)
 
 
 def _load_json_list(path: Path) -> list:

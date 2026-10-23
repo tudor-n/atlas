@@ -91,6 +91,7 @@
   SendQueue.prototype.push = function (item) { this.items.push(item); this._save(); };
   SendQueue.prototype.peek = function () { return this.items.length ? this.items[0] : null; };
   SendQueue.prototype.shift = function () { var x = this.items.shift(); this._save(); return x; };
+  SendQueue.prototype.unshift = function (item) { this.items.unshift(item); this._save(); };  // keeps the order typed
   SendQueue.prototype.size = function () { return this.items.length; };
   SendQueue.prototype.has = function (pred) {
     for (var i = 0; i < this.items.length; i++) if (pred(this.items[i])) return true;

@@ -10,6 +10,7 @@ import ipaddress
 import logging
 import secrets
 import socket
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -46,6 +47,7 @@ class Pairing:
         self._expires = 0.0
         self._tries = 0
         self._touched: dict[str, float] = {}
+        self._lock = threading.Lock()  # redeem runs in worker threads: one at a time
 
     def new_code(self) -> dict:
         self._code = f"{secrets.randbelow(10 ** 6):06d}"
@@ -55,17 +57,21 @@ class Pairing:
     def _clear(self) -> None:
         self._code, self._tries = None, 0
 
+    # One message for every failure: it never tells a neighbour on the Wi-Fi whether a code is live.
+    REFUSED = "that code isn't right, or it ran out: make a new one in BrainHub's Settings on the PC"
+
     def redeem(self, code, name) -> str:
-        if self._code is None or self.now() > self._expires:
-            self._clear()
-            raise PairingError("no pairing code is active: make one in BrainHub's Settings on the PC")
-        if not isinstance(code, str) or not hmac.compare_digest(code.strip(), self._code):
-            self._tries += 1
-            if self._tries >= CODE_TRIES:
+        with self._lock:
+            if self._code is None or self.now() > self._expires:
                 self._clear()
-                raise PairingError("wrong code, too many tries: make a new one in Settings")
-            raise PairingError("wrong code")
-        self._clear()
+                raise PairingError(self.REFUSED)
+            given = code.strip().encode("utf-8") if isinstance(code, str) else b""
+            if not hmac.compare_digest(given, self._code.encode("ascii")):
+                self._tries += 1
+                if self._tries >= CODE_TRIES:
+                    self._clear()
+                raise PairingError(self.REFUSED)
+            self._clear()
         name = name.strip()[:40] if isinstance(name, str) and name.strip() else DEFAULT_NAME
         token = secrets.token_urlsafe(32)
         self.store.add_device(name, token_hash(token))
@@ -148,6 +154,10 @@ class LanSite:
             try:
                 await site.start()
             except OSError as e:
+                try:
+                    await site.stop()  # start() registered it before the bind failed
+                except Exception:
+                    pass
                 if self.error != str(e):
                     log.warning("tablet over Wi-Fi: can't listen on %s:%s (%s)", want, self._port(), e)
                 self.error = str(e)
@@ -171,7 +181,7 @@ class LanSite:
         used (in tests, 127.0.0.2)."""
         sock = request.transport.get_extra_info("sockname") if request.transport else None
         if not sock:
-            return False
+            return True  # unknown: judged as the LAN, the stricter side
         ip = sock[0]
         if ip in self._used:
             return True
@@ -237,7 +247,7 @@ async def lan_guard(request: web.Request, handler):
     if lan is None or not lan.is_lan(request):
         return await handler(request)
     request["lan"] = True
-    if not lan_path_allowed(request.path):
+    if not lan_path_allowed(request.path) or "/.." in request.path or "//" in request.path:
         return _deny(403, "not available over Wi-Fi")
     if lan.bound is None or request.url.host != lan.bound:
         return _deny(403, "forbidden host")

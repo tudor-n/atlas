@@ -6,9 +6,14 @@
   var SHIFT_LOCK_MS = 400;  // a second tap on shift within this locks caps
 
   function Keyboard(units) {
-    this.units = (units || []).slice().sort(function (a, b) { return b.length - a.length; });
+    this.setUnits(units);
     this.reset('', 'text', false, 20000);
   }
+
+  // New units from Settings change the chips only, never what is being typed.
+  Keyboard.prototype.setUnits = function (units) {
+    this.units = (units || []).slice().sort(function (a, b) { return b.length - a.length; });
+  };
 
   // kind: 'text' (notes; letters first) or 'number' (a measurement: keypad and unit chips first).
   Keyboard.prototype.reset = function (text, kind, multiline, max) {

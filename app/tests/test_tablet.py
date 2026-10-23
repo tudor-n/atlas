@@ -33,7 +33,7 @@ def test_pairing_code_is_six_digits_and_single_use(store):
     dev = p.device(token)
     assert dev["name"] == "Workbench tablet" and store.device_by_hash(tablet.token_hash(token))
     assert token not in str(store.list_devices())
-    with pytest.raises(tablet.PairingError, match="no pairing code"):
+    with pytest.raises(tablet.PairingError, match="isn't right"):
         p.redeem(code, "again")  # used up
 
 
@@ -42,7 +42,7 @@ def test_pairing_code_expires(store):
     p = tablet.Pairing(store, now=clock)
     code = p.new_code()["code"]
     clock.t += tablet.CODE_TTL_S + 1
-    with pytest.raises(tablet.PairingError, match="no pairing code"):
+    with pytest.raises(tablet.PairingError, match="isn't right"):
         p.redeem(code, "x")
 
 
@@ -50,12 +50,10 @@ def test_five_wrong_codes_cancel_it(store):
     p = tablet.Pairing(store, now=Clock(1000))
     code = p.new_code()["code"]
     wrong = "000000" if code != "000000" else "111111"
-    for _ in range(tablet.CODE_TRIES - 1):
-        with pytest.raises(tablet.PairingError, match="wrong code"):
+    for _ in range(tablet.CODE_TRIES):
+        with pytest.raises(tablet.PairingError, match="isn't right"):
             p.redeem(wrong, "x")
-    with pytest.raises(tablet.PairingError, match="make a new one"):
-        p.redeem(wrong, "x")
-    with pytest.raises(tablet.PairingError, match="no pairing code"):
+    with pytest.raises(tablet.PairingError, match="isn't right"):
         p.redeem(code, "x")  # even the right one is gone now
 
 
@@ -167,6 +165,8 @@ async def test_pairing_over_the_lan_sets_a_strict_cookie(hub):
     ("GET", "/api/today"), ("GET", "/api/state"), ("GET", "/api/devices"), ("GET", "/"),
     ("POST", "/api/devices/pairing-code"), ("POST", "/api/requests"), ("GET", "/static/js/app.js"),
     ("GET", "/widget"), ("POST", "/api/entries"), ("GET", "/api/ask?q=x"), ("GET", "/ws"),
+    ("GET", "/api/tablet-notes"), ("GET", "/api/tablet-lan"), ("POST", "/api/tablet-notes/e-1/file"),
+    ("GET", "/api/requests"), ("GET", "/api/tablet/../today"), ("GET", "/api/tablet%2F..%2Ftoday"),
 ])
 async def test_the_lan_reaches_only_the_tablet_even_when_paired(hub, method, path):
     app, http, pc, lan, _ = hub
@@ -191,7 +191,7 @@ async def test_lan_host_and_origin_checks(hub):
 async def test_wrong_codes_over_the_lan(hub):
     app, http, pc, lan, _ = hub
     async with http.post(lan + "/api/tablet/pair", json={"code": "123456"}) as r:
-        assert r.status == 400 and "no pairing code" in (await r.json())["error"]
+        assert r.status == 400 and "isn't right" in (await r.json())["error"]
     async with http.post(lan + "/api/tablet/pair", data="{}", headers={"Content-Type": "text/plain"}) as r:
         assert r.status == 415
 
@@ -203,3 +203,42 @@ async def test_pc_can_open_the_tablet_api_without_pairing(aiohttp_client, paths)
     assert r.status == 200 and (await r.json())["device"] is None  # localhost: the owner's preview
     code = await (await c.post("/api/devices/pairing-code", json={})).json()
     assert len(code["code"]) == 6 and code["expires_in"] == tablet.CODE_TTL_S
+
+
+# -- review -----------------------------------------------------------------------------------------
+def test_odd_codes_are_wrong_codes_and_the_message_gives_nothing_away(store):
+    p = tablet.Pairing(store, now=Clock(1000))
+    with pytest.raises(tablet.PairingError) as none:
+        p.redeem("123456", "x")
+    p.new_code()
+    with pytest.raises(tablet.PairingError) as wrong:
+        p.redeem("１２３４５６", "x")  # full-width digits: no TypeError, just wrong
+    assert str(none.value) == str(wrong.value)  # no oracle for whether a code is live
+
+
+def test_is_lan_fails_closed_without_a_socket():
+    class Req:
+        transport = None
+    assert tablet.LanSite(lambda: {}, lambda: 1).is_lan(Req()) is True
+
+
+async def test_a_failed_bind_leaks_no_site(paths):
+    app = create_app(paths, runner=make_runner(), start_workers=False)
+    app["port"] = free_port()
+    app["lan"].configure(settings=Settings(tablet_address="192.0.2.1"), holds=lambda a: True)  # never ours: bind fails
+    runner = web.AppRunner(app)
+    await runner.setup()
+    try:
+        app["lan"].runner = runner
+        for _ in range(4):
+            await app["lan"].sync()
+        assert app["lan"].bound is None and app["lan"].error and len(runner.sites) == 0
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS has only 127.0.0.1 on lo0")
+async def test_the_cookie_also_has_expires(hub):
+    app, http, pc, lan, _ = hub
+    r = await _pair(http, pc, lan)
+    assert r.cookies[tablet.COOKIE]["expires"]

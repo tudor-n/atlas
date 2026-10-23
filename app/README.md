@@ -194,7 +194,7 @@ All typing uses an in-page keyboard, so the Android keyboard never opens. On the
 
 **IGNORE** on the tablet needs a second tap within 2 s. It hides a note or request without deleting it, and **Show ignored** on the PC brings it back.
 
-**ROBOT and HOME:** ROBOT opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, because the arm keeps moving when its page goes. This needs the arm project's `brainhub-home` branch.
+**ROBOT and HOME:** ROBOT opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `brainhub-home` branch.
 
 ## Claude Code sync (`claude-sync`)
 `python -m brainhub claude-sync` keeps your own Claude Code the same on both OSes through the shared store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`). Your login, sessions, history and plugin installs stay per OS.
@@ -414,7 +414,7 @@ These checks ran on Kubuntu without the tablet itself. A scratch hub ran on port
 | A free-text note | **⇧ SHIFT** then `bench ok`, then **SAVE** → `Bench ok` in Tablet notes, not filed |
 | HOME | held 0.8 s → home screen |
 | Console errors | none |
-| The arm UI's HOME (`server.py --sim --no-camera` from a scratch copy, port 8098) | no `?home=` → "ARM-6"; `?home=javascript:…` → refused; `?home=<tablet>` → "‹ HOME", kept across a reload; one tap → nothing; held while LIVE on → amber "LIVE ON", stayed; LIVE off, two taps → left for the tablet page |
+| The arm UI's HOME (`server.py --sim --no-camera` from a scratch copy, port 8098), after its review | no `?home=` → "ARM-6"; `?home=javascript:…` or a URL not ending in `/tablet` → refused; `?home=<tablet>` → "‹ HOME", and not remembered on the next plain visit; one tap → nothing; held while LIVE on → amber "LIVE ON", stayed; LIVE just asked for → "LIVE ON"; another control held → "LET GO"; LIVE off, two taps → left for the tablet page; server killed → "WAIT" at first, allowed after 5 s out of reach |
 
 The first run of the arm check caught a real bug (phase 3 decisions T16): the HOME action had been named `home`, which is the arm UI's **Start pose** action.
 

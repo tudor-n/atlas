@@ -133,8 +133,10 @@ def _for_root(record: dict, root: dict) -> bool:
 
 
 # -- hold --------------------------------------------------------------------
-def hold(state_dir: Path, paths: Paths, text: str, source: str, now: datetime) -> dict:
-    """Hold one capture for the root at `paths`, verbatim, with its timestamp and source. Validates
+def hold(state_dir: Path, paths: Paths, text: str, source: str, now: datetime,
+         request: str | None = None) -> dict:
+    """Hold one capture for the root at `paths`, verbatim, with its timestamp and source (and, for a
+    tablet measurement answer, the request it answers, linked once it is flushed). Validates
     as append_entry does (blank text or an unknown source raise ValueError). The file is written to
     a tmp, fsynced and put in place without overwriting anything (an id another process took in the
     same second draws a new one), durably: only after this returns may the API say "saved"."""
@@ -151,6 +153,8 @@ def hold(state_dir: Path, paths: Paths, text: str, source: str, now: datetime) -
         while True:
             entry_id = rawlog.new_entry_id(ts)
             record = {"id": entry_id, "ts": ts.isoformat(), "source": source, "text": text, "root": root}
+            if request:
+                record["request"] = request
             path = folder / f"{entry_id}.json"
             tmp = folder / f"{entry_id}.json.{os.getpid()}.tmp"
             try:
@@ -204,6 +208,8 @@ def _load(path: Path, name: str | None = None) -> dict:
                 and (root.get("id") is None or isinstance(root["id"], str))):
             raise ValueError("root is not {id, path}")
         record["root"] = {"id": root.get("id") or None, "path": root["path"]}
+    if isinstance(data.get("request"), str) and data["request"]:
+        record["request"] = data["request"]
     return record
 
 
@@ -282,6 +288,7 @@ class Flushed:
     appended: list[str] = field(default_factory=list)
     elsewhere: list[dict] = field(default_factory=list)
     tablet: list[str] = field(default_factory=list)  # appended ids from the tablet: never auto-filed
+    answers: dict[str, str] = field(default_factory=dict)  # appended answer id -> the request it answers
 
 
 def flush(state_dir: Path, paths: Paths, store, problems: list | None = None) -> Flushed:
@@ -332,6 +339,8 @@ def flush(state_dir: Path, paths: Paths, store, problems: list | None = None) ->
             done.appended.append(r["id"])
             if r.get("source") == "tablet":
                 done.tablet.append(r["id"])
+                if r.get("request"):
+                    done.answers[r["id"]] = r["request"]
         try:
             path.unlink()  # only now: the log has it
         except OSError as e:

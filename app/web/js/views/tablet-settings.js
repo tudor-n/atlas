@@ -9,6 +9,8 @@ export async function renderTabletSettings(box, isDead) {
   const pairBox = el('div', {});
   const devBox = el('div', {});
   let codeTimer = null;
+  let code = null;  // the pairing code on show, kept across redraws until it runs out or is used
+  let devices = null;  // how many were paired at the last look: one more means the code was used
 
   function say(text, ok) {
     clear(msg);
@@ -45,23 +47,26 @@ export async function renderTabletSettings(box, isDead) {
       msg,
       el('h3', {}, 'Pairing'), pairBox,
       el('h3', {}, 'Paired devices'), devBox));
-    drawPair(null);
+    drawPair();
   }
 
-  function drawPair(code) {
+  function drawPair() {
     if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
     clear(pairBox);
+    if (code && code.until <= Date.now()) code = null;
     if (!code) {
       pairBox.appendChild(el('div', { class: 'actions' }, el('button', { type: 'button', onclick: async () => {
-        try { const c = await api.post('/api/devices/pairing-code', {}); if (!isDead()) drawPair(c); } catch (e) { say(e.message); }
+        try {
+          const c = await api.post('/api/devices/pairing-code', {});
+          if (!isDead()) { code = { code: c.code, until: Date.now() + c.expires_in * 1000 }; drawPair(); }
+        } catch (e) { say(e.message); }
       } }, 'Pair a device')));
       return;
     }
-    const until = Date.now() + code.expires_in * 1000;
     const left = el('span', { class: 'meta' });
     const tick = () => {
-      const s = (until - Date.now()) / 1000;
-      if (s <= 0 || isDead()) { drawPair(null); return; }
+      const s = (code.until - Date.now()) / 1000;
+      if (s <= 0 || isDead()) { code = null; drawPair(); return; }
       left.textContent = `valid for ${countdown(s)}`;
     };
     pairBox.appendChild(el('div', {},
@@ -75,6 +80,8 @@ export async function renderTabletSettings(box, isDead) {
     try {
       const list = await api.get('/api/devices');
       if (isDead()) return;
+      if (devices !== null && list.length > devices && code) { code = null; drawPair(); }  // it was used
+      devices = list.length;
       clear(devBox);
       if (!list.length) { devBox.appendChild(el('p', { class: 'empty' }, 'None yet.')); return; }
       devBox.appendChild(el('ul', { class: 'rows' }, list.map((d) => el('li', { class: 'row' },
@@ -98,6 +105,6 @@ export async function renderTabletSettings(box, isDead) {
   }
 
   await load();
-  const off = api.onEvent('devices.changed', () => { drawPair(null); loadDevices(); });
+  const off = api.onEvent('devices.changed', () => { loadDevices(); });
   return () => { off(); if (codeTimer) clearInterval(codeTimer); };
 }

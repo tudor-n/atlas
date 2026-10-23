@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import datetime
+from email.utils import formatdate
 
 from aiohttp import web
 
@@ -25,6 +27,17 @@ TITLE_MAX, ITEM_MAX, ITEMS_MAX = 80, 120, 20
 ANSWER_MAX, NOTE_MAX = 200, 20000
 WAIT_S = 25.0  # the long-poll's longest wait (design §6.4)
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+
+def _client_id(body: dict) -> str | None:
+    """The tablet's own id for one send (optional): a resend after a lost response carries it again."""
+    cid = body.get("client_id")
+    if cid is None:
+        return None
+    if not isinstance(cid, str) or not _CLIENT_ID.fullmatch(cid):
+        raise ValueError("client_id must be 8-64 letters, digits, '-' or '_'")
+    return cid
 
 
 def _text(value, limit: int, what: str) -> str:
@@ -134,6 +147,7 @@ async def list_requests(request: web.Request) -> web.Response:
 
 async def _set_hidden(request: web.Request, kind: str, ref: str, hide: bool) -> None:
     app = request.app
+    _need_setup(app)  # it exports into brain/_items: never before the wizard ran
     store = app["store"]
     exists = (await t(store.get_request, ref)) if kind == "request" else (await t(store.get_entry, ref))
     if exists is None or (kind == "note" and exists.source != "tablet"):
@@ -155,10 +169,12 @@ async def restore_request(request: web.Request) -> web.Response:
 
 
 # -- capturing on the tablet: the raw log first, or this OS's holding inbox ---------------------
-async def _capture(request: web.Request, text: str) -> tuple[str, bool]:
+async def _capture(request: web.Request, text: str, client_id: str | None = None,
+                   request_id: str | None = None) -> tuple[str, bool]:
     """Write a tablet capture verbatim (rule 1), source "tablet", indexed for recall and never
     queued for filing (owner): (entry id, held). A read-only or vanished root holds it on this OS
-    instead, as a PC capture is held (rule 14)."""
+    instead, as a PC capture is held (rule 14). `client_id` is recorded with the entry, so a resend
+    of the same capture finds it (see _resent)."""
     app = request.app
     if not setup_done(app) and app["root_status"].state != "ok":
         raise web.HTTPConflict(reason="run setup first")
@@ -169,12 +185,15 @@ async def _capture(request: web.Request, text: str) -> tuple[str, bool]:
             log.error("the raw log can't be written (%s); the tablet capture is held on this OS", e)
         else:
             try:
+                if client_id:
+                    await t(app["store"].record_sent, client_id, entry.id)
                 await t(app["store"].add_entry, entry)
                 await t(app["store"].index_entry, entry)
             except Exception:  # the log has it; startup backfill recovers the index
                 log.exception("tablet entry %s saved to the log but not indexed", entry.id)
             return entry.id, False
-    record = await t(holding.hold, osdirs.state_dir(), app["paths"], text, "tablet", datetime.now())
+    record = await t(holding.hold, osdirs.state_dir(), app["paths"], text, "tablet", datetime.now(),
+                     request_id)  # an answer held: linked to its request once it is flushed
     return record["id"], True
 
 
@@ -195,6 +214,9 @@ async def tablet_state(request: web.Request) -> web.Response:
     app = request.app
     if not setup_done(app):
         raise web.HTTPConflict(reason="run setup on the PC first")
+    # Read first: a change landing while the state is gathered then leaves the tablet behind the
+    # feed, so its next wait answers at once, instead of holding a newer version with older data.
+    version = app["feed"].version
 
     def gather() -> dict:
         store = app["store"]
@@ -208,7 +230,7 @@ async def tablet_state(request: web.Request) -> web.Response:
     data = await t(gather)
     reachable = await app["arm"].reachable(data["arm_url"])
     return web.json_response(build_tablet_state(
-        version=app["feed"].version, device=request.get("device"), arm_reachable=reachable,
+        version=version, device=request.get("device"), arm_reachable=reachable,
         host=request.host, now=datetime.now(), **data))
 
 
@@ -221,14 +243,26 @@ async def tablet_wait(request: web.Request) -> web.Response:
     return web.json_response({"version": await request.app["feed"].wait(since, WAIT_S)})
 
 
+async def _resent(app: web.Application, client_id: str | None) -> web.Response | None:
+    """The answer to a resend whose first try already landed (its response was lost on the way)."""
+    if client_id and app["root_status"].state != "readonly":
+        entry_id = await t(app["store"].sent_entry, client_id)
+        if entry_id:
+            return web.json_response({"entry_id": entry_id, "held": False, "duplicate": True})
+    return None
+
+
 async def tablet_note(request: web.Request) -> web.Response:
     body = await body_dict(request)
-    text = body.get("text")
+    text, client_id = body.get("text"), _client_id(body)
     if not isinstance(text, str) or not text.strip():
         raise ValueError("the note is blank")
     if len(text) > NOTE_MAX:
         raise ValueError(f"the note is longer than {NOTE_MAX} characters")
-    entry_id, held = await _capture(request, text)
+    again = await _resent(request.app, client_id)
+    if again is not None:
+        return again
+    entry_id, held = await _capture(request, text, client_id)
     if not held:
         await request.app["broadcast"]("tablet.changed", {})
     return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
@@ -236,12 +270,22 @@ async def tablet_note(request: web.Request) -> web.Response:
 
 async def tablet_answer(request: web.Request) -> web.Response:
     app = request.app
+    body = await body_dict(request)
+    async with app["answer_lock"]:  # check, write and close as one: two answers at once land once
+        return await _answer(request, app, body)
+
+
+async def _answer(request: web.Request, app: web.Application, body: dict) -> web.Response:
+    client_id = _client_id(body)
+    again = await _resent(app, client_id)  # before "already answered": this very answer may be it
+    if again is not None:
+        return again
     req = await t(app["store"].get_request, request.match_info["request_id"])
     if req is None:
         raise web.HTTPNotFound(reason="unknown request")
     if req["status"] != "open":
         raise web.HTTPConflict(reason="this request was already answered")
-    raw = (await body_dict(request)).get("answers")
+    raw = body.get("answers")
     if not isinstance(raw, dict):
         raise ValueError("answers must be an object: item number to value")
     answers: dict[int, str] = {}
@@ -257,10 +301,13 @@ async def tablet_answer(request: web.Request) -> web.Response:
         answers[i] = _text(value, ANSWER_MAX, f"the answer to item {i + 1}")
     if not answers:
         raise ValueError("fill in at least one value")
-    entry_id, held = await _capture(request, answer_text(req, answers))
+    entry_id, held = await _capture(request, answer_text(req, answers), client_id, req["id"])
     if not held:
-        await t(app["store"].set_request_answered, req["id"], entry_id)
-        await _tablet_changed(app, "requests.changed")
+        try:  # the log has it now: whatever fails next, the answer is saved and a resend would duplicate it
+            await t(app["store"].set_request_answered, req["id"], entry_id)
+            await _tablet_changed(app, "requests.changed")
+        except Exception:
+            log.exception("answer %s to %s is in the raw log, but closing the request failed", entry_id, req["id"])
     return web.json_response({"entry_id": entry_id, "held": held}, status=200 if held else 201)
 
 
@@ -308,6 +355,7 @@ async def file_tablet_note(request: web.Request) -> web.Response:
     """"File this" (owner): the note goes through the normal filing, and its confirm card."""
     _pc_only(request)
     app = request.app
+    _need_setup(app)
     e = await _tablet_entry(request)
     f = await t(app["store"].get_filing, e.id)
     if f and f.status in ("queued", "running"):
@@ -352,7 +400,10 @@ async def pair(request: web.Request) -> web.Response:
     token = await t(app["pairing"].redeem, body.get("code"), body.get("name"))
     device = await t(app["pairing"].device, token)
     resp = web.json_response({"device": device})
-    resp.set_cookie(COOKIE, token, max_age=COOKIE_MAX_AGE, path="/", httponly=True, samesite="Strict")
+    # Expires as well as Max-Age: the old Android WebKit may only honour Expires.
+    expires = formatdate(time.time() + COOKIE_MAX_AGE, usegmt=True)
+    resp.set_cookie(COOKIE, token, max_age=COOKIE_MAX_AGE, expires=expires, path="/", httponly=True,
+                    samesite="Strict")
     await app["broadcast"]("devices.changed", {})
     return resp
 

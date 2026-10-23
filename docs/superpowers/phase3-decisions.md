@@ -61,16 +61,62 @@ The build-time calls made while building phase 3 (the workbench tablet, 2026-10-
 - **T16:** the arm UI's HOME action is named `bhhome`, **never `home`**.
   - `home` is the arm UI's existing **Start pose** action (`send({type:'home'})`). A second `act('home')` would be overwritten by it, so tapping HOME would have moved the arm.
   - Found in the sim run (`server.py --sim --no-camera`, from a scratch copy).
-  - `?home=` accepts only `http(s)://` URLs (never `javascript:`) and is kept in `localStorage`.
+  - `?home=` accepts only an `http(s)://` address ending in `/tablet` (never `javascript:`, and no open redirect), and it is **not** remembered: without it the page is unchanged.
+  - The review (arm commit `d12853b`) widened "refused while LIVE" to cover every case where leaving would strand the arm:
+    - **the state is unknown:** before the first state arrives, and in the first 5 s of losing the server ("WAIT"). Once the server has been out of reach for 5 s, leaving is allowed, since that page couldn't STOP it either;
+    - **LIVE is on:** whether already confirmed, or a LIVE-on sent in the last 2 s that the state hasn't confirmed yet ("LIVE ON");
+    - **another control is held:** "LET GO". Otherwise a held grip button would keep its target after the page goes, and spin the gripper at the next LIVE.
+  - Two fingers on HOME count as one press, and leaving uses `location.replace`, which adds no history entries.
+
+**From the reviews after the build (2026-10-23)**
+
+- **T17, nothing typed is lost:**
+  - What is being typed lives in memory first; `localStorage` is only its backup. A WebView with DOM storage off used to lose every value, and reading `window.localStorage` itself is now guarded.
+  - NOTES re-renders while the keyboard is open only when requests or notes really changed. SET runs its field's action before any held-back re-render, so the next field it opens is the one on screen. The bug: after an agent event mid-typing, values went into a detached copy and the card showed blanks.
+  - New units from Settings swap the chips in place. They used to replace the keyboard and drop the text.
+  - Every key press clears a running ⌫ repeat. With two fingers on ⌫, a repeat used to erase the note.
+  - A refused note is joined to whatever is in the note box, never written over it.
+- **T18, no duplicate entries:** every send from the tablet carries a client id.
+  - The hub records it with the entry (`tablet_sends`, part of schema 3, which is unreleased), so a resend after a lost response returns the first entry (`duplicate: true`) instead of writing again.
+  - For an answer this check runs before "already answered", so a resend is never turned into a second note.
+- **T19, the state's version is read before the data.** A change landing while the state is gathered then makes the next long-poll answer at once. Before, the tablet held a newer version with older data.
+- **T20, answers:** answers run one at a time (`answer_lock`), so simultaneous answers land once and the rest get 409. Once an answer is in the raw log, the reply is 201 even if closing the request fails; a 500 would make the tablet resend and duplicate it.
+- **T21, held answers:** an answer held on a read-only root carries its request id (`holding.hold(request=…)`). The startup flush links it to the request if that is still open.
+- **T22, `CLAUDE.md`:**
+  - Our block is found only as whole marker lines, and only as exactly one BEGIN followed by one END. Anything else is refused (`IntegrationError`, nothing changed). A missing END marker used to let a reinstall delete the owner's text between stray markers.
+  - The block stays where it is, and the file keeps its own line endings (CRLF too: it's read as bytes).
+- **T23, the wrapper:**
+  - A foreign `brainhub-request` is found before `settings.json` is touched.
+  - On Windows an extensionless sh shim goes beside the `.cmd`, because Claude Code's Bash tool there is Git Bash, which never tries `.cmd` for a bare name. A `%` in a path is doubled for cmd.
+- **T24, pairing:** every failure gives the same message, so it never tells a neighbour whether a code is live. Codes are compared as bytes (a non-ASCII code was a 500), and `redeem` holds a lock. The cookie carries `Expires` as well as `Max-Age`.
+- **T25, the LAN guard:**
+  - A request whose local socket can't be read is judged as LAN, the stricter side.
+  - Paths with `/..` or `//` are refused outright.
+  - On a read-only root, an unpaired LAN request learns nothing about the drive (a plain 503).
+- **T26, robustness:**
+  - The tablet exports are written atomically, and under the store lock.
+  - `LanSite` stops a site whose bind failed; each retry used to leak one.
+  - IGNORE, restore and File this need setup (409 before), like the rest.
+- **T27, the page:**
+  - JOURNAL shows "Can't reach BrainHub. Retrying…" and dims what it shows while the hub is out of reach (design §6.5).
+  - ROBOT looks again before refusing on a stale "offline".
+  - The page fits itself again on resize.
+  - Ctrl, Alt and Meta combos are left to the browser.
+  - An ignored request's drafts are dropped.
+  - The tap highlight is transparent, `rgba(0,0,0,0)`, as in the arm UI. An opaque one would cover the press feedback; it's the lint's one allowed alpha.
+  - The PC keeps a valid pairing code on screen across a Save or a revoke.
+  - The ES5 lint now also refuses default parameters, destructuring, shorthand methods, computed keys, `NodeList.forEach`, `Element.matches` and listener option objects.
 
 ## Residuals (to check on the device or later)
 
 - **On the SM-T110, with Fully Kiosk:**
   - that WebSocket really is absent (it doesn't matter: the page never uses it);
   - that the `bh_device` cookie survives a Fully Kiosk restart (if it doesn't, the tablet shows its pairing screen again);
-  - that the glyphs `⌫ ↵ ⇧ ⌄ ‹ → ·` render in Roboto/Droid;
+  - that the glyphs `⌫ ↵ ⇧ ⇪ ⌄ ‹ → · − Ω` render in Roboto/Droid;
+  - that DOM storage is on in Fully Kiosk: drafts and the send queue survive a reload only through it (without it they live in memory until the page reloads);
   - that a tab switch has no visible lag.
 - **The ES5 guard is a pattern check over comments-and-strings-stripped code, not a parser.** It refuses the ES2015+ syntax and the DOM APIs Android 4.2 lacks that we know of; something newer it doesn't list would slip through. The device check closes that gap.
 - **Only the first 12 of `tablet_units` get a chip on the keypad.** More can still be typed with ABC.
 - **Windows (on hold):** binding the LAN address on Windows will raise a firewall prompt for `python.exe`, and the Windows rollout must allow port 8090 on the private profile. A Windows hub on a commit before schema 3 refuses this `hub.db` as newer, so both OSes update together.
+- **No rate limit for a paired device:** a paired (or stolen) cookie can send unlimited notes, each up to 20,000 characters, into the append-only log. Revoke it in Settings.
 - **The arm server itself** listens on `0.0.0.0:8080` with no authentication. That's the arm project's existing behaviour and outside BrainHub's scope; it is noted here because the tablet now opens it.
