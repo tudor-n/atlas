@@ -139,7 +139,7 @@ test('the pop-up: seen ids parse, prune and decide what is new', async () => {
   assert.deepEqual(m.unseenIds([], null), []);
   assert.deepEqual(m.pruneSeen(new Set(['e-1', 'e-9']), ['e-1', 'e-2']), ['e-1']);
   assert.deepEqual(m.pruneSeen(['e-9'], []), []);
-  assert.equal(m.REVIEW_SEEN_KEY, 'brainhub.review.seen');
+  assert.equal(m.REVIEW_SEEN_KEY, 'atlas.review.seen');
 });
 
 test('the pop-up opens by itself only for something new, never over typing or when read-only', async () => {
