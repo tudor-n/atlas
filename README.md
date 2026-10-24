@@ -1,4 +1,4 @@
-# BrainHub
+# Atlas
 
 A personal, local second brain for one owner. Free-text entries are written verbatim to an append-only log, then filed by a headless Claude Code agent into a git-versioned Markdown `brain/`. The agent proposes next-time notes, deadlines, reminders and waiting-on items; nothing becomes a task until you confirm it.
 
