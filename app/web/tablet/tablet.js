@@ -1,5 +1,6 @@
-// ATLAS on the workbench tablet (phase 3 design §6): pairing, a home screen with ROBOT and
-// JOURNAL, and JOURNAL's TODAY · NOTES · AGENTS, with an in-page keyboard for all typing.
+// ATLAS on the workbench tablet (phase 3 design §6): pairing, a home screen with DUMMY (the arm)
+// and ATLAS (the journal), and the journal's TODAY · NOTES · AGENTS, with an in-page keyboard for
+// all typing.
 // Plain ES5 for the SM-T110's Android 4.2 WebKit: no modules, no fetch, no WebSocket (the hub is
 // long-polled), and text only ever enters the page as text nodes (rule 6).
 (function () {
@@ -184,22 +185,35 @@
     var t = at(h('div', 'abs', 'Set up ATLAS on the PC first.'), 40, 72); t.style.fontSize = '26px'; e.appendChild(t);
   })();
 
-  // home: ROBOT and JOURNAL (spec §3.3)
+  // home: DUMMY (the arm UI) and ATLAS (the journal), spec §3.3. Each tile is the logo handoff's
+  // hero lockup: the mark, then a column of the wordmark, DUMMY's cable ribbon (GND, V+, signal)
+  // or ATLAS's rule, and the tagline; its live status line sits at the bottom.
   var home = {};
   (function () {
     var e = screen('home');
-    lockup(e, 24);
     home.clock = at(h('div', 'abs mono'), 880, 28, 104); home.clock.style.textAlign = 'right'; home.clock.style.fontSize = '16px';
     e.appendChild(home.clock);
-    function block(x, name, sub) {
-      var b = at(h('div', 'mode'), x, 90); b.appendChild(h('div', 'name', name));
+    function block(x, name, word, tag) {
+      var b = at(h('div', 'mode'), x, 90);
+      b.appendChild(logo(name, 32, 92, 104));
+      var col = h('div', 'hero');  // as wide as its wordmark, so the ribbon or rule matches it
+      col.appendChild(h('div', 'word mono', word));
+      if (name === 'dummy') {
+        var ribbon = h('div', 'ribbon');
+        ribbon.appendChild(h('i', 'gnd')); ribbon.appendChild(h('i', 'vp')); ribbon.appendChild(h('i', 'sig'));
+        col.appendChild(ribbon);
+      } else {
+        col.appendChild(h('div', 'rule'));
+      }
+      col.appendChild(h('div', 'tag mono', tag));
+      b.appendChild(col);
+      b.appendChild(h('div', 'sep'));
       var dot = h('div', 'dot'); b.appendChild(dot);
       var s = h('div', 'sub dim ellip'); b.appendChild(s); e.appendChild(b);
       return { el: b, dot: dot, sub: s };
     }
-    home.robot = block(40, 'ROBOT');
-    home.robot.el.appendChild(logo('dummy', 32, 32, 56));  // the arm's own mark: DUMMY
-    home.journal = block(532, 'JOURNAL');
+    home.robot = block(40, 'dummy', 'DUMMY', '6-DOF ARM · MG996R');
+    home.journal = block(532, 'atlas', 'ATLAS', 'TASKS · ASSISTANT');
     home.msg = at(h('div', 'abs amber'), 40, 492, 900); home.msg.style.fontSize = '17px'; e.appendChild(home.msg);
     home.who = at(h('div', 'abs faint'), 40, 548, 900); home.who.style.fontSize = '15px'; e.appendChild(home.who);
     onTap(home.robot.el, function () {
