@@ -1,7 +1,7 @@
 # Phase 2 build ledger (copied from the git-ignored SDD workspace at the end of the build, 2026-10-21)
 
-Spec: docs/superpowers/specs/2026-10-21-brainhub-phase2-design.md (parent: 2026-10-20-brainhub-design.md)
-Branch: phase-2 (main checkout D:\BrainHub, not master). Branch base: 305c836 (merge-base with master: 1e41a5f)
+Spec: docs/superpowers/specs/2026-10-21-atlas-phase2-design.md (parent: 2026-10-20-atlas-design.md)
+Branch: phase-2 (main checkout D:\ATLAS, not master). Branch base: 305c836 (merge-base with master: 1e41a5f)
 
 ## Preflight scan
 | Pair / task | Produces vs consumes | Finding |
@@ -65,11 +65,11 @@ Task 5: minor (deferred): if taskkill fails, pipe.close() could block behind rea
 Task 5: complete (commits 95919b0..77dcd86, review clean)
 Task 6: dispatched (base 77dcd86, implementer ac0d6ebbfd080878e, sonnet; rulings: async events, console python)
 Task 6: review 1 (opus) — Important (plan-mandated): whole group deleted if any hook ours; generic marker "hook_client.py"; installed_at microseconds
-Ruling: T6 ownership is per-hook (filter our hooks out of groups, drop a group only if emptied) and recognised by the path suffix brainhub/hook_client.py (normalised, case-insensitive) — supersedes plan/design §4.2 "group whose single hook…" + generic MARK; owner-defined hooks/status line must never be lost — cost if wrong: an entry installed from a renamed package folder isn't recognised and must be removed by hand
+Ruling: T6 ownership is per-hook (filter our hooks out of groups, drop a group only if emptied) and recognised by the path suffix atlas/hook_client.py (normalised, case-insensitive) — supersedes plan/design §4.2 "group whose single hook…" + generic MARK; owner-defined hooks/status line must never be lost — cost if wrong: an entry installed from a renamed package folder isn't recognised and must be removed by hand
 Task 6: fix round 1 sent (+ minors: odd shapes → IntegrationError, unique backups, ensure_ascii=False, keep pre-existing empty event lists)
 Task 6: minor (deferred): unreadable state file on re-install loses saved previous statusLine; stale previous resurrected if owner removed statusLine; no backup pruning; status approximate (partial install, previous inferred); fixed tmp name / no lock for concurrent installs; OSError not translated in CLI
 Task 6: fix round 1/5 (7 addressed, 0 open; commits 0809983..4af3766)
-Task 6: minor (deferred): ownership match is substring not true suffix (mybrainhub/hook_client.py); MARK constant unused; "hooks": {} original not restored exactly (key dropped)
+Task 6: minor (deferred): ownership match is substring not true suffix (myatlas/hook_client.py); MARK constant unused; "hooks": {} original not restored exactly (key dropped)
 Task 6: complete (commits 77dcd86..4af3766, review clean)
 Task 7: dispatched (base 4af3766, implementer a8136f3c47419966d, sonnet)
 Ruling: T7 projects[].open counts all open items incl. next_time; next_time is a subset — the tile caption is 'with open items' — cost if wrong: a project with only next-time notes counts as having open items
@@ -103,7 +103,7 @@ Task 10: complete (commits 716d9bb..129aa77, review clean)
 Task 10: minor (deferred): supervisor lock held during hub_up (UI can block ~0.5 s); spawn test weak on stop; tick invariant child/started_at; port drift — spawned hub lacks --port (worth fixing); restart() no wait for port; open_browser & quoting comment; desktop-config doesn't warn on non-hub root; hub.log unbounded; rust test temp files
 Task 11: dispatched (base 129aa77, implementer abeabb73f1fe7bb6f, opus)
 Task 11: complete (commits 129aa77..fd57a95; e2e: real claude -p row ready 0.8 s → running 5.1 s → finished 7.2 s → ended 7.5 s → gone 67 s; statusline 0.14 s; tests 425 py / 22 js / 11 rust) — docs task, no separate task review (final review covers it)
-Task 11: concerns for final wave: first launch placed at screen bottom so expand grows off-screen; tile captions clipped 1-2 px (descenders) at 125%; port drift (spawned hub lacks --port); WebView2 data dir under real %LOCALAPPDATA%\dev.brainhub.desktop even with LOCALAPPDATA overridden (normal for real use)
+Task 11: concerns for final wave: first launch placed at screen bottom so expand grows off-screen; tile captions clipped 1-2 px (descenders) at 125%; port drift (spawned hub lacks --port); WebView2 data dir under real %LOCALAPPDATA%\dev.atlas.desktop even with LOCALAPPDATA overridden (normal for real use)
 Final review (opus, 1e41a5f..fd57a95): With fixes — Critical: pythonw hub flashes consoles; Important: reload drops typed text, port drift, off-screen growth; Minors 5,6,8,9,10,11 included in fix wave. Findings: final-findings.md
 Ruling: final wave also fixes minors 5,6,8,9,10,11 (cheap, user-visible) — reviewer marked them nice-to-have — cost if wrong: slightly larger fix diff
 Ruling: final reviewer's remaining deferred-minor triage accepted as "park" — documented as residuals in phase2-decisions.md — cost if wrong: owner meets them later

@@ -1,4 +1,4 @@
-"""Phase 3: measurement requests (spec §7.3): the API, brainhub-request, and its installation."""
+"""Phase 3: measurement requests (spec §7.3): the API, atlas-request, and its installation."""
 import json
 import os
 import subprocess
@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import claude_integration as ci
-from brainhub import osdirs
-from brainhub.brainmap import add_node, default_map, save_map
-from brainhub.server import create_app
+from atlas import claude_integration as ci
+from atlas import osdirs
+from atlas.brainmap import add_node, default_map, save_map
+from atlas.server import create_app
 from tests.test_server import MAP, make_runner
 
-CLIENT = Path(__file__).resolve().parent.parent / "brainhub" / "request_client.py"
+CLIENT = Path(__file__).resolve().parent.parent / "atlas" / "request_client.py"
 
 
 @pytest.fixture
@@ -78,7 +78,7 @@ async def test_ignore_and_restore_a_request(client, paths):
     assert (await client.post("/api/requests/r-nope/ignore")).status == 404
 
 
-# -- brainhub-request, as a real subprocess -----------------------------------------------------
+# -- atlas-request, as a real subprocess -----------------------------------------------------
 def _run(*args, cwd=None):
     return subprocess.run([sys.executable, "-I", "-S", str(CLIENT), *args], capture_output=True,
                           text=True, encoding="utf-8", timeout=30, cwd=cwd)
@@ -113,7 +113,7 @@ def test_client_with_the_hub_down_says_so(tmp_path):
 @pytest.mark.parametrize("args", [[], ["only a title"], ["--help"], ["--port", "x", "t", "a"]])
 def test_client_usage(args):
     p = _run(*args)
-    assert p.returncode == 2 and p.stderr.startswith("usage: brainhub-request")
+    assert p.returncode == 2 and p.stderr.startswith("usage: atlas-request")
 
 
 # -- installation: the wrapper and the CLAUDE.md line (temp folders only, rule 12) ---------------
@@ -134,8 +134,8 @@ def test_install_writes_wrapper_and_one_claude_md_line(tmp_path):
     assert st["request_command"] is True
     text = md.read_text(encoding="utf-8")
     assert text.startswith("# My rules\n\nBe brief.\n\n") and text.count(ci.MD_BEGIN) == 1
-    assert ci.MD_LINE in text and "brainhub-request" in text
-    assert list(settings.parent.glob("CLAUDE.md.brainhub-backup-*"))  # backed up first
+    assert ci.MD_LINE in text and "atlas-request" in text
+    assert list(settings.parent.glob("CLAUDE.md.atlas-backup-*"))  # backed up first
     wrapper = ci.wrapper_path(osdirs.bin_dir())
     body = wrapper.read_text(encoding="utf-8")
     assert ci.WRAPPER_MARK in body and "request_client.py" in body and "--port 8090" in body
@@ -163,7 +163,7 @@ def test_install_refuses_a_foreign_wrapper(tmp_path):
     wrapper = ci.wrapper_path(osdirs.bin_dir())
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
-    with pytest.raises(ci.IntegrationError, match="isn't BrainHub's"):
+    with pytest.raises(ci.IntegrationError, match="isn't ATLAS's"):
         ci.install_request_command(settings.parent / "CLAUDE.md", osdirs.bin_dir(),
                                    python="py", script="s", port=1)
     ci.uninstall_request_command(settings.parent / "CLAUDE.md", osdirs.bin_dir())
@@ -175,7 +175,7 @@ def test_wrapper_runs_the_client(tmp_path):
     bin_dir = tmp_path / "wbin"
     ci.install_request_command(tmp_path / "CLAUDE.md", bin_dir, python=sys.executable, script=str(CLIENT), port=9)
     p = subprocess.run([str(ci.wrapper_path(bin_dir)), "--help"], capture_output=True, text=True, timeout=30)
-    assert p.returncode == 2 and p.stderr.startswith("usage: brainhub-request")
+    assert p.returncode == 2 and p.stderr.startswith("usage: atlas-request")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the Windows wrapper")
@@ -183,7 +183,7 @@ def test_cmd_wrapper_runs_the_client(tmp_path):
     bin_dir = tmp_path / "wbin"
     ci.install_request_command(tmp_path / "CLAUDE.md", bin_dir, python=sys.executable, script=str(CLIENT), port=9)
     p = subprocess.run([str(ci.wrapper_path(bin_dir)), "--help"], capture_output=True, text=True, timeout=30)
-    assert p.returncode == 2 and "usage: brainhub-request" in p.stderr
+    assert p.returncode == 2 and "usage: atlas-request" in p.stderr
 
 
 def test_request_paths_in_runtime_mode(tmp_path):
@@ -238,17 +238,17 @@ def test_a_foreign_wrapper_is_found_before_settings_are_touched(tmp_path):
     wrapper = ci.wrapper_path(osdirs.bin_dir())
     wrapper.parent.mkdir(parents=True)
     wrapper.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
-    with pytest.raises(ci.IntegrationError, match="isn't BrainHub's"):
+    with pytest.raises(ci.IntegrationError, match="isn't ATLAS's"):
         ci.install(settings, python=sys.executable, script="x.py", port=8090, state_dir=osdirs.state_dir())
     assert settings.read_text(encoding="utf-8") == '{"theme": "dark"}'
-    assert not list(settings.parent.glob("settings.json.brainhub-backup-*"))
+    assert not list(settings.parent.glob("settings.json.atlas-backup-*"))
 
 
 def test_windows_wrappers_and_percent_signs():
     """Claude Code's Bash tool on Windows is Git Bash, which never tries .cmd for a bare name: an
     extensionless sh shim goes beside the .cmd. A % in a path is doubled for cmd."""
     files = ci.wrapper_files(r"C:\Py 3\python.exe", r"C:\100%\request_client.py", 8090, windows=True)
-    assert set(files) == {"brainhub-request.cmd", "brainhub-request"}
-    assert '"C:\\100%%\\request_client.py"' in files["brainhub-request.cmd"]
-    assert files["brainhub-request"].startswith("#!/bin/sh\n") and "'C:/Py 3/python.exe'" in files["brainhub-request"]
-    assert list(ci.wrapper_files("/usr/bin/python3", "/s.py", 1, windows=False)) == ["brainhub-request"]
+    assert set(files) == {"atlas-request.cmd", "atlas-request"}
+    assert '"C:\\100%%\\request_client.py"' in files["atlas-request.cmd"]
+    assert files["atlas-request"].startswith("#!/bin/sh\n") and "'C:/Py 3/python.exe'" in files["atlas-request"]
+    assert list(ci.wrapper_files("/usr/bin/python3", "/s.py", 1, windows=False)) == ["atlas-request"]

@@ -8,7 +8,7 @@ import { renderDeadlines, renderPeople, renderProject } from './browse.js';
 import { browsePath, railPlaces } from './browse-model.js';
 import { browseTarget } from '../nav-model.js';
 
-const KEY = 'brainhub.browse';
+const KEY = 'atlas.browse';
 let mapCache = null;    // the last /api/map answer
 let mapLoading = null;  // its pending fetch
 

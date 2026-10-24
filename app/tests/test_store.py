@@ -3,9 +3,9 @@ from datetime import datetime
 
 import pytest
 
-from brainhub.models import Entry, Filing
-from brainhub.rawlog import append_entry
-from brainhub.store import Store
+from atlas.models import Entry, Filing
+from atlas.rawlog import append_entry
+from atlas.store import Store
 
 
 def test_entries_and_unfinished(store):
@@ -161,8 +161,8 @@ def test_reindex_notes_skips_dot_folders_and_survives_bad_files(store, tmp_path,
 
 
 def test_reindex_changed_follows_a_commit(store, tmp_path):
-    from brainhub.gitrepo import BrainRepo
-    from brainhub.store import reindex_changed
+    from atlas.gitrepo import BrainRepo
+    from atlas.store import reindex_changed
     repo = BrainRepo(tmp_path); repo.init()
     (tmp_path/"a.md").write_text("first heron", encoding="utf-8")
     (tmp_path/".obsidian").mkdir(); (tmp_path/".obsidian"/"w.md").write_text("heron", encoding="utf-8")
@@ -186,8 +186,8 @@ def test_export_counts_expired_snoozes_as_open(store, tmp_path):
 
 
 def test_commit_hook_indexes_and_notifies_only_for_real_commits(store, tmp_path):
-    from brainhub.gitrepo import BrainRepo
-    from brainhub.store import commit_hook
+    from atlas.gitrepo import BrainRepo
+    from atlas.store import commit_hook
     repo = BrainRepo(tmp_path); repo.init()
     calls = []
     hook = commit_hook(store, tmp_path, repo, lambda: calls.append(1))
@@ -199,7 +199,7 @@ def test_commit_hook_indexes_and_notifies_only_for_real_commits(store, tmp_path)
 
 
 def test_schema_migrates_older_version_in_order(paths, monkeypatch):
-    from brainhub import store as store_mod
+    from atlas import store as store_mod
     s = Store(paths.db)
     s.init_schema()
     s.close()
@@ -225,7 +225,7 @@ def test_schema_migrates_older_version_in_order(paths, monkeypatch):
 
 
 def test_failed_migration_leaves_the_old_version(paths, monkeypatch):
-    from brainhub import store as store_mod
+    from atlas import store as store_mod
     s = Store(paths.db)
     s.init_schema()
     s.close()

@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from brainhub.brainmap import add_node, default_map, ensure_folders, save_map
-from brainhub.claude_runner import ClaudeError
-from brainhub.filing import FilingWorker, build_filing_prompt, invalid_windows_paths, parse_filing_result
-from brainhub.gitrepo import BrainRepo
-from brainhub.models import Entry, Filing
-from brainhub.rawlog import append_entry, read_log
-from brainhub.store import commit_hook
+from atlas.brainmap import add_node, default_map, ensure_folders, save_map
+from atlas.claude_runner import ClaudeError
+from atlas.filing import FilingWorker, build_filing_prompt, invalid_windows_paths, parse_filing_result
+from atlas.gitrepo import BrainRepo
+from atlas.models import Entry, Filing
+from atlas.rawlog import append_entry, read_log
+from atlas.store import commit_hook
 from tests.fakes import FakeRunner
 
 GOOD_RESULT = {
@@ -314,7 +314,7 @@ def test_parse_accepts_a_course_slug_as_project(m):
 
 
 async def test_rerun_after_the_commit_landed_fixes_in_place(env):
-    from brainhub.filing import FIX_IN_PLACE
+    from atlas.filing import FIX_IN_PLACE
     def edit(cwd): (cwd/"general"/"n.md").write_text("note (from e-1)", encoding="utf-8")
     runner = FakeRunner(json_result=GOOD_RESULT, on_run=edit); w = env.worker(runner)
     await w.file_entry(env.entry.id)
@@ -325,7 +325,7 @@ async def test_rerun_after_the_commit_landed_fixes_in_place(env):
 
 
 async def test_correction_on_top_of_later_commits_fixes_in_place(env):
-    from brainhub.filing import FIX_IN_PLACE
+    from atlas.filing import FIX_IN_PLACE
     def edit(cwd): (cwd/"personal"/"gift.md").write_text("present (from e-1)", encoding="utf-8")
     runner = FakeRunner(json_result=GOOD_RESULT, on_run=edit); w = env.worker(runner)
     await w.file_entry(env.entry.id)
@@ -439,7 +439,7 @@ def test_leftover_worktree_from_the_other_os_is_removed(env):
     wid = "e-20261020-000000-dead"
     wt_path = env.paths.data / "worktrees" / wid
     env.repo.worktree_add(wt_path)
-    other = "/mnt/data/BrainHub" if sys.platform == "win32" else "D:/BrainHub"
+    other = "/mnt/data/ATLAS" if sys.platform == "win32" else "D:/ATLAS"
     # Git for Windows marks a worktree's .git file hidden, and Windows won't open a hidden file
     # for overwriting: replace it instead.
     (wt_path / ".git").unlink()
@@ -462,7 +462,7 @@ def test_case_clash_uses_ntfs_folding():
 
 # -- live progress (owner feedback 2026-10-22: filing felt slow behind a static "Filing…") --------
 def test_step_label(tmp_path):
-    from brainhub.filing import step_label
+    from atlas.filing import step_label
     wt = tmp_path / "data" / "worktrees" / "e-1"
     assert step_label("Read", {"file_path": str(wt / "projects" / "robotarm" / "notes.md")}, wt) == \
         "reading projects/robotarm/notes.md"
@@ -483,7 +483,7 @@ def test_step_label(tmp_path):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows paths (the POSIX side is test_step_label)")
 def test_step_label_windows_paths(tmp_path):
-    from brainhub.filing import step_label
+    from atlas.filing import step_label
     wt = tmp_path / "data" / "worktrees" / "e-1"
     upper = str(wt).upper() + "\\Projects\\a.md"
     assert step_label("Read", {"file_path": str(wt) + "\\projects\\a.md"}, wt) == "reading projects/a.md"

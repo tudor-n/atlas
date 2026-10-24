@@ -54,7 +54,7 @@ function renderBanner(connectionError) {
       { title: 'RAW LOG', role: 'alert' }));
   }
   if (Array.isArray(state.startup_error) && state.startup_error.length) {
-    const n = notice('BrainHub started, but noticed problems. Capture still works.', { title: 'STARTUP', role: 'alert' });
+    const n = notice('ATLAS started, but noticed problems. Capture still works.', { title: 'STARTUP', role: 'alert' });
     n.appendChild(el('ul', {}, state.startup_error.map((m) => el('li', {}, m))));
     box.appendChild(n);
   }
@@ -105,7 +105,7 @@ function renderReduced() {
   runCleanup();
   top.setRoute(null);
   const d = state.drive || {};
-  const n = notice(d.message || "BrainHub's data folder can't be used right now.", { title: 'REDUCED MODE' });
+  const n = notice(d.message || "ATLAS's data folder can't be used right now.", { title: 'REDUCED MODE' });
   n.append(
     el('p', { class: 'held' }, heldText(d.held) || 'Nothing held on this OS.'),
     el('p', { class: 'd' }, 'Capture still works: what you save is held on this OS until the drive is back.'),

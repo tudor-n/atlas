@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime
 
-from brainhub.brainmap import BrainMap
-from brainhub.widget import ArmProbe, build_widget, synopsis
+from atlas.brainmap import BrainMap
+from atlas.widget import ArmProbe, build_widget, synopsis
 from tests.test_today import mk
 
 NOW = datetime(2026, 10, 20, 12, 0)
@@ -163,6 +163,6 @@ def test_synopsis_counts_measurement_requests():
 
 def test_review_counts_entries_like_today(tmp_path):
     """The widget and the top bar count what Today's TO REVIEW counts: entries, not proposals."""
-    from brainhub.widget import synopsis
+    from atlas.widget import synopsis
     review = {"proposals": 14, "failed": 2, "entries": 7}
     assert "7 to review" in synopsis({"overdue": [], "due_today": []}, review, [], {}, {})

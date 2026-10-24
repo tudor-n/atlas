@@ -40,7 +40,7 @@ export async function renderTabletSettings(box, isDead, ui) {
     const units = el('input', { type: 'text', id: 'tablet-units', class: 'm wide', value: s.tablet_units.join(', '), spellcheck: 'false' });
     const lan = lanLine(s);
     box.append(
-      intro('The workbench tablet reaches BrainHub over your home Wi-Fi at one fixed address. '
+      intro('The workbench tablet reaches ATLAS over your home Wi-Fi at one fixed address. '
         + 'Reserve it for this laptop in your router, and let the port through the firewall.'),
       el('div', { class: 'pfs' },
         prefRow('TABLET OVER WI-FI', el('div', { class: 'pair' }, on,
@@ -66,7 +66,7 @@ export async function renderTabletSettings(box, isDead, ui) {
       pairBox.appendChild(el('div', { class: 'pf' },
         el('div', { class: 'pfl' }, el('span', { class: 'lb' }, 'NEW DEVICE'),
           el('p', { class: 'hint' }, lanOn ? 'Shows a one-time code to type on the tablet.'
-            : 'Shows a one-time code to type on the tablet. Turn on Tablet over Wi-Fi first: until then the tablet can’t reach BrainHub.')),
+            : 'Shows a one-time code to type on the tablet. Turn on Tablet over Wi-Fi first: until then the tablet can’t reach ATLAS.')),
         el('div', { class: 'pfc' }, button('PAIR A DEVICE', { onclick: async () => {
           try {
             const c = await api.post('/api/devices/pairing-code', {});
@@ -84,7 +84,7 @@ export async function renderTabletSettings(box, isDead, ui) {
     pairBox.appendChild(el('div', { class: lanOn ? 'st-code' : 'st-code off' },
       el('span', { class: 'lb' }, 'ON THE TABLET, TYPE THIS CODE'),
       el('div', { class: 'big', 'aria-live': 'polite' }, code.code), left,
-      lanOn ? null : el('p', { class: 'why' }, "Tablet over Wi-Fi is off, so the tablet can't reach BrainHub to use this code. Turn it on and save.")));
+      lanOn ? null : el('p', { class: 'why' }, "Tablet over Wi-Fi is off, so the tablet can't reach ATLAS to use this code. Turn it on and save.")));
     tick();
     codeTimer = setInterval(tick, 1000);
   }

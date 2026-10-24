@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from brainhub import voice as v
-from brainhub.config import DEFAULT_SETTINGS
-from brainhub.quotes import ensure_quotes
+from atlas import voice as v
+from atlas.config import DEFAULT_SETTINGS
+from atlas.quotes import ensure_quotes
 
 APP = Path(__file__).resolve().parents[1]
 T0 = datetime(2026, 10, 23, 15, 0, 0)  # a Friday afternoon, outside the default quiet hours
@@ -269,10 +269,10 @@ def test_readbacks(env):
 def test_lines_of_one_kind_merge(env):
     a = env.make(merge_s=60)  # the timer won't fire in the test; flush by hand
     a.agent_transition(_tr("s1", "running", "waiting", T0))
-    a.agent_transition(_tr("s2", "running", "waiting", T0, project="BrainHub"))
+    a.agent_transition(_tr("s2", "running", "waiting", T0, project="ATLAS"))
     assert env.sink.said == []
     a.flush("agent_waiting")
-    assert env.sink.said == [["Two agents need you. Robot arm and Brain Hub."]]
+    assert env.sink.said == [["Two agents need you. Robot arm and Atlas."]]
     a.close()
 
 
@@ -355,8 +355,8 @@ def test_a_broken_state_file_is_ignored(env):
 
 # -- the Speaker, with the real worker process in fake mode ------------------------------------------------
 def _speaker(tmp_path, **kw):
-    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "PYTHONPATH": str(APP),
-           "BRAINHUB_VOICE_FAKE_DELAY": kw.pop("delay", "0")}
+    env = {**os.environ, "ATLAS_VOICE_TRACE": "1", "ATLAS_VOICE_FAKE": str(tmp_path / "said.jsonl"), "PYTHONPATH": str(APP),
+           "ATLAS_VOICE_FAKE_DELAY": kw.pop("delay", "0")}
     return v.Speaker(tmp_path / "state", env=env, **kw)
 
 

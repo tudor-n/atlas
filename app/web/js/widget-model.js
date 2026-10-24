@@ -1,6 +1,7 @@
 // Pure model for the desktop widget (no DOM; drive.js is pure too): bar text, tile summaries and
 // popup rows from GET /api/widget.
 import { heldText } from './drive.js';
+import { adoptLegacy } from './legacy-keys.js';
 
 export const TILE_LABEL = {
   today: 'Today', usage: 'Usage', agents: 'Agents', people: 'People',
@@ -178,10 +179,11 @@ export function popupRows(name, w) {
 }
 
 // -- capture draft: what the owner typed survives a widget reload (never silently drop it) -----
-export const DRAFT_KEY = 'brainhub.widget.draft';
+export const DRAFT_KEY = 'atlas.widget.draft';
 
 // `storage` is window.localStorage or null; every access may throw (blocked or full storage).
 export function loadDraft(storage) {
+  adoptLegacy(storage, DRAFT_KEY); // a draft typed before the rename
   try {
     const v = storage ? storage.getItem(DRAFT_KEY) : null;
     return typeof v === 'string' ? v : '';

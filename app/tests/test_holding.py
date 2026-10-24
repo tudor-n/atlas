@@ -12,10 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from brainhub import holding, rootguard
-from brainhub.config import Paths
-from brainhub.models import Entry
-from brainhub.rawlog import append_entry, log_path, read_log
+from atlas import holding, rootguard
+from atlas.config import Paths
+from atlas.models import Entry
+from atlas.rawlog import append_entry, log_path, read_log
 
 win_only = pytest.mark.skipif(sys.platform != "win32", reason="MoveFileExW is Windows only")
 
@@ -78,7 +78,7 @@ def test_hold_is_durable_and_listed(tmp_path, paths, monkeypatch):
 
 
 def test_hold_records_the_marker_id_when_readable(tmp_path):
-    paths = _marked(tmp_path / "BrainHub")
+    paths = _marked(tmp_path / "ATLAS")
     r = holding.hold(tmp_path / "state", paths, "x", "pc", datetime(2026, 10, 20, 9, 0, 0))
     assert r["root"] == {"id": rootguard.read_marker(paths)["id"], "path": str(paths.root.resolve())}
 
@@ -236,7 +236,7 @@ def test_unreadable_held_file_is_kept(tmp_path, paths, store):
                                       "source": "pc", "text": "x"}), encoding="utf-8")
     bad_root = folder / "e-20261020-090003-abcd.json"
     bad_root.write_text(json.dumps({"id": "e-20261020-090003-abcd", "ts": "2026-10-20T09:00:03",
-                                    "source": "pc", "text": "x", "root": "D:/BrainHub"}), encoding="utf-8")
+                                    "source": "pc", "text": "x", "root": "D:/ATLAS"}), encoding="utf-8")
     interrupted = folder / "e-20261020-090004-abcd.json.123.tmp"  # a hold cut off mid-write
     interrupted.write_text("{", encoding="utf-8")
     _age(interrupted)
@@ -255,7 +255,7 @@ def test_unreadable_file_is_logged_once(tmp_path, caplog):
     folder = tmp_path / "state" / "holding"
     folder.mkdir(parents=True)
     (folder / "e-20261020-090001-abcd.json").write_text("{half", encoding="utf-8")
-    caplog.set_level(logging.ERROR, logger="brainhub.holding")
+    caplog.set_level(logging.ERROR, logger="atlas.holding")
     for _ in range(3):  # /api/state and /api/widget polls
         problems = []
         holding.held(tmp_path / "state", problems)
@@ -301,7 +301,7 @@ def test_flush_keeps_a_capture_whose_day_file_is_damaged(tmp_path, paths, store)
 # -- one holding folder per OS, many roots ----------------------------------------
 def test_capture_held_for_another_root_is_not_flushed(tmp_path, store):
     state = tmp_path / "state"
-    real = Paths(tmp_path / "mnt" / "data" / "BrainHub")  # missing while the capture was typed
+    real = Paths(tmp_path / "mnt" / "data" / "ATLAS")  # missing while the capture was typed
     r = holding.hold(state, real, "for the real brain", "widget", datetime(2026, 10, 20, 9, 0, 0))
     throwaway = _marked(tmp_path / "dev-root")  # a dev hub on a temp root, same state folder
     flushed = holding.flush(state, throwaway, store)
@@ -315,10 +315,10 @@ def test_capture_held_for_another_root_is_not_flushed(tmp_path, store):
 
 def test_marker_id_decides_over_the_path(tmp_path, store):
     state = tmp_path / "state"
-    first = _marked(tmp_path / "media" / "DATA" / "BrainHub")  # read-only: marker readable, id recorded
+    first = _marked(tmp_path / "media" / "DATA" / "ATLAS")  # read-only: marker readable, id recorded
     r = holding.hold(state, first, "typed while read-only", "pc", datetime(2026, 10, 20, 9, 0, 0))
     # The same drive, mounted at another path the next time.
-    again = Paths(tmp_path / "mnt" / "data" / "BrainHub")
+    again = Paths(tmp_path / "mnt" / "data" / "ATLAS")
     shutil.copytree(first.root, again.root)
     shutil.rmtree(first.root)
     assert holding.held(state, paths=again) == [r]
@@ -333,8 +333,8 @@ def test_marker_id_decides_over_the_path(tmp_path, store):
 @pytest.mark.skipif(sys.platform != "win32", reason="NTFS paths compare without case")
 def test_root_paths_compare_without_case_on_windows(tmp_path):
     state = tmp_path / "state"
-    r = holding.hold(state, Paths(tmp_path / "BrainHub"), "x", "pc", datetime(2026, 10, 20, 9, 0, 0))
-    assert holding.held(state, paths=Paths(str(tmp_path / "BRAINHUB"))) == [r]
+    r = holding.hold(state, Paths(tmp_path / "ATLAS"), "x", "pc", datetime(2026, 10, 20, 9, 0, 0))
+    assert holding.held(state, paths=Paths(str(tmp_path / "ATLAS"))) == [r]
 
 
 def test_record_from_before_roots_matches_any_root(tmp_path, store):

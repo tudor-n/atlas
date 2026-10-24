@@ -20,7 +20,7 @@ import pytest
 from tests.fakes import fake_cli, kill_pid_file, pid_gone
 
 APP_DIR = Path(__file__).resolve().parent.parent
-STEP = APP_DIR / "brainhub" / "update_step.py"
+STEP = APP_DIR / "atlas" / "update_step.py"
 REAL_GIT = shutil.which("git")
 GITHUB_URL = "https://github.com/owner/repo.git"
 WIN = sys.platform == "win32"
@@ -94,8 +94,8 @@ BASE_FILES = {
     "README.md": "outside app/\n",
     "app/pyproject.toml": "[project]\nname = 'x'\n",
     "app/uv.lock": "version = 1\n",
-    "app/brainhub/__init__.py": "",
-    "app/brainhub/hook_client.py": "# hook v1\n",
+    "app/atlas/__init__.py": "",
+    "app/atlas/hook_client.py": "# hook v1\n",
     "app/desktop/src-tauri/Cargo.toml": "[package]\n",
     "app/desktop/src-tauri/Cargo.lock": "# lock\n",
     "app/desktop/src-tauri/src/main.rs": "fn main() {}\n",
@@ -112,7 +112,7 @@ class World:
         self.bin.mkdir()
         self.logs.mkdir()
         self.origin, self.dev, self.live = tmp / "origin.git", tmp / "dev", tmp / "live"
-        self.state = Path(os.environ["BRAINHUB_STATE_DIR"])  # conftest: a temp folder
+        self.state = Path(os.environ["ATLAS_STATE_DIR"])  # conftest: a temp folder
         self.canned = tmp / "gh.json"
         self.gitconfig = tmp / "gitconfig"
         self.gitconfig.write_text("", encoding="utf-8")
@@ -236,12 +236,12 @@ def _kill(pid: int) -> None:
 # -- pull --------------------------------------------------------------------------------------
 
 def test_fast_forward_when_ci_green(w):
-    new = w.commit({"app/brainhub/x.py": "x = 1\n"})
+    new = w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     assert w.step() == {"pulled": True, "slot": "a", "commit": new, "pending": None}
     assert w.head() == new
     assert w.log("gh") == [gh_call(new)]  # GET ...check-runs?per_page=100&filter=latest
-    assert (w.slot("a") / "app" / "brainhub" / "x.py").read_text(encoding="utf-8") == "x = 1\n"
+    assert (w.slot("a") / "app" / "atlas" / "x.py").read_text(encoding="utf-8") == "x = 1\n"
 
 
 def test_up_to_date_is_not_pending(w):
@@ -268,7 +268,7 @@ def test_up_to_date_is_not_pending(w):
 ], ids=["pending", "desktop-running", "queued", "check-missing", "failed", "cancelled", "startup-failure",
         "stale", "neutral", "skipped", "truncated", "garbage", "not-found", "gh-error", "gh-missing"])
 def test_ci_not_green_is_not_pulled(w, canned, reason):
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     if canned == "missing":
         for p in w.bin.glob("gh*"):
             p.unlink()
@@ -282,7 +282,7 @@ def test_ci_not_green_is_not_pulled(w, canned, reason):
 def test_dirty_live_copy_is_left_alone(w, dirt):
     target = w.live / ("notes.txt" if dirt == "untracked" else "README.md")
     target.write_text("mine\n", encoding="utf-8")
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     r = w.step()
     assert r == {"pulled": False, "slot": "a", "commit": w.base,  # a dirty tree still builds HEAD
@@ -315,7 +315,7 @@ def test_ignored_file_is_never_overwritten(w):
 
 def test_other_branch_is_left_alone(w):
     w.git(w.live, "switch", "-q", "-c", "other")
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     r = w.step()
     assert r == {"pulled": False, "slot": None, "commit": None,  # nor built (one note, not two)
@@ -327,7 +327,7 @@ def test_other_branch_is_left_alone(w):
 
 def test_detached_head_is_left_alone(w):
     w.git(w.live, "switch", "-q", "--detach")
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     assert w.step()["pending"] == "detached HEAD, not master"
     assert w.head() == w.base
@@ -338,7 +338,7 @@ def test_diverged_history_is_left_alone(w, origin_moves):
     w.git(w.live, "commit", "-q", "--allow-empty", "-m", "local")
     local = w.head()
     if origin_moves:
-        w.commit({"app/brainhub/x.py": "x = 1\n"})
+        w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     r = w.step()
     assert r == {"pulled": False, "slot": None, "commit": None, "pending": "diverged history"}
@@ -349,7 +349,7 @@ def test_diverged_history_is_left_alone(w, origin_moves):
 
 def test_offline_fetch_failure_is_quiet(w):
     w.point_origin_at(w.tmp / "nowhere.git")
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     r = w.step()  # asserts exit 0, no stderr, one line
     assert r == {"pulled": False, "slot": "a", "commit": w.base, "pending": "fetch failed"}
@@ -357,7 +357,7 @@ def test_offline_fetch_failure_is_quiet(w):
 
 
 def test_fetch_timeout_is_quiet_and_kills_git(w):
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     t0 = time.monotonic()
     try:
         r = w.step(timeout=2, FAKE_GIT_HANG="1")
@@ -436,10 +436,10 @@ def test_git_allow_list_is_strict():
 
 def test_never_runs_destructive_git(w):
     w.gh(GREEN)
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     assert w.step()["pulled"] is True  # fetch, gate, ff merge, archive
     (w.live / "notes.txt").write_text("mine\n", encoding="utf-8")
-    w.commit({"app/brainhub/x.py": "x = 2\n"})
+    w.commit({"app/atlas/x.py": "x = 2\n"})
     w.step()  # dirty
     (w.live / "notes.txt").unlink()
     w.git(w.live, "commit", "-q", "--allow-empty", "-m", "local")
@@ -499,7 +499,7 @@ def test_refresh_builds_only_master_on_origin(w, how, reason):
 
 
 def test_refresh_builds_head_behind_origin_offline(w):
-    new = w.commit({"app/brainhub/x.py": "x = 1\n"})
+    new = w.commit({"app/atlas/x.py": "x = 1\n"})
     w.git(w.live, "fetch", "-q", "origin")  # fetched earlier, not merged
     assert w.head("refs/remotes/origin/master") == new
     w.point_origin_at(w.tmp / "nowhere.git")
@@ -510,7 +510,7 @@ def test_refresh_builds_head_behind_origin_offline(w):
 
 def test_budget_bounds_the_whole_step(w):
     w.step()
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     t0 = time.monotonic()
     try:
         r = w.step(timeout=60, budget=6, FAKE_GIT_HANG="1")
@@ -527,7 +527,7 @@ def test_budget_bounds_the_whole_step(w):
 
 def test_fast_forward_put_off_when_time_is_short(w):
     w.step()
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     r = w.step(budget=us.MERGE_MIN_S - 5)
     assert r == {"pulled": False, "slot": "a", "commit": w.base,
@@ -615,7 +615,7 @@ def test_out_of_budget_starts_nothing(tmp_path):
 def test_busy_lock_touches_nothing(w):
     w.step()
     update = (w.state / "update.json").read_bytes()
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     calls = len(w.log("git"))
     fd = us.take_lock(str(w.state))
@@ -670,7 +670,7 @@ def test_refresh_builds_inactive_slot_and_flips(w):
     deps = us.deps_hash(str(a / "app"))
     assert w.current() == {"slot": "a", "commit": w.base, "deps": deps}
     assert json.loads((a / "slot.json").read_text(encoding="utf-8")) == {"commit": w.base, "deps": deps}
-    assert sorted(p.name for p in (a / "app").iterdir()) == ["brainhub", "desktop", "pyproject.toml", "uv.lock"]
+    assert sorted(p.name for p in (a / "app").iterdir()) == ["atlas", "desktop", "pyproject.toml", "uv.lock"]
     assert not (a / "README.md").exists()  # only app/
     assert a.joinpath(*VENV_PY).exists()
     [uv] = w.log("uv")
@@ -679,12 +679,12 @@ def test_refresh_builds_inactive_slot_and_flips(w):
     assert Path(uv["env"]) == a / "venv"
     assert not list((w.state / "runtime").rglob("*.tmp"))
 
-    new = w.commit({"app/brainhub/x.py": "x = 1\n"})
+    new = w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     assert w.step() == {"pulled": True, "slot": "b", "commit": new, "pending": None}
     assert w.current()["slot"] == "b"
-    assert (w.slot("b") / "app" / "brainhub" / "x.py").exists()
-    assert not (a / "app" / "brainhub" / "x.py").exists()  # the old slot is left as it was
+    assert (w.slot("b") / "app" / "atlas" / "x.py").exists()
+    assert not (a / "app" / "atlas" / "x.py").exists()  # the old slot is left as it was
     assert json.loads((a / "slot.json").read_text(encoding="utf-8"))["commit"] == w.base
 
 
@@ -702,12 +702,12 @@ def test_half_built_slot_is_never_current(w):
 def test_refresh_replaces_stale_files_in_the_slot(w):
     w.step()
     w.gh(GREEN)
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.step()  # b
-    w.git(w.dev, "rm", "-q", "app/brainhub/x.py")
-    w.commit({"app/brainhub/y.py": "y = 1\n"})
+    w.git(w.dev, "rm", "-q", "app/atlas/x.py")
+    w.commit({"app/atlas/y.py": "y = 1\n"})
     w.step()  # a again
-    app = w.slot("a") / "app" / "brainhub"
+    app = w.slot("a") / "app" / "atlas"
     assert (app / "y.py").exists() and not (app / "x.py").exists()
 
 
@@ -727,7 +727,7 @@ def test_failed_venv_sync_keeps_previous_slot(w):
 
 def test_uv_missing_keeps_previous_slot(w):
     w.step()
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     for p in w.bin.glob("uv*"):
         p.unlink()
@@ -755,7 +755,7 @@ def test_uv_found_in_local_bin(tmp_path, monkeypatch):
 def test_commit_without_lock_keeps_previous_slot(w):
     w.step()
     w.git(w.dev, "rm", "-q", "app/uv.lock")
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.gh(GREEN)
     assert w.step() == {"pulled": True, "slot": "a", "commit": w.base,
                         "pending": "no app/uv.lock in the live commit"}
@@ -765,13 +765,13 @@ def test_commit_without_lock_keeps_previous_slot(w):
 def test_venv_reused_when_deps_unchanged(w):
     w.gh(GREEN)
     w.step()  # a: synced
-    w.commit({"app/brainhub/x.py": "x = 1\n"})
+    w.commit({"app/atlas/x.py": "x = 1\n"})
     w.step()  # b: no venv yet, synced
     assert len(w.log("uv")) == 2
-    c3 = w.commit({"app/brainhub/x.py": "x = 2\n"})
+    c3 = w.commit({"app/atlas/x.py": "x = 2\n"})
     assert w.step() == {"pulled": True, "slot": "a", "commit": c3, "pending": None}
     assert len(w.log("uv")) == 2  # a's venv kept
-    assert (w.slot("a") / "app" / "brainhub" / "x.py").read_text(encoding="utf-8") == "x = 2\n"
+    assert (w.slot("a") / "app" / "atlas" / "x.py").read_text(encoding="utf-8") == "x = 2\n"
     c4 = w.commit({"app/uv.lock": "version = 2\n"})
     assert w.step()["commit"] == c4
     assert len(w.log("uv")) == 3  # b's deps changed
@@ -782,11 +782,11 @@ def test_hook_client_copied_after_flip(w):
     w.step()
     assert hook.read_text(encoding="utf-8") == "# hook v1\n"
     w.gh(GREEN)
-    w.commit({"app/brainhub/hook_client.py": "# hook v2\n"})
+    w.commit({"app/atlas/hook_client.py": "# hook v2\n"})
     w.step()
     assert hook.read_text(encoding="utf-8") == "# hook v2\n"
     # A failed flip leaves the copy alone.
-    w.commit({"app/brainhub/hook_client.py": "# hook v3\n", "app/uv.lock": "version = 2\n"})
+    w.commit({"app/atlas/hook_client.py": "# hook v3\n", "app/uv.lock": "version = 2\n"})
     assert w.step(FAKE_UV_FAIL="1")["pending"]
     assert hook.read_text(encoding="utf-8") == "# hook v2\n"
     # A damaged copy is put right on the next start, even with nothing to update.
@@ -797,13 +797,13 @@ def test_hook_client_copied_after_flip(w):
 
 
 def test_request_client_copied_once_a_slot_has_it(w):
-    """Phase 3: brainhub-request's script sits beside the hook client. A slot from before phase 3
+    """Phase 3: atlas-request's script sits beside the hook client. A slot from before phase 3
     has none, and that is no error."""
     req = w.state / "hook" / "request_client.py"
     w.step()
     assert not req.exists() and (w.state / "hook" / "hook_client.py").exists()
     w.gh(GREEN)
-    w.commit({"app/brainhub/request_client.py": "# request v1\n"})
+    w.commit({"app/atlas/request_client.py": "# request v1\n"})
     w.step()
     assert req.read_text(encoding="utf-8") == "# request v1\n"
 
@@ -817,7 +817,7 @@ def test_update_json_records_the_check(w):
     assert update["stderr"] is None
     first = update["shell_source"]
     w.gh(GREEN)
-    w.commit({"app/brainhub/hook_client.py": "# hook v2\n"})
+    w.commit({"app/atlas/hook_client.py": "# hook v2\n"})
     w.step()
     assert w.update()["shell_source"] == first
     w.commit({"app/desktop/src-tauri/src/tray.rs": "// tray\n"})
@@ -841,13 +841,13 @@ def test_usage_error_exits_2(tmp_path):
 # -- units -------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("url, slug", [
-    ("https://github.com/tudor-n/brain-hub.git", "tudor-n/brain-hub"),
-    ("https://github.com/tudor-n/brain-hub", "tudor-n/brain-hub"),
-    ("https://github.com/tudor-n/brain-hub/", "tudor-n/brain-hub"),
-    ("https://user:tok@github.com/tudor-n/brain-hub.git\n", "tudor-n/brain-hub"),
-    ("git@github.com:tudor-n/brain-hub.git", "tudor-n/brain-hub"),
+    ("https://github.com/tudor-n/atlas.git", "tudor-n/atlas"),
+    ("https://github.com/tudor-n/atlas", "tudor-n/atlas"),
+    ("https://github.com/tudor-n/atlas/", "tudor-n/atlas"),
+    ("https://user:tok@github.com/tudor-n/atlas.git\n", "tudor-n/atlas"),
+    ("git@github.com:tudor-n/atlas.git", "tudor-n/atlas"),
     ("ssh://git@github.com/tudor-n/brain.hub.git", "tudor-n/brain.hub"),
-    ("https://gitlab.com/tudor-n/brain-hub.git", None),
+    ("https://gitlab.com/tudor-n/atlas.git", None),
     ("/tmp/origin.git", None),
     ("file:///tmp/github.com/a/b.git", None),
     ("https://github.com/only-owner", None),
@@ -896,8 +896,8 @@ def test_extract_rejects_unsafe_members(tmp_path, bad):
 
 
 def test_extract_app(tmp_path):
-    us.extract_app(_tar(("app", "dir"), ("app/brainhub", "dir"), ("app/brainhub/ok.txt", "file")), str(tmp_path))
-    assert (tmp_path / "app" / "brainhub" / "ok.txt").read_bytes() == b"hi"
+    us.extract_app(_tar(("app", "dir"), ("app/atlas", "dir"), ("app/atlas/ok.txt", "file")), str(tmp_path))
+    assert (tmp_path / "app" / "atlas" / "ok.txt").read_bytes() == b"hi"
 
 
 def test_deps_hash_follows_pyproject_lock_and_python_version(tmp_path):
@@ -1015,12 +1015,12 @@ def test_shell_source_ignores_other_files(tmp_path):
 # -- runtime CLI -------------------------------------------------------------------------------
 
 def _cli(w, *args, **extra):
-    return subprocess.run([sys.executable, "-m", "brainhub", *args], cwd=APP_DIR, env=w.env(**extra),
+    return subprocess.run([sys.executable, "-m", "atlas", *args], cwd=APP_DIR, env=w.env(**extra),
                           capture_output=True, text=True, timeout=120)
 
 
 def test_runtime_init_and_status(w):
-    w.commit({"app/brainhub/x.py": "x = 1\n"})  # on origin only: init never pulls
+    w.commit({"app/atlas/x.py": "x = 1\n"})  # on origin only: init never pulls
     r = _cli(w, "runtime", "init", "--live", str(w.live))
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == {"pulled": False, "slot": "a", "commit": w.base, "pending": None}

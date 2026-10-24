@@ -1,7 +1,7 @@
 //! The shell's source digest (plan Task 9, "shell freshness"). `build.rs` includes this file to
-//! bake the digest of the shell it builds into the binary (`BRAINHUB_SHELL_SOURCE`); the update
+//! bake the digest of the shell it builds into the binary (`ATLAS_SHELL_SOURCE`); the update
 //! step writes the same digest of the live copy's shell source to `update.json`
-//! (`shell_source` in `app/brainhub/update_step.py`). When the two differ, the live copy has a
+//! (`shell_source` in `app/atlas/update_step.py`). When the two differ, the live copy has a
 //! newer shell than the one running, and the tray says a widget update is available.
 //!
 //! The algorithm must stay exactly the Python one (its docstring): under `src-tauri`, the files
@@ -190,6 +190,6 @@ mod tests {
     fn baked_digest_is_this_source() {
         // build.rs baked the digest of this very crate's source (unchanged since the build).
         let here = Path::new(env!("CARGO_MANIFEST_DIR"));
-        assert_eq!(env!("BRAINHUB_SHELL_SOURCE"), digest(here).unwrap());
+        assert_eq!(env!("ATLAS_SHELL_SOURCE"), digest(here).unwrap());
     }
 }

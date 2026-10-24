@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BrainHub Desktop",
+  "productName": "ATLAS",
   "version": "0.1.0",
-  "identifier": "dev.brainhub.desktop",
+  "identifier": "dev.atlas.desktop",
   "build": {
     "frontendDist": "../dist"
   },

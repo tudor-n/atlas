@@ -5,7 +5,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from brainhub import voice_files as vf
+from atlas import voice_files as vf
 
 
 @pytest.fixture

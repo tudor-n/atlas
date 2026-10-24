@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import osdirs
+from atlas import osdirs
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX folder rules")
 win_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows folder rules")
@@ -32,66 +32,66 @@ def test_tests_never_see_the_real_folders(tmp_path):
 
 
 def test_state_dir_env_override(tmp_path, monkeypatch):
-    monkeypatch.setenv("BRAINHUB_STATE_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "elsewhere"))
     assert osdirs.state_dir() == tmp_path / "elsewhere"
     assert not (tmp_path / "elsewhere").exists()  # never created here
 
 
 def test_config_dir_env_override(tmp_path, monkeypatch):
-    monkeypatch.setenv("BRAINHUB_CONFIG_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("ATLAS_CONFIG_DIR", str(tmp_path / "elsewhere"))
     assert osdirs.config_dir() == tmp_path / "elsewhere"
     assert not (tmp_path / "elsewhere").exists()
 
 
 @posix_only
 def test_state_dir_linux_xdg(tmp_path, monkeypatch):
-    monkeypatch.delenv("BRAINHUB_STATE_DIR")
+    monkeypatch.delenv("ATLAS_STATE_DIR")
     _home(monkeypatch, tmp_path / "home")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    assert osdirs.state_dir() == tmp_path / "xdg" / "brainhub"
+    assert osdirs.state_dir() == tmp_path / "xdg" / "atlas"
     monkeypatch.setenv("XDG_DATA_HOME", "")  # empty counts as unset, like ${XDG_DATA_HOME:-…}
-    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "brainhub"
+    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "atlas"
     monkeypatch.delenv("XDG_DATA_HOME")
-    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "brainhub"
+    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "atlas"
     assert not (tmp_path / "home").exists() and not (tmp_path / "xdg").exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="XDG rules")
 def test_relative_xdg_value_is_ignored(tmp_path, monkeypatch):
-    monkeypatch.delenv("BRAINHUB_STATE_DIR", raising=False)
+    monkeypatch.delenv("ATLAS_STATE_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("XDG_DATA_HOME", "relative/xdg")
-    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "brainhub"
+    assert osdirs.state_dir() == tmp_path / "home" / ".local" / "share" / "atlas"
 
 
 @posix_only
 def test_config_dir_linux_xdg(tmp_path, monkeypatch):
-    monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
+    monkeypatch.delenv("ATLAS_CONFIG_DIR")
     _home(monkeypatch, tmp_path / "home")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert osdirs.config_dir() == tmp_path / "xdg" / "brainhub"
+    assert osdirs.config_dir() == tmp_path / "xdg" / "atlas"
     monkeypatch.setenv("XDG_CONFIG_HOME", "")
-    assert osdirs.config_dir() == tmp_path / "home" / ".config" / "brainhub"
+    assert osdirs.config_dir() == tmp_path / "home" / ".config" / "atlas"
     monkeypatch.delenv("XDG_CONFIG_HOME")
-    assert osdirs.config_dir() == tmp_path / "home" / ".config" / "brainhub"
+    assert osdirs.config_dir() == tmp_path / "home" / ".config" / "atlas"
     assert not (tmp_path / "home").exists() and not (tmp_path / "xdg").exists()
 
 
 @win_only
 def test_state_dir_windows_localappdata(tmp_path, monkeypatch):
-    monkeypatch.delenv("BRAINHUB_STATE_DIR")
+    monkeypatch.delenv("ATLAS_STATE_DIR")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lad"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))  # not a Windows rule
-    assert osdirs.state_dir() == tmp_path / "lad" / "BrainHub"
+    assert osdirs.state_dir() == tmp_path / "lad" / "ATLAS"
     assert not (tmp_path / "lad").exists()
 
 
 @win_only
 def test_config_dir_windows_localappdata(tmp_path, monkeypatch):
-    monkeypatch.delenv("BRAINHUB_CONFIG_DIR")
+    monkeypatch.delenv("ATLAS_CONFIG_DIR")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lad"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert osdirs.config_dir() == tmp_path / "lad" / "BrainHub"
+    assert osdirs.config_dir() == tmp_path / "lad" / "ATLAS"
     assert not (tmp_path / "lad").exists()
 
 

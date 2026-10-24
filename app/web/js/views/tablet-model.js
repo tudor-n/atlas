@@ -11,7 +11,7 @@ export function noteState(n) {
 
 // What the Tablet section says about the LAN listener.
 export function lanLine(s) {
-  if (!s.tablet_lan) return 'Off: BrainHub only listens on this PC.';
+  if (!s.tablet_lan) return 'Off: ATLAS only listens on this PC.';
   if (!s.tablet_address) return 'On, but no address is set.';
   if (s.listening) return `Listening on http://${s.listening}:${s.port}/tablet`;
   if (s.error) return `Can't listen on ${s.tablet_address}: ${s.error}`;

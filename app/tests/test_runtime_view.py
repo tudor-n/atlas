@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import runtime
-from brainhub.server import create_app
+from atlas import runtime
+from atlas.server import create_app
 from tests.test_server import make_runner
 
 
@@ -76,7 +76,7 @@ async def test_api_state_runtime_null_in_dev(aiohttp_client, paths):
 
 
 async def test_api_state_runtime_from_the_state_folder(aiohttp_client, paths, tmp_path, monkeypatch):
-    # conftest points BRAINHUB_STATE_DIR at <tmp>/state; pretend this hub runs from its slot a.
+    # conftest points ATLAS_STATE_DIR at <tmp>/state; pretend this hub runs from its slot a.
     app_dir = _slot(tmp_path / "state", live_shell="new", own_shell="old", pending="CI pending")
     monkeypatch.setattr(runtime, "APP_DIR", app_dir)
     c = await aiohttp_client(create_app(paths, runner=make_runner(), start_workers=False))

@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import claude_integration as ci
-from brainhub import osdirs
-from brainhub.claude_integration import EVENTS, IntegrationError
+from atlas import claude_integration as ci
+from atlas import osdirs
+from atlas.claude_integration import EVENTS, IntegrationError
 
 APP_DIR = Path(__file__).resolve().parent.parent
-PY, SCRIPT = "D:/py/python.exe", "D:/BrainHub/app/brainhub/hook_client.py"
+PY, SCRIPT = "D:/py/python.exe", "D:/ATLAS/app/atlas/hook_client.py"
 
 
 def do_install(path, state, port=8090):
@@ -119,7 +119,7 @@ def test_backups_never_overwrite(tmp_path):
     fixed = lambda: datetime(2026, 1, 1, 1, 1, 1, 555)  # noqa: E731
     for _ in range(3):
         ci.install(f, python=PY, script=SCRIPT, port=1, state_dir=tmp_path, now=fixed)
-    assert len(list(tmp_path.glob("settings.json.brainhub-backup-*"))) == 3
+    assert len(list(tmp_path.glob("settings.json.atlas-backup-*"))) == 3
     assert "." not in json.loads((tmp_path / "claude_integration.json").read_text())["installed_at"]
 
 
@@ -127,7 +127,7 @@ def test_install_backs_up_original(tmp_path):
     f = tmp_path / "settings.json"
     f.write_bytes(b'{"model": "opus"}\n')
     do_install(f, tmp_path)
-    backups = list(tmp_path.glob("settings.json.brainhub-backup-*"))
+    backups = list(tmp_path.glob("settings.json.atlas-backup-*"))
     assert len(backups) == 1 and backups[0].read_bytes() == b'{"model": "opus"}\n'
 
 
@@ -137,7 +137,7 @@ def test_install_refuses_invalid_json(tmp_path):
     with pytest.raises(IntegrationError):
         do_install(f, tmp_path)
     assert f.read_bytes() == b"{ // comment\n}"
-    assert not list(tmp_path.glob("settings.json.brainhub-backup-*"))
+    assert not list(tmp_path.glob("settings.json.atlas-backup-*"))
 
 
 def test_statusline_passthrough_roundtrip(tmp_path):
@@ -256,8 +256,8 @@ def test_uninstall_when_not_installed_is_noop(tmp_path):
 
 def test_statusline_command_quoting(monkeypatch):
     monkeypatch.setattr(osdirs, "os_name", lambda: "windows")  # the phase 2 form, kept on Windows
-    c = ci.statusline_command("C:/Program Files/py/python.exe", "D:/BrainHub/hook_client.py", 8090, None)
-    assert c.startswith('"C:/Program Files/py/python.exe" -I -S D:/BrainHub/hook_client.py statusline')
+    c = ci.statusline_command("C:/Program Files/py/python.exe", "D:/ATLAS/hook_client.py", 8090, None)
+    assert c.startswith('"C:/Program Files/py/python.exe" -I -S D:/ATLAS/hook_client.py statusline')
     c = ci.statusline_command("D:/py/python.exe", "D:/B/hook_client.py", 1, Path("D:/my data/p.txt"))
     assert '--passthrough-file "D:/my data/p.txt"' in c and '"D:/py' not in c
 
@@ -276,7 +276,7 @@ def test_console_python(tmp_path):
 
 def test_cli_status(tmp_path):
     f = tmp_path / "s.json"
-    r = subprocess.run([sys.executable, "-m", "brainhub", "integration", "status", "--root", str(tmp_path),
+    r = subprocess.run([sys.executable, "-m", "atlas", "integration", "status", "--root", str(tmp_path),
                         "--settings", str(f)], cwd=APP_DIR, capture_output=True, text=True)
     assert r.returncode == 0 and json.loads(r.stdout)["hooks_installed"] is False
 
@@ -284,7 +284,7 @@ def test_cli_status(tmp_path):
 def test_cli_error_exit(tmp_path):
     f = tmp_path / "s.json"
     f.write_text("{ nope")
-    r = subprocess.run([sys.executable, "-m", "brainhub", "integration", "install", "--root", str(tmp_path),
+    r = subprocess.run([sys.executable, "-m", "atlas", "integration", "install", "--root", str(tmp_path),
                         "--settings", str(f)], cwd=APP_DIR, capture_output=True, text=True)
     assert r.returncode == 1 and r.stderr.startswith("error:")
 
@@ -292,17 +292,17 @@ def test_cli_error_exit(tmp_path):
 def test_cli_install_uses_the_state_folder(tmp_path):
     f = tmp_path / "s.json"
     f.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo mine"}}), "utf-8")
-    r = subprocess.run([sys.executable, "-m", "brainhub", "integration", "install", "--root", str(tmp_path),
+    r = subprocess.run([sys.executable, "-m", "atlas", "integration", "install", "--root", str(tmp_path),
                         "--settings", str(f)], cwd=APP_DIR, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest, inherited by the child
+    state = tmp_path / "state"  # ATLAS_STATE_DIR from conftest, inherited by the child
     assert (state / ci.STATE_FILE).exists() and (state / ci.PASSTHROUGH_FILE).read_text("utf-8") == "echo mine"
     assert not any((tmp_path / "data" / name).exists() for name in (ci.STATE_FILE, ci.PASSTHROUGH_FILE))
 
 
 def test_posix_statusline_quoting(tmp_path, monkeypatch):
     monkeypatch.setattr(osdirs, "os_name", lambda: "linux")
-    py, script = "/opt/my py/bin/python3.14", "/home/o'neil/.local/share/brainhub/hook/hook_client.py"
+    py, script = "/opt/my py/bin/python3.14", "/home/o'neil/.local/share/atlas/hook/hook_client.py"
     passthrough = Path("/home/o'neil/my state/statusline_passthrough.txt")
     c = ci.statusline_command(py, script, 8090, passthrough)
     assert shlex.split(c) == [py, "-I", "-S", script, "statusline", "--port", "8090",
@@ -325,7 +325,7 @@ def test_posix_statusline_runs_under_sh(tmp_path, monkeypatch):
     from tests.test_hook_client import free_port
     monkeypatch.setattr(osdirs, "os_name", lambda: "linux")
     odd = tmp_path / "it's a dir"
-    script = odd / "brainhub" / "hook" / "hook_client.py"
+    script = odd / "atlas" / "hook" / "hook_client.py"
     script.parent.mkdir(parents=True)
     shutil.copy(ci.hook_script(), script)
     python = odd / "python"
@@ -350,7 +350,7 @@ def _runtime_state(state: Path, slot: str = "a") -> Path:
 
 
 def test_runtime_mode_hooks_use_stable_paths(tmp_path, monkeypatch):
-    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest: the default
+    state = tmp_path / "state"  # ATLAS_STATE_DIR from conftest: the default
     base = tmp_path / "uv" / "cpython-3.14-linux-x86_64-gnu" / "bin" / "python3.14"
     base.parent.mkdir(parents=True)
     base.write_text("")
@@ -402,7 +402,7 @@ def test_missing_base_python_refuses_in_runtime_mode(tmp_path, monkeypatch):
     assert st["hooks_installed"] and st["paths_current"] is False
     r = subprocess.run([sys.executable, "-c", "import sys; sys._base_executable = sys.argv[1]; "
                         "sys.argv[1:] = ['integration', 'install', '--root', sys.argv[2], '--settings', sys.argv[3]]; "
-                        "import runpy; runpy.run_module('brainhub', run_name='__main__')",
+                        "import runpy; runpy.run_module('atlas', run_name='__main__')",
                         str(tmp_path / "gone" / "python3"), str(tmp_path), str(f)],
                        cwd=APP_DIR, capture_output=True, text=True)
     assert r.returncode == 1 and "runtime init" in r.stderr
@@ -510,9 +510,9 @@ def test_uninstall_on_one_os_keeps_other_statusline(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("stable", [
-    "C:\\Users\\me\\AppData\\Local\\BrainHub\\hook\\hook_client.py",  # Windows' default state folder
-    "/home/me/.local/share/brainhub/hook/hook_client.py",  # Linux's
-    "/home/me/my data/brainhub/hook/hook_client.py",  # an XDG_DATA_HOME with a space
+    "C:\\Users\\me\\AppData\\Local\\ATLAS\\hook\\hook_client.py",  # Windows' default state folder
+    "/home/me/.local/share/atlas/hook/hook_client.py",  # Linux's
+    "/home/me/my data/atlas/hook/hook_client.py",  # an XDG_DATA_HOME with a space
 ])
 @pytest.mark.parametrize("os_name", ["windows", "linux"])
 def test_status_recognises_runtime_hook_path(tmp_path, monkeypatch, stable, os_name):
@@ -532,10 +532,10 @@ def test_status_recognises_runtime_hook_path(tmp_path, monkeypatch, stable, os_n
 
 @pytest.mark.parametrize("os_name", ["windows", "linux"])
 def test_status_recognises_the_state_folder_in_use(tmp_path, monkeypatch, os_name):
-    """Under BRAINHUB_STATE_DIR the state folder may have any name: its own stable copy is ours."""
+    """Under ATLAS_STATE_DIR the state folder may have any name: its own stable copy is ours."""
     monkeypatch.setattr(osdirs, "os_name", lambda: os_name)
     state = tmp_path / "bh state's"
-    monkeypatch.setenv("BRAINHUB_STATE_DIR", str(state))
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(state))
     stable = _runtime_state(state)
     python, script = ci.hook_paths()
     assert script == str(stable)
@@ -549,13 +549,13 @@ def test_status_recognises_the_state_folder_in_use(tmp_path, monkeypatch, os_nam
 
 
 @pytest.mark.parametrize("script", [
-    "/opt/tools/hook/hook_client.py",  # a hook/ folder, but not in a BrainHub state folder
-    "/x/notbrainhub/hook/hook_client.py",
-    "/x/notbrainhub/hook_client.py",
-    "/x/brainhub-old/hook/hook_client.py",
-    "/x/brainhub/hook/hook_client.py.bak",
+    "/opt/tools/hook/hook_client.py",  # a hook/ folder, but not in an ATLAS state folder
+    "/x/notatlas/hook/hook_client.py",
+    "/x/notatlas/hook_client.py",
+    "/x/atlas-old/hook/hook_client.py",
+    "/x/atlas/hook/hook_client.py.bak",
     "/tmp/other-state/hook/hook_client.py",  # a state folder other than the one in use
-    "C:/tools/BrainHub/hook/other/hook_client.py",
+    "C:/tools/ATLAS/hook/other/hook_client.py",
 ])
 @pytest.mark.parametrize("os_name", ["windows", "linux"])
 def test_unrelated_hook_clients_are_not_ours(tmp_path, monkeypatch, script, os_name):
@@ -571,9 +571,9 @@ def test_unrelated_hook_clients_are_not_ours(tmp_path, monkeypatch, script, os_n
 
 
 def test_cli_install_in_runtime_mode(tmp_path):
-    stable = _runtime_state(tmp_path / "state")  # BRAINHUB_STATE_DIR from conftest, inherited
+    stable = _runtime_state(tmp_path / "state")  # ATLAS_STATE_DIR from conftest, inherited
     f = tmp_path / "s.json"
-    r = subprocess.run([sys.executable, "-m", "brainhub", "integration", "install", "--root", str(tmp_path),
+    r = subprocess.run([sys.executable, "-m", "atlas", "integration", "install", "--root", str(tmp_path),
                         "--settings", str(f)], cwd=APP_DIR, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     hook = json.loads(f.read_text("utf-8"))["hooks"]["Stop"][0]["hooks"][0]

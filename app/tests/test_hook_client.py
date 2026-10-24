@@ -12,7 +12,7 @@ import pytest
 
 from tests.fakes import kill_pid_file, pid_gone
 
-HOOK = Path(__file__).resolve().parent.parent / "brainhub" / "hook_client.py"
+HOOK = Path(__file__).resolve().parent.parent / "atlas" / "hook_client.py"
 
 
 def _load():
@@ -110,7 +110,7 @@ def test_statusline_text():
          "rate_limits": {"five_hour": {"used_percentage": 62.4, "resets_at": T},
                          "seven_day": {"used_percentage": 31}}}
     assert hc.statusline_text(d) == f"Sonnet · 5h 62% ↻{datetime.fromtimestamp(T):%H:%M} · 7d 31%"
-    assert hc.statusline_text({}) == "BrainHub"
+    assert hc.statusline_text({}) == "ATLAS"
 
 
 def test_event_posts_to_hub(hub):
@@ -221,4 +221,4 @@ def test_statusline_bad_resets_at_keeps_line(ra):
 def test_statusline_text_ignores_bool_numbers():
     hc = _load()
     d = {"rate_limits": {"five_hour": {"used_percentage": True}}}
-    assert hc.statusline_text(d) == "BrainHub"
+    assert hc.statusline_text(d) == "ATLAS"

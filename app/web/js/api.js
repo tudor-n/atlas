@@ -1,4 +1,4 @@
-// Thin client for the BrainHub server. Every JSON body goes out as application/json (the server returns 415 otherwise).
+// Thin client for the ATLAS server. Every JSON body goes out as application/json (the server returns 415 otherwise).
 
 async function request(method, path, body) {
   const opts = { method, headers: {} };
@@ -10,7 +10,7 @@ async function request(method, path, body) {
   try {
     res = await fetch(path, opts);
   } catch (_) {
-    throw new Error("Can't reach BrainHub. Is it running?");
+    throw new Error("Can't reach ATLAS. Is it running?");
   }
   let data = null;
   const text = await res.text();

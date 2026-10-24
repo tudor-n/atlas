@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import voice_worker as vw
+from atlas import voice_worker as vw
 
 APP = Path(__file__).resolve().parents[1]
 
 
 def _worker(tmp_path, delay="0", extra_env=None):
-    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "BRAINHUB_VOICE_FAKE_DELAY": delay,
+    env = {**os.environ, "ATLAS_VOICE_TRACE": "1", "ATLAS_VOICE_FAKE": str(tmp_path / "said.jsonl"), "ATLAS_VOICE_FAKE_DELAY": delay,
            **(extra_env or {})}
-    return subprocess.Popen([sys.executable, "-m", "brainhub", "voice-worker", "--state", str(tmp_path / "state")],
+    return subprocess.Popen([sys.executable, "-m", "atlas", "voice-worker", "--state", str(tmp_path / "state")],
                             cwd=APP, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8")
 
@@ -177,10 +177,10 @@ def test_player_reports_a_failing_player(tmp_path):
         vw.Player((str(script),)).play(wav, 1.0, 0)
 
 
-MODEL_DIR = os.environ.get("BRAINHUB_VOICE_TEST_MODELS")
+MODEL_DIR = os.environ.get("ATLAS_VOICE_TEST_MODELS")
 
 
-@pytest.mark.skipif(not MODEL_DIR, reason="set BRAINHUB_VOICE_TEST_MODELS to a folder with the voice files")
+@pytest.mark.skipif(not MODEL_DIR, reason="set ATLAS_VOICE_TEST_MODELS to a folder with the voice files")
 def test_real_synthesis_in_the_atlas_blend(tmp_path):
     engine = vw.Engine(tmp_path)
     req = {**_say("r", "Robot arm has finished. It took forty-two minutes.", "Splendid."),

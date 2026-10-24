@@ -131,7 +131,7 @@ impl ClaudeSync {
 #[derive(Debug)]
 pub struct ClaudeWatch {
     pub sync: Arc<ClaudeSync>,
-    /// `desktop.json`'s state folder: the slots, and `BRAINHUB_STATE_DIR` for claude-sync.
+    /// `desktop.json`'s state folder: the slots, and `ATLAS_STATE_DIR` for claude-sync.
     pub state: PathBuf,
     pub log: PathBuf,
     /// Claude Code's settings file (`config::claude_settings_path`).

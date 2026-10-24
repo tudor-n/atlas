@@ -1,12 +1,12 @@
 """GET /api/claude-sync and PUT /api/claude-sync/per-os-keys. The state folder and the shared store
-are conftest's temp folders (BRAINHUB_STATE_DIR, BRAINHUB_SHARED_DIR)."""
+are conftest's temp folders (ATLAS_STATE_DIR, ATLAS_SHARED_DIR)."""
 import json
 
 import pytest
 
-from brainhub import claude_sync as cs
-from brainhub import osdirs
-from brainhub.server import create_app
+from atlas import claude_sync as cs
+from atlas import osdirs
+from atlas.server import create_app
 from tests.test_server import make_runner
 
 

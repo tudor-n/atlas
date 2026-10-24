@@ -163,7 +163,7 @@ export function revealCard(cardTop, cardBottom, rowTop, viewTop, viewBottom, wan
 // The pop-up opens by itself on Today when the queue holds an entry this viewer hasn't been shown in
 // it yet. The shown ids live in memory and in localStorage (key REVIEW_SEEN_KEY), pruned to the ids
 // still in the queue.
-export const REVIEW_SEEN_KEY = 'brainhub.review.seen';
+export const REVIEW_SEEN_KEY = 'atlas.review.seen';
 
 // The stored value (a JSON array of ids, or junk from storage) as a list of distinct non-empty ids.
 export function parseSeen(raw) {

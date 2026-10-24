@@ -81,7 +81,7 @@ test('popupRows for other tiles', () => {
 
 test('synopsis shows the drive banner while the root is not usable', () => {
   assert.equal(synopsisText(W({ synopsis: '2 due today', drive: null })), '2 due today');
-  const drive = { state: 'missing', message: "BrainHub's drive isn't available.", held: 0 };
+  const drive = { state: 'missing', message: "ATLAS's drive isn't available.", held: 0 };
   assert.equal(synopsisText(W({ synopsis: 'ignored', drive })), drive.message);
   assert.equal(synopsisText(W({ drive: { ...drive, held: 2 } })), `2 captures held on this OS · ${drive.message}`);
   assert.equal(synopsisText(null), '');
