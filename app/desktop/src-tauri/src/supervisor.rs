@@ -110,7 +110,7 @@ fn write_shell_json(state: &Path, own: &str) -> std::io::Result<()> {
 }
 
 /// Append one shell line to hub.log.
-fn append_log(log: &Path, msg: &str) {
+pub(crate) fn append_log(log: &Path, msg: &str) {
     if let Some(dir) = log.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -217,6 +217,22 @@ fn run_bounded(mut cmd: Command, log: &Path, limit: Duration, grace: Duration) -
     }
 }
 
+/// The package folder in a slot's (or a checkout's) `app/`: `atlas` when it is there, else the
+/// pre-rename one when that is there (rename spec §2.3: the first start after the rename still
+/// runs a pre-rename slot, whose update step then builds the new one), else `atlas`.
+pub fn slot_package(app: &Path) -> &'static str {
+    if !app.join("atlas").is_dir() && app.join(crate::migrate::LEGACY_PACKAGE).is_dir() {
+        crate::migrate::LEGACY_PACKAGE
+    } else {
+        "atlas"
+    }
+}
+
+/// The state folder for a child: under both names, so a pre-rename slot's code finds it too.
+fn state_env(cmd: &mut Command, state: &Path) {
+    cmd.env("ATLAS_STATE_DIR", state).env(crate::migrate::LEGACY_STATE_VAR, state);
+}
+
 /// The time limits of a runtime start's slow part and of the claude-sync watch (tests shorten them).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
@@ -231,15 +247,16 @@ pub struct Limits {
 /// a slot without the command, or a missing shared drive, just fails here.
 pub(crate) fn run_claude_sync(python: &Path, app: &Path, state: &Path, log: &Path, settings_only: bool, why: &str,
                               limits: Limits) {
+    let package = slot_package(app);
     let mut sync = Command::new(python);
-    sync.args(["-m", "atlas", "claude-sync"])
+    sync.args(["-m", package, "claude-sync"])
         .args(settings_only.then_some("--settings-only"))
         .current_dir(app)
-        .env("ATLAS_STATE_DIR", state)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8");
+    state_env(&mut sync, state);
     let flag = if settings_only { " --settings-only" } else { "" };
-    append_log(log, &format!("claude-sync ({why}): {} -m atlas claude-sync{flag} (in {})", python.display(),
+    append_log(log, &format!("claude-sync ({why}): {} -m {package} claude-sync{flag} (in {})", python.display(),
                              app.display()));
     let how = run_bounded(sync, log, limits.claude_sync, limits.term_grace);
     append_log(log, &format!("claude-sync ({why}): {how}"));
@@ -276,7 +293,7 @@ impl Prep {
         }
         // Run as a file, isolated (-I -S), like the hook client: it imports nothing from atlas.
         // Its one JSON line goes straight to hub.log.
-        let script = self.app.join("atlas").join("update_step.py");
+        let script = self.app.join(slot_package(&self.app)).join("update_step.py");
         let mut step = Command::new(&self.python);
         step.args(["-I", "-S"])
             .arg(&script)
@@ -284,8 +301,8 @@ impl Prep {
             .arg(&self.live)
             .arg("--state")
             .arg(&self.state)
-            .current_dir(&self.state)
-            .env("ATLAS_STATE_DIR", &self.state);
+            .current_dir(&self.state);
+        state_env(&mut step, &self.state);
         log(&format!("update step: {} -I -S {} --live {} --state {}", self.python.display(), script.display(),
                      self.live.display(), self.state.display()));
         let how = run_bounded(step, &self.log, self.limits.update_step, self.limits.term_grace);
@@ -298,11 +315,11 @@ pub fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(if attempt >= 6 { 60 } else { 1u64 << attempt })
 }
 
-/// The hub's arguments: `-m atlas --root <root> --port <port>`. The port is passed explicitly so
-/// the hub listens where the shell looks, even if the hub's own `port` setting has changed since
-/// `desktop-config` ran.
-pub fn hub_args(root: &Path, port: u16) -> Vec<OsString> {
-    vec!["-m".into(), "atlas".into(), "--root".into(), root.as_os_str().to_owned(), "--port".into(),
+/// The hub's arguments: `-m <package> --root <root> --port <port>` (`package` from
+/// `slot_package`). The port is passed explicitly so the hub listens where the shell looks, even if
+/// the hub's own `port` setting has changed since `desktop-config` ran.
+pub fn hub_args(package: &str, root: &Path, port: u16) -> Vec<OsString> {
+    vec!["-m".into(), package.into(), "--root".into(), root.as_os_str().to_owned(), "--port".into(),
          port.to_string().into()]
 }
 
@@ -619,8 +636,9 @@ impl Supervisor {
             }
         };
         let port = self.cfg.port;
+        let package = slot_package(&app_dir);
         let mut cmd = Command::new(&python);
-        cmd.args(hub_args(&root, port))
+        cmd.args(hub_args(package, &root, port))
             .current_dir(&app_dir)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
@@ -630,7 +648,7 @@ impl Supervisor {
         // Runtime mode: the hub reads update.json, current.json and shell.json (and keeps its held
         // captures and integration state) in the state folder the slots are in.
         if let Mode::Runtime { state, .. } = self.cfg.mode() {
-            cmd.env("ATLAS_STATE_DIR", state);
+            state_env(&mut cmd, &state);
         }
         crate::child_env(&mut cmd);
         // Its own process group: a Ctrl+C in the shell's terminal doesn't reach the hub as well, so
@@ -648,8 +666,8 @@ impl Supervisor {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        self.log(&format!("starting {} -m atlas --root {} --port {port} (in {})", python.display(), root.display(),
-                          app_dir.display()));
+        self.log(&format!("starting {} -m {package} --root {} --port {port} (in {})", python.display(),
+                          root.display(), app_dir.display()));
         match cmd.spawn() {
             Ok(child) => {
                 self.child = Some(child);
@@ -869,8 +887,13 @@ mod tests {
     /// Slot `slot` in `state`, holding `commit` (its `slot.json`), with an `app/atlas` folder
     /// and an empty venv python. Returns the slot folder.
     fn make_slot(state: &Path, slot: &str, commit: &str) -> PathBuf {
+        make_slot_of(state, slot, commit, "atlas")
+    }
+
+    /// `make_slot` with the package folder `package` (a pre-rename slot has the legacy one).
+    fn make_slot_of(state: &Path, slot: &str, commit: &str, package: &str) -> PathBuf {
         let dir = state.join("runtime").join(format!("slot-{slot}"));
-        std::fs::create_dir_all(dir.join("app").join("atlas")).unwrap();
+        std::fs::create_dir_all(dir.join("app").join(package)).unwrap();
         std::fs::write(dir.join("slot.json"), format!(r#"{{"commit": "{commit}", "deps": "d"}}"#)).unwrap();
         let python = venv_python(&dir);
         std::fs::create_dir_all(python.parent().unwrap()).unwrap();
@@ -1024,6 +1047,58 @@ mod tests {
         assert!(later[1].starts_with(&format!("b|{}|{st}|-m atlas --root", b_app.display())), "{got}");
         assert_eq!(got.matches("claude-sync").count(), 1, "once per shell start: {got}");
         assert!(!root.exists(), "the shell writes nothing under the root");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn package_by_slot_contents() {
+        let dir = temp("bh-sup-package");
+        let legacy = crate::migrate::LEGACY_PACKAGE;
+        assert_eq!(slot_package(&dir), "atlas", "neither: the current name");
+        std::fs::create_dir_all(dir.join(legacy)).unwrap();
+        assert_eq!(slot_package(&dir), legacy, "a pre-rename slot");
+        std::fs::create_dir_all(dir.join("atlas")).unwrap();
+        assert_eq!(slot_package(&dir), "atlas", "both: the new one wins");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The first start after the rename (spec §2.3): the current slot is a pre-rename commit. Its
+    /// claude-sync and update step run from its legacy package, with the state folder under both
+    /// names; the step flips to a new slot, and the hub starts from that with `-m atlas`.
+    #[cfg(unix)]
+    #[test]
+    fn a_pre_rename_slot_runs_its_own_package_once() {
+        let _serial = serial();
+        let dir = temp("bh-sup-legacy-slot");
+        let state = dir.join("state");
+        let calls = dir.join("calls.txt");
+        let legacy = crate::migrate::LEGACY_PACKAGE;
+        let a = make_slot_of(&state, "a", "old", legacy);
+        let b = make_slot(&state, "b", "new");
+        make_current(&state, "a", "old");
+        let step = format!(
+            "case \"$1\" in -I) printf '%s' '{{\"slot\": \"b\", \"commit\": \"new\", \"deps\": \"d\"}}' > \"{}\";; esac",
+            state.join("runtime").join("current.json").display()
+        );
+        let record = |slot: &str| {
+            format!("echo \"{slot}|$ATLAS_STATE_DIR|${}|$*\" >> \"{}\"", crate::migrate::LEGACY_STATE_VAR,
+                    calls.display())
+        };
+        script(&a.join("venv").join("bin"), "python", &format!("{}\n{step}", record("a")));
+        script(&b.join("venv").join("bin"), "python", &record("b"));
+        let port = free_port();
+        let mut s = sup_in(runtime_cfg(port, &dir), &dir, &dir.join("own"));
+        tick_now(&mut s);
+        wait_exit(&mut s);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        let st = state.display();
+        let expected = [
+            format!("a|{st}|{st}|-m {legacy} claude-sync"),
+            format!("a|{st}|{st}|-I -S {} --live {} --state {st}",
+                    a.join("app").join(legacy).join("update_step.py").display(), dir.join("live").display()),
+            format!("b|{st}|{st}|-m atlas --root {} --port {port}", dir.join("root").display()),
+        ];
+        assert_eq!(got.lines().collect::<Vec<_>>(), expected);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1189,7 +1264,7 @@ mod tests {
     #[test]
     fn hub_args_pass_the_configured_port() {
         // The hub must listen where the shell looks, whatever its own `port` setting says.
-        let args = hub_args(std::path::Path::new(r"C:\bh root"), 8099);
+        let args = hub_args("atlas", std::path::Path::new(r"C:\bh root"), 8099);
         let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(args, ["-m", "atlas", "--root", r"C:\bh root", "--port", "8099"]);
     }

@@ -3,6 +3,7 @@
 
 pub mod claude_watch;
 pub mod config;
+pub mod migrate;
 pub mod supervisor;
 pub mod voice;
 
@@ -672,7 +673,10 @@ fn watch(app: AppHandle, sup: Shared, restart_item: MenuItem<Wry>, mut notice: T
 pub fn run() {
     #[cfg(target_os = "linux")]
     use_xwayland();
-    let cfg = config::default_path().map(|p| config::load(&p)).unwrap_or_default();
+    // The cut-over from the pre-rename folders comes first: it decides which desktop.json to read.
+    let migration = migrate::run();
+    let cfg = migration.fix(migration.config.as_deref().map(config::load).unwrap_or_default());
+    let autostart_moved = migration.autostart_removed;
     let port = cfg.port;
     let state = config::state_dir().unwrap_or_else(std::env::temp_dir); // temp: no home folder at all
     let sup = Shared(Arc::new(Mutex::new(Supervisor::new(cfg, state))));
@@ -737,6 +741,12 @@ pub fn run() {
             let open = MenuItem::with_id(handle, "open", "Open ATLAS", true, None::<&str>)?;
             let browser = MenuItem::with_id(handle, "browser", "Open in browser", true, None::<&str>)?;
             let toggle = MenuItem::with_id(handle, "toggle", "Show/Hide widget", true, None::<&str>)?;
+            // The migration removed the pre-rename login entry: this shell's own takes its place.
+            if autostart_moved {
+                if let Err(e) = handle.autolaunch().enable() {
+                    eprintln!("atlas-desktop: could not turn start at login on: {e}");
+                }
+            }
             let autostart_on = handle.autolaunch().is_enabled().unwrap_or(false);
             let login = CheckMenuItem::with_id(handle, "login", "Start at login", true, autostart_on, None::<&str>)?;
             let restart = MenuItem::with_id(handle, "restart", "Restart hub", false, None::<&str>)?;

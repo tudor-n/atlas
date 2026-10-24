@@ -71,14 +71,14 @@ impl DesktopConfig {
 }
 
 /// Reads an environment variable (tests pass a fake environment).
-type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+pub(crate) type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
-fn real_env(name: &str) -> Option<OsString> {
+pub(crate) fn real_env(name: &str) -> Option<OsString> {
     std::env::var_os(name)
 }
 
 /// An unset or empty variable gives no value.
-fn env_path(env: Env, name: &str) -> Option<PathBuf> {
+pub(crate) fn env_path(env: Env, name: &str) -> Option<PathBuf> {
     env(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
@@ -87,9 +87,12 @@ const HOME_VAR: &str = "USERPROFILE";
 #[cfg(not(windows))]
 const HOME_VAR: &str = "HOME";
 
-fn home(env: Env) -> Option<PathBuf> {
+pub(crate) fn home(env: Env) -> Option<PathBuf> {
     env_path(env, HOME_VAR).or_else(std::env::home_dir)
 }
+
+/// The folders' names: `%LOCALAPPDATA%\<windows>` on Windows, `<xdg base>/<xdg>` elsewhere.
+pub(crate) const NAMES: (&str, &str) = ("ATLAS", "atlas");
 
 /// `$override_var`, else `%LOCALAPPDATA%\ATLAS` on Windows and `${xdg_var:-~/xdg_default}/atlas`
 /// elsewhere. As in osdirs.py, an empty or relative XDG value falls back to the default.
@@ -97,11 +100,17 @@ fn os_dir(env: Env, override_var: &str, xdg_var: &str, xdg_default: &str) -> Opt
     if let Some(dir) = env_path(env, override_var) {
         return Some(dir);
     }
+    os_default_dir(env, xdg_var, xdg_default, NAMES)
+}
+
+/// The default folder (no override) under the given `(windows, xdg)` names: the migration also
+/// asks for the pre-rename ones (`migrate.rs`).
+pub(crate) fn os_default_dir(env: Env, xdg_var: &str, xdg_default: &str, names: (&str, &str)) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let _ = (xdg_var, xdg_default);
         let local = env_path(env, "LOCALAPPDATA").or_else(|| home(env).map(|h| h.join("AppData").join("Local")))?;
-        Some(local.join("ATLAS"))
+        Some(local.join(names.0))
     }
     #[cfg(not(windows))]
     {
@@ -109,15 +118,15 @@ fn os_dir(env: Env, override_var: &str, xdg_var: &str, xdg_default: &str) -> Opt
             Some(dir) if dir.is_absolute() => dir,
             _ => home(env)?.join(xdg_default),
         };
-        Some(base.join("atlas"))
+        Some(base.join(names.1))
     }
 }
 
-fn default_path_in(env: Env) -> Option<PathBuf> {
+pub(crate) fn default_path_in(env: Env) -> Option<PathBuf> {
     os_dir(env, "ATLAS_CONFIG_DIR", "XDG_CONFIG_HOME", ".config").map(|d| d.join("desktop.json"))
 }
 
-fn state_dir_in(env: Env) -> Option<PathBuf> {
+pub(crate) fn state_dir_in(env: Env) -> Option<PathBuf> {
     os_dir(env, "ATLAS_STATE_DIR", "XDG_DATA_HOME", ".local/share")
 }
 
