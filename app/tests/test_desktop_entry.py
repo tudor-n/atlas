@@ -64,7 +64,8 @@ def test_install_writes_the_entry_and_the_icon(tmp_path):
     result = de.install(exe, home)
     desktop = home / "applications" / "dev.atlas.desktop.desktop"
     icon = home / "icons" / "hicolor" / "256x256" / "apps" / "dev.atlas.desktop.png"
-    assert result == {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe), "changed": True}
+    assert result == {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe), "changed": True,
+                      "removed_legacy": []}
     lines = desktop.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "[Desktop Entry]"
     for line in ("Type=Application", "Name=ATLAS", f'Exec="{exe}" --open', "Icon=dev.atlas.desktop",

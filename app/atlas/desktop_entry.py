@@ -5,7 +5,9 @@ desktop-entry install|uninstall|status --exec <binary> [--data-home <dir>]`.
 shell with `--open` (the shell, or the one already running, then shows its main window), and copies
 the shell's icon to `<data home>/icons/hicolor/256x256/apps/dev.atlas.desktop.png`. The data
 home is `--data-home`, else `$XDG_DATA_HOME` (absolute), else `~/.local/share`. It is idempotent: a
-file already right is left alone. `uninstall` removes only those two files. `status` prints JSON.
+file already right is left alone. `install` also removes the pre-rename entry and icon
+(`legacy.LAUNCHER_ID`) when they are ours (rename spec §1). `uninstall` removes only the two
+current files. `status` prints JSON.
 
 Linux only for now: on Windows it says so and exits 2. Stdlib only.
 """
@@ -15,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import osdirs
+from . import legacy, osdirs
 
 APP_ID = "dev.atlas.desktop"  # the shell's identifier (tauri.conf.json)
 DESKTOP_NAME = APP_ID + ".desktop"
@@ -89,6 +91,35 @@ def _write_if_changed(path: Path, data: bytes) -> bool:
     return True
 
 
+def legacy_paths(data_home: Path) -> tuple[Path, Path]:
+    """(the pre-rename desktop file, its icon) under `data_home`."""
+    data_home = Path(data_home)
+    return (data_home / "applications" / (legacy.LAUNCHER_ID + ".desktop"),
+            data_home / "icons" / "hicolor" / "256x256" / "apps" / (legacy.LAUNCHER_ID + ".png"))
+
+
+def remove_legacy(data_home: Path, icon_source: Path = ICON_SOURCE) -> list[str]:
+    """Remove the pre-rename launcher entry when it is ours (a desktop entry with our old `Icon=`
+    line), and its icon when it is ours (that entry was, or it is our icon's exact bytes).
+    Anything else under those names is left alone. Returns what it removed."""
+    desktop, icon = legacy_paths(data_home)
+    try:
+        text = desktop.read_text(encoding="utf-8", errors="replace")
+        entry_ours = text.startswith("[Desktop Entry]") and legacy.LAUNCHER_ICON_LINE in text.splitlines()
+    except OSError:
+        entry_ours = False
+    try:
+        icon_ours = icon.is_file() and (entry_ours or icon.read_bytes() == Path(icon_source).read_bytes())
+    except OSError:
+        icon_ours = False
+    removed = []
+    for path, ours in ((desktop, entry_ours), (icon, icon_ours)):
+        if ours:
+            path.unlink(missing_ok=True)
+            removed.append(str(path))
+    return removed
+
+
 def check_exec(exe: Path) -> Path:
     """The binary as an absolute path; ValueError unless it is an executable file."""
     exe = Path(os.path.abspath(exe))
@@ -106,8 +137,9 @@ def install(exe: Path, data_home: Path, icon_source: Path = ICON_SOURCE) -> dict
     icon_bytes = Path(icon_source).read_bytes()
     wrote_desktop = _write_if_changed(desktop, text)
     wrote_icon = _write_if_changed(icon, icon_bytes)
+    removed = remove_legacy(data_home, icon_source)
     return {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe),
-            "changed": wrote_desktop or wrote_icon}
+            "changed": wrote_desktop or wrote_icon or bool(removed), "removed_legacy": removed}
 
 
 def uninstall(data_home: Path) -> dict:
