@@ -201,7 +201,7 @@ All typing uses an in-page keyboard, so the Android keyboard never opens. On the
 
 **IGNORE** on the tablet needs a second tap within 2 s. It hides a note or request without deleting it, and **Show ignored** on the PC brings it back.
 
-**DUMMY and HOME:** DUMMY opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `atlas-home` branch.
+**DUMMY and HOME:** DUMMY opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. (The arm's side is in its master since 2026-10-23.)
 
 ## Phase 4: voice and sass
 ATLAS speaks through the PC speakers, in Atlas's voice (Kokoro, British English: 70 % `bm_george`, 30 % `bm_fable`, speed 0.95). Everything runs locally and offline, on the CPU. It speaks only for:
@@ -224,7 +224,7 @@ It never reads text an agent wrote: only your project names and your own words. 
 - **The window:** it has a taskbar entry and an icon, appears in Alt+Tab, and remembers its size and maximised state. Closing it only hides it; the tray's **Quit** quits.
 - **Fallback:** the tray still has **Open in browser**.
 
-Add the launcher entry once with `python -m atlas desktop-entry install --exec <path to atlas-desktop>`. `desktop/README.md` has the details.
+Add the launcher entry once with `python -m atlas desktop-entry install --exec <path to atlas-desktop> --live <live copy>`. Started from it, ATLAS updates itself (pulls master once CI passed, rebuilds the app when it changed). `desktop/README.md` has the details.
 
 **The look is the arm UI's language,** taken from the robot arm's own control screen:
 - a black ground split by 1px hairlines;
