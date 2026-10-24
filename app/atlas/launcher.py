@@ -30,7 +30,6 @@ steps 2 and 3 only skips them: the shell always starts, if its binary exists.
 Stdlib only, run as a file: never import anything from `atlas`.
 """
 import argparse
-import fcntl
 import json
 import os
 import shutil
@@ -39,6 +38,11 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+
+try:
+    import fcntl  # POSIX only; main() refuses Windows, and tests on Windows only import this file
+except ImportError:
+    fcntl = None
 
 SHELL_NAME = "atlas-desktop"  # the binary, and its /proc/<pid>/comm
 UPDATE_LIMIT_S = 90  # the shell's own limit for the update step (supervisor.rs)
@@ -303,6 +307,8 @@ def take_lock(state, log):
     (then it only hands over). The fd is close-on-exec and never closed by hand: the exec that
     starts the shell releases it, so no second launcher slips in between the release and the shell
     showing up. Without a lock file it goes on unlocked (True)."""
+    if fcntl is None:
+        return True
     try:
         fd = os.open(os.path.join(state, "launcher.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     except OSError as e:

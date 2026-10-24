@@ -196,12 +196,14 @@ def test_runtime_mode():
     assert la.runtime_mode({"root": "", "live": "/l", "state": "/s"}) is None
 
 
+@posix_only
 def test_target_dir_of():
     assert la.target_dir_of("/home/t/.cache/atlas-target/release/atlas-desktop") == "/home/t/.cache/atlas-target"
     assert la.target_dir_of("/home/t/.cache/atlas-target/debug/atlas-desktop") is None
     assert la.target_dir_of("/usr/bin/atlas-desktop") is None
 
 
+@posix_only
 def test_shell_running_reads_comm_of_this_user(tmp_path):
     proc = tmp_path / "proc"
     for pid, comm in (("10", "bash"), ("11", "atlas-desktop"), ("self", "x")):
@@ -244,6 +246,7 @@ def test_run_bounded_stops_a_child_at_its_limit(tmp_path):
     assert "still running after 1 s" in (tmp_path / "l.log").read_text(encoding="utf-8")
 
 
+@posix_only
 def test_the_log_is_cut_back(tmp_path, monkeypatch):
     monkeypatch.setattr(la, "LOG_MAX", 1000)
     path = tmp_path / "l.log"
