@@ -30,6 +30,9 @@ DEFAULT_SETTINGS: dict = {
     "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True},
     "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
     "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
+    # Owner, 2026-10-24: the voice was lost under music. Boost evens every line out to a steady
+    # loudness; duck_to is the share (%) of their volume other apps keep while ATLAS speaks (100 = off).
+    "voice_boost": True, "voice_duck_to": 30,
 }
 
 VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback")
@@ -56,7 +59,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "recall_top_n": (1, 50), "default_lead_days": (0, 60), "nudge_days": (1, 60),
     "backup_debounce_s": (0, 86400),
     "usage_warn_pct": (1, 100), "agents_end_linger_s": (0, 3600), "agents_stale_h": (1, 168),
-    "voice_finish_min_s": (0, 3600), "voice_volume": (0, 100),
+    "voice_finish_min_s": (0, 3600), "voice_volume": (0, 100), "voice_duck_to": (0, 100),
 }
 
 

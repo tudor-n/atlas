@@ -318,11 +318,12 @@ def test_quips_fill_the_project_and_keep_their_place(env):
 
 
 def test_the_request_carries_the_voice_settings(env):
-    env.settings.update(voice_blend={"af_heart": 1}, voice_speed=1.1, voice_volume=40, voice_model="fp32")
+    env.settings.update(voice_blend={"af_heart": 1}, voice_speed=1.1, voice_volume=40, voice_model="fp32",
+                        voice_boost=False, voice_duck_to=55)
     env.a.readback_note("x")
     req = env.sink.lines[0].request
     assert req == {"op": "say", "parts": ["Note saved. x."], "blend": {"af_heart": 1}, "speed": 1.1, "volume": 40,
-                   "model": "/m/fp32.onnx", "voices": "/m/v.bin"}
+                   "boost": False, "duck_to": 55, "model": "/m/fp32.onnx", "voices": "/m/v.bin"}
 
 
 def test_sample_ignores_quiet_pause_and_off_but_needs_the_files(env):

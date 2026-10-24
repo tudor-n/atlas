@@ -255,3 +255,153 @@ def test_a_stop_during_synthesis_cancels_the_line(tmp_path):
     replies = [json.loads(x) for x in out.getvalue().splitlines()]
     assert replies == [{"id": "a", "ok": True}, {"id": "b", "ok": True}]
     assert played.read_text().count("x") == 1  # only the line after the stop played
+
+
+# -- boost and ducking (owner, 2026-10-24: the voice was lost under music) ---------------------
+
+def _speechlike(level_db, seconds=2.0):
+    """Half a second of tone, then a pause, repeated: voiced at `level_db` RMS, silent between."""
+    import numpy as np
+    sr = vw.SAMPLE_RATE
+    t = np.arange(int(sr * seconds)) / sr
+    tone = np.sin(2 * np.pi * 220 * t) * np.sqrt(2) * 10 ** (level_db / 20)
+    gate = (np.floor(t * 2) % 2 == 0)  # on, off, on, off…
+    return (tone * gate).astype(np.float32)
+
+
+def _voiced_db(x):
+    import numpy as np
+    x = np.asarray(x)
+    v = x[np.abs(x) > 1e-4]
+    return 10 * np.log10(np.mean(v ** 2))
+
+
+def test_boost_brings_a_quiet_line_to_the_target_without_clipping():
+    import numpy as np
+    out = vw.boost(_speechlike(-24))
+    assert abs(_voiced_db(out) - vw.BOOST_TARGET_DB) < 1.5
+    assert np.max(np.abs(out)) <= vw.LIMIT_CEILING + 1e-6
+    assert np.all(out[np.abs(_speechlike(-24)) == 0] == 0)  # the pauses stay silent
+
+
+def test_boost_never_makes_a_line_quieter_and_caps_its_gain():
+    import numpy as np
+    loud = _speechlike(-12)
+    assert _voiced_db(vw.boost(loud)) >= _voiced_db(loud) - 1.0  # never quieter (the limiter may bend peaks)
+    faint = _speechlike(-60)
+    assert _voiced_db(vw.boost(faint)) <= -60 + vw.BOOST_MAX_GAIN_DB + 0.5
+    assert np.all(vw.boost(np.zeros(4800, dtype=np.float32)) == 0)
+    assert len(vw.boost(np.zeros(5, dtype=np.float32))) == 5  # shorter than a frame: unchanged
+
+
+def test_soft_limit_leaves_the_body_alone_and_bends_peaks():
+    import numpy as np
+    x = np.array([0.0, 0.3, -0.69, 0.71, 1.5, -3.0], dtype=np.float32)
+    y = vw.soft_limit(x)
+    assert list(y[:3]) == pytest.approx([0.0, 0.3, -0.69])
+    assert 0.7 < y[3] < 0.72 and 0.7 < y[4] <= vw.LIMIT_CEILING and -vw.LIMIT_CEILING <= y[5] < -0.7
+    assert np.all(np.diff(vw.soft_limit(np.linspace(0, 5, 200, dtype=np.float32))) >= 0)  # monotonic
+
+
+def test_to_wav_boosted_is_louder(tmp_path):
+    import numpy as np
+    plain, boosted = tmp_path / "p.wav", tmp_path / "b.wav"
+    vw.to_wav(plain, _speechlike(-24), 80)
+    vw.to_wav(boosted, _speechlike(-24), 80, boosted=True)
+    level = lambda p: _voiced_db(np.frombuffer(wave.open(str(p)).readframes(10 ** 7), dtype="<i2") / 32767)
+    assert level(boosted) > level(plain) + 6
+
+
+FAKE_PACTL = r'''
+import json, os, sys
+db = os.environ["FAKE_PACTL_DB"]
+streams = json.load(open(db))
+a = sys.argv[1:]
+with open(db + ".calls", "a") as f:
+    f.write(json.dumps(a) + "\n")
+if a[:4] == ["-f", "json", "list", "sink-inputs"]:
+    print(json.dumps([{"index": int(i), "volume": {f"ch{n}": {"value": v} for n, v in enumerate(vols)},
+                       "properties": {"application.name": "x"}} for i, vols in streams.items()]))
+elif a[0] == "set-sink-input-volume":
+    streams[a[1]] = [int(v) for v in a[2:]]
+    json.dump(streams, open(db, "w"))
+'''
+
+
+@pytest.fixture
+def pactl(tmp_path, monkeypatch):
+    from tests.fakes import fake_cli
+    db = tmp_path / "streams.json"
+    db.write_text(json.dumps({"7": [65536, 65536], "9": [32768]}), encoding="utf-8")
+    monkeypatch.setenv("FAKE_PACTL_DB", str(db))
+    exe = fake_cli(tmp_path, FAKE_PACTL, name="pactl")
+    streams = lambda: json.loads(db.read_text(encoding="utf-8"))
+    return exe, streams, db
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_ducking_lowers_other_streams_and_gives_their_volume_back(tmp_path, pactl):
+    exe, streams, _ = pactl
+    d = vw.Ducker(tmp_path / "state", pactl=exe)
+    record = d.duck(30)
+    assert streams() == {"7": [19661, 19661], "9": [9830]}
+    assert (tmp_path / "state" / "voice" / "ducked.json").is_file()  # written before anything changed
+    d.restore(record)
+    assert streams() == {"7": [65536, 65536], "9": [32768]}
+    assert not (tmp_path / "state" / "voice" / "ducked.json").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_a_volume_changed_while_speaking_is_left_as_the_owner_set_it(tmp_path, pactl):
+    exe, streams, db = pactl
+    d = vw.Ducker(tmp_path / "state", pactl=exe)
+    record = d.duck(30)
+    s = streams(); s["7"] = [40000, 40000]; db.write_text(json.dumps(s), encoding="utf-8")  # the owner turned it up
+    d.restore(record)
+    assert streams() == {"7": [40000, 40000], "9": [32768]}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_a_worker_that_died_mid_line_is_undone_by_the_next(tmp_path, pactl):
+    exe, streams, _ = pactl
+    vw.Ducker(tmp_path / "state", pactl=exe).duck(30)  # and then it dies
+    vw.Ducker(tmp_path / "state", pactl=exe).recover()
+    assert streams() == {"7": [65536, 65536], "9": [32768]}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_no_ducking_at_100_or_without_pactl(tmp_path, pactl):
+    exe, streams, db = pactl
+    assert vw.Ducker(tmp_path / "state", pactl=exe).duck(100) is None
+    assert vw.Ducker(tmp_path / "state", pactl="").duck(30) is None
+    assert vw.Ducker(tmp_path / "state", pactl=exe).duck("loud") is None
+    assert streams() == {"7": [65536, 65536], "9": [32768]}
+    assert not Path(str(db) + ".calls").exists() or "set-sink-input-volume" not in Path(str(db) + ".calls").read_text()
+
+
+def test_serve_ducks_around_each_line_with_the_request_level(tmp_path):
+    import io
+    calls = []
+
+    class Recorder:
+        def recover(self): calls.append("recover")
+        def duck(self, level): calls.append(("duck", level)); return {"r": level}
+        def restore(self, rec): calls.append(("restore", rec))
+
+    import threading
+    r, w = os.pipe()
+    inp, wr = os.fdopen(r, "r", encoding="utf-8"), os.fdopen(w, "w", encoding="utf-8")
+    out = io.StringIO()
+    done = threading.Event()
+    threading.Thread(target=lambda: (vw.serve(tmp_path / "state", inp, out, engine=vw.FakeEngine(),
+                                              player=vw.FakePlayer(tmp_path / "said.jsonl"), ducker=Recorder()),
+                                     done.set()), daemon=True).start()
+    wr.write(json.dumps({**_say("a", "One."), "boost": True, "duck_to": 25}) + "\n")
+    wr.flush()
+    deadline = time.monotonic() + 10
+    while '"id": "a"' not in out.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    wr.close()
+    assert done.wait(10)
+    assert calls == ["recover", ("duck", 25), ("restore", {"r": 25})]
+    assert json.loads(out.getvalue().splitlines()[-1]) == {"id": "a", "ok": True}

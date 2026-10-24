@@ -390,7 +390,8 @@ def _parse(s) -> datetime | None:
 
 def _request(parts: list[str], s: dict, files: dict) -> dict:
     return {"op": "say", "parts": parts, "blend": s["voice_blend"], "speed": s["voice_speed"],
-            "volume": s["voice_volume"], "model": files["model"], "voices": files["voices"]}
+            "volume": s["voice_volume"], "boost": s.get("voice_boost", True), "duck_to": s.get("voice_duck_to", 100),
+            "model": files["model"], "voices": files["voices"]}
 
 
 def worker_command(state: Path) -> list[str]:
