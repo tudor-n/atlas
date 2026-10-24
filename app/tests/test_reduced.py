@@ -13,16 +13,16 @@ from datetime import datetime
 
 import pytest
 
-import brainhub.__main__ as main_mod
-from brainhub import holding, osdirs, rootguard
-from brainhub import store as store_mod
-from brainhub.brainmap import default_map, save_map
-from brainhub.config import Paths
-from brainhub.filing import MAX_AUTO_REQUEUE
-from brainhub.rawlog import read_log
-from brainhub.rootguard import check_root
-from brainhub.server import _corrupt, create_app, create_reduced_app
-from brainhub.store import Store
+import atlas.__main__ as main_mod
+from atlas import holding, osdirs, rootguard
+from atlas import store as store_mod
+from atlas.brainmap import default_map, save_map
+from atlas.config import Paths
+from atlas.filing import MAX_AUTO_REQUEUE
+from atlas.rawlog import read_log
+from atlas.rootguard import check_root
+from atlas.server import _corrupt, create_app, create_reduced_app
+from atlas.store import Store
 from tests.test_server import MAP, make_runner
 
 not_superuser = pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0,
@@ -31,7 +31,7 @@ not_superuser = pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0,
 
 def _brain(tmp_path) -> Paths:
     """A marked brain with a map, outside tmp_path itself (the tests' state folder lives there)."""
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     save_map(paths.brain, default_map())
     rootguard.create_marker(paths)
     return paths
@@ -64,7 +64,7 @@ async def _until(cond, timeout=5.0):
 
 # -- reduced app ---------------------------------------------------------------
 async def test_missing_root_serves_banner_and_holds_capture(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "drive" / "BrainHub")
+    paths = Paths(tmp_path / "drive" / "ATLAS")
     status = check_root(paths)
     assert status.state == "missing"
     c = await aiohttp_client(create_reduced_app(paths, status))
@@ -117,7 +117,7 @@ async def test_open_still_works_in_reduced_mode(aiohttp_client, tmp_path):
 
 
 async def test_foreign_root_is_never_written(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     paths.brain.mkdir(parents=True)
     (paths.brain / "notes.md").write_text("someone else's notes", encoding="utf-8")
     before = _snapshot(paths.root)
@@ -143,7 +143,7 @@ async def test_newer_root_is_not_watched(aiohttp_client, tmp_path):
 
 # -- recovery (P8) -------------------------------------------------------------
 async def test_recovery_requests_exit_75(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     app = _reduced(paths, recheck_interval=0.02)
     await aiohttp_client(app)
     await asyncio.sleep(0.1)
@@ -161,7 +161,7 @@ def _free_port():
 
 
 def test_serve_stops_with_exit_75_when_the_root_returns(tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     app = _reduced(paths, recheck_interval=0.02)
     save_map(paths.brain, default_map())
     rootguard.create_marker(paths)
@@ -187,7 +187,7 @@ def no_server(monkeypatch):
 
 
 def test_run_server_exits_75_after_recovery(tmp_path, no_server, capsys, monkeypatch):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     real = main_mod.create_reduced_app
 
     def reduced(p, status):
@@ -218,7 +218,7 @@ async def _make_brain_with_proposals(aiohttp_client, paths):
 
 @not_superuser
 async def test_readonly_root_keeps_hub_db(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     eid, ids = await _make_brain_with_proposals(aiohttp_client, paths)
     before, db = _snapshot(paths.root), paths.db.stat()
     try:
@@ -331,7 +331,7 @@ def test_readonly_store_refuses_a_schema_it_would_migrate(tmp_path, monkeypatch)
 
 
 def _entry():
-    from brainhub.models import Entry
+    from atlas.models import Entry
     return Entry("e-20261020-090000-abcd", datetime(2026, 10, 20, 9, 0, 0), "pc", "x")
 
 
@@ -381,7 +381,7 @@ def test_only_real_corruption_counts_as_damage():
 
 # -- flush at an ok start ------------------------------------------------------
 async def test_held_captures_flushed_and_queued_at_ok_start(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     paths.root.mkdir()
     app = create_app(paths, runner=make_runner(), start_workers=False)
     c = await aiohttp_client(app)
@@ -408,7 +408,7 @@ async def test_held_captures_flushed_and_queued_at_ok_start(aiohttp_client, tmp_
 async def test_captures_for_another_root_stay_held_at_ok_start(aiohttp_client, tmp_path):
     """A dev hub on a temp root shares this OS's state folder: it never pulls in the captures held
     for the real brain."""
-    real = Paths(tmp_path / "mnt" / "data" / "BrainHub")  # the drive is missing
+    real = Paths(tmp_path / "mnt" / "data" / "ATLAS")  # the drive is missing
     c = await aiohttp_client(_reduced(real))
     assert (await c.post("/api/entries", json={"text": "for the real brain", "source": "widget"})).status == 200
     await c.close()
@@ -423,15 +423,15 @@ async def test_captures_for_another_root_stay_held_at_ok_start(aiohttp_client, t
     c = await aiohttp_client(app)
     state = await (await c.get("/api/state")).json()
     assert state["startup_error"] == [
-        f"1 capture held on this OS belongs to another BrainHub folder ({real.root.resolve()}); "
+        f"1 capture held on this OS belongs to another ATLAS folder ({real.root.resolve()}); "
         "it was left in the holding folder"]
     assert read_log(dev.brain) == [] and holding.held(_state_dir()) == [mine]
 
 
 async def test_held_count_is_per_root(aiohttp_client, tmp_path):
-    other = Paths(tmp_path / "elsewhere" / "BrainHub")
+    other = Paths(tmp_path / "elsewhere" / "ATLAS")
     holding.hold(_state_dir(), other, "for another root", "pc", datetime(2026, 10, 20, 9, 0, 0))
-    paths = Paths(tmp_path / "drive" / "BrainHub")
+    paths = Paths(tmp_path / "drive" / "ATLAS")
     c = await aiohttp_client(_reduced(paths))
     assert (await (await c.get("/api/state")).json())["drive"]["held"] == 0
     assert (await c.post("/api/entries", json={"text": "for this root", "source": "pc"})).status == 200
@@ -453,11 +453,11 @@ async def _running_brain(aiohttp_client, paths):
 
 
 async def test_capture_held_when_the_log_cant_be_written_mid_run(aiohttp_client, tmp_path, monkeypatch):
-    from brainhub import routes
+    from atlas import routes
 
     def read_only(*args, **kwargs):
         raise OSError(errno.EROFS, "Read-only file system")
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     c = await _running_brain(aiohttp_client, paths)
     monkeypatch.setattr(routes, "append_entry", read_only)
     r = await c.post("/api/entries", json={"text": "typed as the drive went read-only", "source": "pc"})
@@ -468,7 +468,7 @@ async def test_capture_held_when_the_log_cant_be_written_mid_run(aiohttp_client,
 
 
 async def test_capture_held_when_the_drive_goes_away_mid_run(aiohttp_client, tmp_path):
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     c = await _running_brain(aiohttp_client, paths)
     # The drive is gone while the hub runs. Moving brain/ away stands in for it: Windows won't
     # rename the root while the hub holds data/hub.db open, and append_entry refuses a missing
@@ -488,7 +488,7 @@ async def test_capture_held_when_the_drive_goes_away_mid_run(aiohttp_client, tmp
 @not_superuser
 async def test_readonly_root_holds_tablet_notes_and_answers(aiohttp_client, tmp_path):
     """Phase 3: a tablet capture on a read-only root is held on this OS, as a PC capture is."""
-    paths = Paths(tmp_path / "BrainHub")
+    paths = Paths(tmp_path / "ATLAS")
     paths.root.mkdir()
     app = create_app(paths, runner=make_runner(), start_workers=False)
     c = await aiohttp_client(app)

@@ -4,11 +4,11 @@ from datetime import datetime
 
 import pytest
 
-from brainhub import holding, osdirs
-from brainhub.rawlog import read_log
-from brainhub.server import create_app
-from brainhub.tablet_routes import answer_text
-from brainhub.tablet_view import robot_url, today_groups, usage_rows, when
+from atlas import holding, osdirs
+from atlas.rawlog import read_log
+from atlas.server import create_app
+from atlas.tablet_routes import answer_text
+from atlas.tablet_view import robot_url, today_groups, usage_rows, when
 from tests.test_server import MAP, make_runner
 
 
@@ -191,7 +191,7 @@ async def test_wait_wakes_on_a_change(client, monkeypatch):
     await client.post("/api/tablet/notes", json={"text": "wake up"})
     r = await asyncio.wait_for(waiter, 5)
     assert (await r.json())["version"] > v
-    monkeypatch.setattr("brainhub.tablet_routes.WAIT_S", 0.05)
+    monkeypatch.setattr("atlas.tablet_routes.WAIT_S", 0.05)
     same = app["feed"].version
     assert (await (await client.get("/api/tablet/wait", params={"since": str(same)})).json())["version"] == same
     assert (await client.get("/api/tablet/wait", params={"since": "x"})).status == 400
@@ -256,7 +256,7 @@ async def test_state_version_is_read_before_the_data(client, monkeypatch):
     """A change landing while the state is gathered must not be lost: the tablet would hold the
     newer version with the older data."""
     app = client.server.app
-    import brainhub.tablet_routes as tr
+    import atlas.tablet_routes as tr
     real = tr._today
 
     def bump_midway(a):

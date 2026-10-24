@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from brainhub import winwatch
+from atlas import winwatch
 
 win_only = pytest.mark.skipif(sys.platform != "win32", reason="reads the Windows registry")
 
@@ -53,7 +53,7 @@ def test_reads_the_real_power_values_read_only():
 
 
 async def test_warning_shown_in_state_and_widget(aiohttp_client, paths, monkeypatch):
-    from brainhub import server
+    from atlas import server
     from tests.test_server import make_runner
     monkeypatch.setattr(server.winwatch, "fast_startup_warnings", lambda: [winwatch.WARNING])
     c = await aiohttp_client(server.create_app(paths, runner=make_runner(), start_workers=False))

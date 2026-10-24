@@ -1,9 +1,9 @@
 import random
 from datetime import datetime, timedelta
 
-from brainhub import quotes as q
-from brainhub.filing import protected_tops
-from brainhub.store import is_note_path
+from atlas import quotes as q
+from atlas.filing import protected_tops
+from atlas.store import is_note_path
 
 NOW = datetime(2026, 10, 23, 15, 0)
 

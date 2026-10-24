@@ -7,7 +7,7 @@ import { prefRow } from './settings-sections.js';
 import { stepState } from './settings-model.js';
 import { createMapEditors, defaultMap, normalizeMap, hasErrors, validateMap } from '../components/map-editor.js';
 
-const KEY = 'brainhub.setup.v1';
+const KEY = 'atlas.setup.v1';
 const STEPS = ['Areas', 'Projects', 'Uni courses', 'People', 'Quiet hours and backup', 'Review'];
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -67,7 +67,7 @@ export async function render(container) {
   const fwd = button('NEXT', { primary: true });
   container.appendChild(el('div', { class: 'vw setup' },
     el('div', { class: 'sp-scroll' }, el('div', { class: 'sp-col' },
-      el('div', { class: 'sp-intro' }, el('span', { class: 'lb' }, 'SET UP BRAINHUB'),
+      el('div', { class: 'sp-intro' }, el('span', { class: 'lb' }, 'SET UP ATLAS'),
         el('p', { class: 'sp-lead' }, 'A few minutes now means your notes land in the right place. You can change everything later in Settings.')),
       bar,
       el('header', { class: 'sp-head' }, kicker, title, hint),
@@ -95,11 +95,11 @@ export async function render(container) {
     });
     if (!quietError() && st.step === 4) clear(stepErr);
   }
-  const remote = el('input', { type: 'text', id: 'sp-remote', class: 'm wide', value: st.backup_remote, spellcheck: 'false', placeholder: 'https://github.com/you/brainhub-backup.git',
+  const remote = el('input', { type: 'text', id: 'sp-remote', class: 'm wide', value: st.backup_remote, spellcheck: 'false', placeholder: 'https://github.com/you/atlas-backup.git',
     oninput: () => { st.backup_remote = remote.value; save(); } });
   const prefsBox = el('div', { class: 'pfs' },
     prefRow('QUIET HOURS', el('div', { class: 'pair' }, qFrom, el('span', { class: 'lb' }, 'TO'), qTo),
-      { forId: 'sp-quiet', hint: 'Quiet hours are stored now and used later, when BrainHub starts sending reminders.' }),
+      { forId: 'sp-quiet', hint: 'Quiet hours are stored now and used later, when ATLAS starts sending reminders.' }),
     prefRow('BACKUP (OPTIONAL)', remote, { forId: 'sp-remote',
       hint: 'To back up your brain to GitHub, create an empty private repo first, then paste its URL here. Leave it blank to skip.' }));
 

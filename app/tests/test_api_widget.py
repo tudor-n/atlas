@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from brainhub.config import load_settings
-from brainhub.server import create_app
+from atlas.config import load_settings
+from atlas.server import create_app
 from tests.test_server import MAP, make_runner
 
 

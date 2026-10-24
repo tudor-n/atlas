@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from brainhub.usage import UsageStore
+from atlas.usage import UsageStore
 from tests.fakes import Clock
 
 T = 1_800_000_000
@@ -169,7 +169,7 @@ def test_windows_merge_independently(tmp_path):
 
 def test_rate_limits_from_run_event():
     """The shape `claude -p --output-format stream-json` reports (seen with 2.1.309)."""
-    from brainhub.usage import rate_limits_from_event
+    from atlas.usage import rate_limits_from_event
     info = {"status": "allowed", "resetsAt": T + 3600, "rateLimitType": "five_hour",
             "unifiedWindows": {"five_hour": {"utilization": 0.07, "resetsAt": T + 3600},
                                "seven_day": {"utilization": 0.09, "resetsAt": T + 86400}}}
@@ -186,7 +186,7 @@ def test_rate_limits_from_run_event():
                                   {"unifiedWindows": {"five_hour": {"utilization": True, "resetsAt": T}}},
                                   {"unifiedWindows": {"other": {"utilization": 0.5, "resetsAt": T}}}])
 def test_rate_limits_from_odd_events(info):
-    from brainhub.usage import rate_limits_from_event
+    from atlas.usage import rate_limits_from_event
     assert rate_limits_from_event(info) is None
 
 
@@ -220,6 +220,6 @@ def test_stale_reading_after_reload(tmp_path):
 
 
 def test_run_event_over_the_limit_is_clamped():
-    from brainhub.usage import rate_limits_from_event
+    from atlas.usage import rate_limits_from_event
     info = {"unifiedWindows": {"five_hour": {"utilization": 1.2, "resetsAt": T + 3600}}}
     assert rate_limits_from_event(info) == {"five_hour": {"used_percentage": 100, "resets_at": T + 3600}}

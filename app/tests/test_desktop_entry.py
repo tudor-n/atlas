@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import desktop_entry as de
+from atlas import desktop_entry as de
 
 APP_DIR = Path(__file__).resolve().parents[1]
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="the launcher entry is Linux only for now")
 
 
-def fake_shell(folder: Path, name: str = "brainhub-desktop") -> Path:
+def fake_shell(folder: Path, name: str = "atlas-desktop") -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     exe = folder / name
     exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -24,7 +24,7 @@ def fake_shell(folder: Path, name: str = "brainhub-desktop") -> Path:
 
 
 def cli(*args, cwd=APP_DIR):
-    return subprocess.run([sys.executable, "-m", "brainhub", "desktop-entry", *map(str, args)], cwd=cwd,
+    return subprocess.run([sys.executable, "-m", "atlas", "desktop-entry", *map(str, args)], cwd=cwd,
                           capture_output=True, text=True, timeout=60)
 
 
@@ -62,13 +62,13 @@ def test_install_writes_the_entry_and_the_icon(tmp_path):
     exe = fake_shell(tmp_path / "target" / "release")
     home = tmp_path / "data"
     result = de.install(exe, home)
-    desktop = home / "applications" / "dev.brainhub.desktop.desktop"
-    icon = home / "icons" / "hicolor" / "256x256" / "apps" / "dev.brainhub.desktop.png"
+    desktop = home / "applications" / "dev.atlas.desktop.desktop"
+    icon = home / "icons" / "hicolor" / "256x256" / "apps" / "dev.atlas.desktop.png"
     assert result == {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe), "changed": True}
     lines = desktop.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "[Desktop Entry]"
-    for line in ("Type=Application", "Name=BrainHub", f'Exec="{exe}" --open', "Icon=dev.brainhub.desktop",
-                 "StartupWMClass=brainhub-desktop", "Categories=Office;Utility;", "StartupNotify=false",
+    for line in ("Type=Application", "Name=ATLAS", f'Exec="{exe}" --open', "Icon=dev.atlas.desktop",
+                 "StartupWMClass=atlas-desktop", "Categories=Office;Utility;", "StartupNotify=false",
                  "Terminal=false"):
         assert line in lines
     # A second launch exits at once and would never complete a startup notification.
@@ -88,7 +88,7 @@ def test_a_path_with_spaces_and_specials_round_trips(tmp_path):
     assert unquote_exec(value) == [str(exe), "--open"]
     assert "%%" in value and "\\$" in value and '\\"' in value
     # Spaces alone just need the quotes.
-    assert de.exec_arg("/home/t/my builds/brainhub-desktop") == '"/home/t/my builds/brainhub-desktop"'
+    assert de.exec_arg("/home/t/my builds/atlas-desktop") == '"/home/t/my builds/atlas-desktop"'
 
 
 @posix_only
@@ -182,7 +182,7 @@ def test_default_data_home_follows_xdg(tmp_path, monkeypatch):
     assert de.default_data_home() == tmp_path / "xdg"
     # Without --data-home the CLI uses it (conftest's temp XDG_DATA_HOME, never the real one).
     exe = fake_shell(tmp_path / "bin")
-    r = subprocess.run([sys.executable, "-m", "brainhub", "desktop-entry", "install", "--exec", str(exe)],
+    r = subprocess.run([sys.executable, "-m", "atlas", "desktop-entry", "install", "--exec", str(exe)],
                        cwd=APP_DIR, capture_output=True, text=True, timeout=60, env=dict(os.environ))
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "xdg" / "applications" / de.DESKTOP_NAME).is_file()

@@ -153,8 +153,8 @@ const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const OWN_SECTION = /^(tablet|voice)_/;
 const HINTS = {
-  port: 'Takes effect after BrainHub restarts. Then install the Claude Code integration again and re-run desktop-config, and restart BrainHub Desktop.',
-  claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after BrainHub restarts.',
+  port: 'Takes effect after ATLAS restarts. Then install the Claude Code integration again and re-run desktop-config, and restart ATLAS.',
+  claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after ATLAS restarts.',
   quiet_hours: 'The voice stays silent in these hours, and date-only reminders speak when they end.',
   backup_remote: 'Create an empty private repo first, then paste its URL.',
   backup_debounce_s: 'Seconds to wait after a change before pushing.',
@@ -224,7 +224,7 @@ function buildField(key, val) {
   }
   // strings, and the nullable backup_remote (empty means null)
   const input = el('input', { type: 'text', id, value: val ?? '', spellcheck: 'false', class: /url|path|remote/.test(key) ? 'm wide' : 'wide',
-    placeholder: key === 'backup_remote' ? 'https://github.com/you/brainhub-backup.git' : null });
+    placeholder: key === 'backup_remote' ? 'https://github.com/you/atlas-backup.git' : null });
   return {
     forId: id, control: input,
     read() {
@@ -271,7 +271,7 @@ export async function preferencesSection({ body, bar, isDead }) {
     return;
   }
   if (isDead()) return;
-  body.append(intro('How BrainHub files, recalls, nudges and reports. Saved for both OSes.'), el('div', { class: 'pfs' }, form.rows()));
+  body.append(intro('How ATLAS files, recalls, nudges and reports. Saved for both OSes.'), el('div', { class: 'pfs' }, form.rows()));
   const save = button('SAVE', { primary: true, onclick: async () => {
     save.disabled = true;
     const r = await form.save();
@@ -329,7 +329,7 @@ export async function backupSection({ body, bar, state, isDead, setDot }) {
       drawStatus(b);
       if (!b.remote_set) bar.say('Set a backup remote above and save it first.');
       else if (b.last_error) {
-        bar.say(b.pending ? 'The push failed. The error is shown above; BrainHub will keep retrying.'
+        bar.say(b.pending ? 'The push failed. The error is shown above; ATLAS will keep retrying.'
           : 'The push failed. The error is shown above.');
       } else bar.say('Pushed.', true);
     } catch (e) {
@@ -347,7 +347,7 @@ const whenText = (iso) => (iso ? new Date(iso).toLocaleString() : 'never');
 
 export async function claudeSection({ body, bar, isDead, setDot }) {
   const box = el('div', {});
-  body.append(intro("Adds BrainHub's hooks and status line to your Claude Code user settings, so the Agents tab and the usage meter fill in. ",
+  body.append(intro("Adds ATLAS's hooks and status line to your Claude Code user settings, so the Agents tab and the usage meter fill in. ",
     'A backup of the file is made first.'), box);
 
   function draw(s) {
@@ -392,7 +392,7 @@ export async function claudeSection({ body, bar, isDead, setDot }) {
 // -- ABOUT --------------------------------------------------------------------------------------
 export async function aboutSection({ body, state }) {
   const rt = runtimeText(state.runtime);
-  body.append(intro('BrainHub keeps your brain as plain Markdown files in a git repo.'), el('div', { class: 'pfs' },
+  body.append(intro('ATLAS keeps your brain as plain Markdown files in a git repo.'), el('div', { class: 'pfs' },
     prefRow('BRAIN FOLDER', value(state.brain_path || '–', 'm path'),
       { hint: state.brain_path ? 'Open it in Obsidian for a graph view.' : null }),
     prefRow('RUNTIME', value(rt || '–', rt ? '' : 'f'),

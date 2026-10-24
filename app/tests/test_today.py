@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from brainhub.models import Item
-from brainhub.today import compute_today
+from atlas.models import Item
+from atlas.today import compute_today
 
 NOW = datetime(2026, 10, 20, 12, 0)
 

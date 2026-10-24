@@ -1,6 +1,6 @@
 # Phase 3 build decisions
 
-The build-time calls made while building phase 3 (the workbench tablet, 2026-10-23), where the design (`specs/2026-10-23-brainhub-phase3-design.md`) was silent, or where testing showed it should change. Each says why it was made and what it costs if wrong. Where a call here differs from the design, this file wins.
+The build-time calls made while building phase 3 (the workbench tablet, 2026-10-23), where the design (`specs/2026-10-23-atlas-phase3-design.md`) was silent, or where testing showed it should change. Each says why it was made and what it costs if wrong. Where a call here differs from the design, this file wins.
 
 ## Rulings
 
@@ -37,10 +37,10 @@ The build-time calls made while building phase 3 (the workbench tablet, 2026-10-
   - IGNORE answers 503 there.
 - **T8:** held tablet captures that the startup flush puts into the raw log are **not** queued for filing (`Flushed.tablet`). Tablet notes are never filed automatically (owner).
 - **T9:** an answer's raw-log text is `Measurements: <title> (<project>)`, then one `- <item>: <value>` line per answered item. Items left empty are named on a last `(not answered: …)` line, so nothing is silently missing.
-- **T10:** `brainhub-request` is installed by `integration install`.
-  - The wrapper goes in `osdirs.bin_dir()`: `$BRAINHUB_BIN_DIR`, else `~/.local/bin` on both OSes. It's a `.cmd` on Windows.
+- **T10:** `atlas-request` is installed by `integration install`.
+  - The wrapper goes in `osdirs.bin_dir()`: `$ATLAS_BIN_DIR`, else `~/.local/bin` on both OSes. It's a `.cmd` on Windows.
   - The `CLAUDE.md` it edits is the one **beside the target `settings.json`**, so `--settings <temp>` keeps tests away from the real one.
-  - A wrapper of the same name that isn't BrainHub's is never replaced or removed.
+  - A wrapper of the same name that isn't ATLAS's is never replaced or removed.
   - The update step copies `request_client.py` beside the hook client. A slot from before phase 3 has none, and that's no error.
 
 **The tablet page**
@@ -86,7 +86,7 @@ The build-time calls made while building phase 3 (the workbench tablet, 2026-10-
   - Our block is found only as whole marker lines, and only as exactly one BEGIN followed by one END. Anything else is refused (`IntegrationError`, nothing changed). A missing END marker used to let a reinstall delete the owner's text between stray markers.
   - The block stays where it is, and the file keeps its own line endings (CRLF too: it's read as bytes).
 - **T23, the wrapper:**
-  - A foreign `brainhub-request` is found before `settings.json` is touched.
+  - A foreign `atlas-request` is found before `settings.json` is touched.
   - On Windows an extensionless sh shim goes beside the `.cmd`, because Claude Code's Bash tool there is Git Bash, which never tries `.cmd` for a bare name. A `%` in a path is doubled for cmd.
 - **T24, pairing:** every failure gives the same message, so it never tells a neighbour whether a code is live. Codes are compared as bytes (a non-ASCII code was a 500), and `redeem` holds a lock. The cookie carries `Expires` as well as `Max-Age`.
 - **T25, the LAN guard:**
@@ -98,7 +98,7 @@ The build-time calls made while building phase 3 (the workbench tablet, 2026-10-
   - `LanSite` stops a site whose bind failed; each retry used to leak one.
   - IGNORE, restore and File this need setup (409 before), like the rest.
 - **T27, the page:**
-  - JOURNAL shows "Can't reach BrainHub. Retrying…" and dims what it shows while the hub is out of reach (design §6.5).
+  - JOURNAL shows "Can't reach ATLAS. Retrying…" and dims what it shows while the hub is out of reach (design §6.5).
   - ROBOT looks again before refusing on a stale "offline".
   - The page fits itself again on resize.
   - Ctrl, Alt and Meta combos are left to the browser.
@@ -119,4 +119,4 @@ The build-time calls made while building phase 3 (the workbench tablet, 2026-10-
 - **Only the first 12 of `tablet_units` get a chip on the keypad.** More can still be typed with ABC.
 - **Windows (on hold):** binding the LAN address on Windows will raise a firewall prompt for `python.exe`, and the Windows rollout must allow port 8090 on the private profile. A Windows hub on a commit before schema 3 refuses this `hub.db` as newer, so both OSes update together.
 - **No rate limit for a paired device:** a paired (or stolen) cookie can send unlimited notes, each up to 20,000 characters, into the append-only log. Revoke it in Settings.
-- **The arm server itself** listens on `0.0.0.0:8080` with no authentication. That's the arm project's existing behaviour and outside BrainHub's scope; it is noted here because the tablet now opens it.
+- **The arm server itself** listens on `0.0.0.0:8080` with no authentication. That's the arm project's existing behaviour and outside ATLAS's scope; it is noted here because the tablet now opens it.

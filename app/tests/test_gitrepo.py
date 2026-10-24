@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from brainhub.gitrepo import BrainRepo
+from atlas.gitrepo import BrainRepo
 
 
 def test_init_commit_head(tmp_path):
@@ -134,7 +134,7 @@ def _repo_with_commit(tmp_path):
 
 def test_slow_push_does_not_block_commits(tmp_path, monkeypatch):
     import threading
-    import brainhub.gitrepo as gr
+    import atlas.gitrepo as gr
     r = _repo_with_commit(tmp_path)
     real = gr.subprocess.run
     entered, release = threading.Event(), threading.Event()
@@ -159,7 +159,7 @@ def test_slow_push_does_not_block_commits(tmp_path, monkeypatch):
 
 
 def test_push_is_non_interactive_and_times_out(tmp_path, monkeypatch):
-    import brainhub.gitrepo as gr
+    import atlas.gitrepo as gr
     r = _repo_with_commit(tmp_path)
     seen = {}
 
@@ -178,7 +178,7 @@ def test_push_is_non_interactive_and_times_out(tmp_path, monkeypatch):
 
 
 def test_push_redacts_credentials_before_truncating(tmp_path, monkeypatch):
-    import brainhub.gitrepo as gr
+    import atlas.gitrepo as gr
     r = _repo_with_commit(tmp_path)
     stderr = "fatal: could not read from https://user:SECRETTOKEN@github.com/x " + "y" * 480
     monkeypatch.setattr(gr.subprocess, "run",
@@ -190,7 +190,7 @@ def test_push_redacts_credentials_before_truncating(tmp_path, monkeypatch):
 @pytest.mark.skipif(__import__("sys").platform != "win32", reason="Windows console flags")
 def test_git_runs_without_console_window(tmp_path, monkeypatch):
     """Every git child starts with CREATE_NO_WINDOW (final review #1)."""
-    import brainhub.gitrepo as g
+    import atlas.gitrepo as g
     calls = []
     real = subprocess.run
 
@@ -218,7 +218,7 @@ def _git_options(args: list[str]) -> list[str]:
 def test_git_calls_pass_safe_directory(tmp_path, monkeypatch):
     """Every git call names its repo as safe, so git never refuses files the other OS created
     as "dubious ownership" (dual-boot design §5.4). A worktree is checked as its own path."""
-    import brainhub.gitrepo as gr
+    import atlas.gitrepo as gr
     calls = []
     real = subprocess.run
 

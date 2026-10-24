@@ -1,4 +1,4 @@
-# BrainHub: the owner's to-do list
+# ATLAS: the owner's to-do list
 
 Everything that's waiting on you, in order. Tick each item here as you go.
 Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold).
@@ -6,8 +6,8 @@ Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold).
 ## Now
 
 ### 1. Get phase 3 into the live copy
-- [x] Merge brain-hub#4 (phase 3) and 6-dof-arm#3 (the HOME button). Both are merged and CI passed.
-- [ ] Start the widget. The update step pulls master into `/mnt/data/BrainHub`, which is still on `6057a7e`.
+- [x] Merge #4 (phase 3) and 6-dof-arm#3 (the HOME button). Both are merged and CI passed.
+- [ ] Start the widget. The update step pulls master into `/mnt/data/ATLAS`, which is still on `6057a7e`.
 - [ ] Check that Settings now has a **Tablet** section.
 
 ### 2. Finish the Kubuntu rollout
@@ -26,7 +26,7 @@ Details: `app/README.md` → Phase 3.
 - [ ] **Settings → Tablet:** press "Use … (now)", tick **Tablet over Wi-Fi**, then Save. It should say "Listening on http://192.168.0.200:8090/tablet".
 - [ ] **Fully Kiosk:** set the start URL to `http://192.168.0.200:8090/tablet`, and turn on **DOM storage** (web settings).
 - [ ] **Pair:** press **Pair a device**, then type the 6-digit code on the tablet within 5 minutes.
-- [ ] **Integration:** Settings → Claude Code integration → **Install** again. This adds `brainhub-request`.
+- [ ] **Integration:** Settings → Claude Code integration → **Install** again. This adds `atlas-request`.
 - [ ] **Arm:** `git pull` master in `~/dev/RobotArmControl`, then restart `server.py`.
 
 ### 5. Check it on the tablet
@@ -36,7 +36,7 @@ Tell Claude about anything that fails.
 - [ ] Switching between TODAY, NOTES and AGENTS has no visible lag.
 - [ ] Type half a note, then reload: the draft is still there.
 - [ ] Send a note with the laptop's Wi-Fi off. It shows "Waiting to send (1)", arrives once when the Wi-Fi is back, and **File this** on the PC files it.
-- [ ] Run `brainhub-request "Test" "Width of the desk" "Height of the desk"`. It shows on NOTES within about a second, and the widget says "1 request". Answer it with the unit chips, then SEND. The answer shows in the PC's **Tablet** view.
+- [ ] Run `atlas-request "Test" "Width of the desk" "Height of the desk"`. It shows on NOTES within about a second, and the widget says "1 request". Answer it with the unit chips, then SEND. The answer shows in the PC's **Tablet** view.
 - [ ] IGNORE a note (two taps within 2 s), then bring it back with **Show ignored** on the PC.
 - [ ] ROBOT → arm UI → **‹ HOME** (hold it or tap it twice) brings you back. It refuses with "LIVE ON" while LIVE is on, and with "LET GO" while you hold a grip button.
 
@@ -44,7 +44,7 @@ Tell Claude about anything that fails.
 - [x] Merge the phase 4 PR (#5). Done on 2026-10-23.
 - [ ] Merge the Windows fix PR (#6) once Claude marks it ready. Master's CI hangs on Windows until then, and the update step won't pull master while CI isn't green on both OSes.
 - [ ] Restart the widget so the update pulls phase 4 in.
-- [ ] Rebuild the widget so the tray gets **Pause voice**: in `/mnt/data/BrainHub/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`, then restart the widget. Settings will say "widget update available" until you do.
+- [ ] Rebuild the widget so the tray gets **Pause voice**: in `/mnt/data/ATLAS/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`, then restart the widget. Settings will say "widget update available" until you do.
 - [ ] Settings → **Voice** → **Download the voice** (about 121 MB, once).
 - [ ] Press **Play sample**. It should sound like Atlas. Tell Claude if the sentences sound unnatural.
 - [ ] Hear one of each:
@@ -58,10 +58,10 @@ Tell Claude about anything that fails.
 
 ### 7. Phase 4.5: the native app and the new look (after its PR is merged)
 - [ ] Merge the phase 4.5 PR on GitHub once CI is green, then restart the widget so the update pulls it in.
-- [ ] Rebuild the desktop shell. In `/mnt/data/BrainHub/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/brainhub-target cargo build --release --locked`. Then **Quit** from the tray and start it again. Settings says "widget update available" until you do.
-- [ ] Add BrainHub to the KDE launcher: `python3 -m brainhub desktop-entry install --exec ~/.cache/brainhub-target/release/brainhub-desktop`, run from `/mnt/data/BrainHub/app` with the runtime's Python. Or ask Claude to run it. If it doesn't show up in the menu, run `kbuildsycoca6`.
-- [ ] Start **BrainHub** from the launcher. A black window should say "STARTING THE HUB…", then show the app.
-- [ ] Check the taskbar: the entry has the BrainHub icon and groups with the launcher entry. If it doesn't, run `xprop WM_CLASS`, click the window, and tell Claude what it prints.
+- [ ] Rebuild the desktop shell. In `/mnt/data/ATLAS/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`. Then **Quit** from the tray and start it again. Settings says "widget update available" until you do.
+- [ ] Add ATLAS to the KDE launcher: `python3 -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop`, run from `/mnt/data/ATLAS/app` with the runtime's Python. Or ask Claude to run it. If it doesn't show up in the menu, run `kbuildsycoca6`.
+- [ ] Start **ATLAS** from the launcher. A black window should say "STARTING THE HUB…", then show the app.
+- [ ] Check the taskbar: the entry has the ATLAS icon and groups with the launcher entry. If it doesn't, run `xprop WM_CLASS`, click the window, and tell Claude what it prints.
 - [ ] Alt+Tab lists the main window but not the widget.
 - [ ] Resize or maximise the window, then Quit and restart. The window comes back the same size; the widget only keeps its position.
 - [ ] Click a widget tile, for example AGENTS. The main window comes forward on that page.

@@ -10,8 +10,8 @@ import aiohttp
 import pytest
 from aiohttp import web
 
-from brainhub import tablet
-from brainhub.server import create_app
+from atlas import tablet
+from atlas.server import create_app
 from tests.fakes import Clock
 from tests.test_server import MAP, make_runner
 

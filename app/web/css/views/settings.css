@@ -59,7 +59,7 @@
 .pv.f { color: var(--faint); }
 .pv.err { color: var(--err); }
 .pv.amb { color: var(--amber); }
-/* a status sentence beside a control (the tablet's "Off: BrainHub only listens on this PC."): sans */
+/* a status sentence beside a control (the tablet's "Off: ATLAS only listens on this PC."): sans */
 .st-lan { display: inline-flex; align-items: center; font-size: 13px; line-height: 18px; color: var(--dim); }
 .st-lan > .dot { flex: none; }
 

@@ -1,4 +1,4 @@
-//! BrainHub desktop shell (design §8): the `widget` window, the `main` window (phase 4.5), the
+//! ATLAS desktop shell (design §8): the `widget` window, the `main` window (phase 4.5), the
 //! tray, autostart and the hub supervisor. The hub serves both pages; this shell only frames them.
 
 pub mod claude_watch;
@@ -392,7 +392,7 @@ fn load_settled(app: &AppHandle, label: &str, loads: u64, answered: bool, url: &
             if label == MAIN && nav.pending.is_none() {
                 nav.pending = view_in(url, hub.port);
             }
-            eprintln!("brainhub-desktop: the {label} window could not load the hub page; again once the hub answers");
+            eprintln!("atlas-desktop: the {label} window could not load the hub page; again once the hub answers");
         }
         Page::Loaded => {
             if let (Some(view), Some(w)) = (nav.pending.take(), app.get_webview_window(label)) {
@@ -423,7 +423,7 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
         return Some(w);
     }
     let built = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("main.html".into()))
-        .title("BrainHub")
+        .title("ATLAS")
         .inner_size(1440.0, 900.0)
         .min_inner_size(900.0, 600.0)
         .prevent_overflow_with_margin(LogicalSize::new(OVERFLOW_MARGIN.0, OVERFLOW_MARGIN.1))
@@ -447,7 +447,7 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
             Some(w)
         }
         Err(e) => {
-            eprintln!("brainhub-desktop: could not open the main window: {e}");
+            eprintln!("atlas-desktop: could not open the main window: {e}");
             app.get_webview_window(MAIN)
         }
     }
@@ -500,7 +500,7 @@ fn open_main_later(app: &AppHandle, view: Option<String>) {
         if let Err(e) = app.run_on_main_thread(move || {
             show_main(&handle, view);
         }) {
-            eprintln!("brainhub-desktop: could not open the main window: {e}");
+            eprintln!("atlas-desktop: could not open the main window: {e}");
         }
     });
 }
@@ -617,7 +617,7 @@ impl TrayNotice {
         if notice == self.shown {
             return;
         }
-        let tooltip = notice.map_or_else(|| "BrainHub".to_string(), |n| format!("BrainHub — {}", n.text()));
+        let tooltip = notice.map_or_else(|| "ATLAS".to_string(), |n| format!("ATLAS — {}", n.text()));
         if let Some(tray) = app.tray_by_id(TRAY) {
             let _ = tray.set_tooltip(Some(tooltip));
         }
@@ -698,7 +698,7 @@ pub fn run() {
         .setup(move |app| {
             app.manage(Hub::new(port));
             let widget = WebviewWindowBuilder::new(app, WIDGET, WebviewUrl::App("index.html".into()))
-                .title("BrainHub")
+                .title("ATLAS")
                 .inner_size(520.0, 44.0)
                 // First launch only: window-state replaces this with the remembered position.
                 .center()
@@ -732,9 +732,9 @@ pub fn run() {
             let handle = app.handle();
             #[cfg(unix)]
             if let Err(e) = quit_on_signals(handle.clone()) {
-                eprintln!("brainhub-desktop: SIGTERM/SIGINT won't quit cleanly: {e}");
+                eprintln!("atlas-desktop: SIGTERM/SIGINT won't quit cleanly: {e}");
             }
-            let open = MenuItem::with_id(handle, "open", "Open BrainHub", true, None::<&str>)?;
+            let open = MenuItem::with_id(handle, "open", "Open ATLAS", true, None::<&str>)?;
             let browser = MenuItem::with_id(handle, "browser", "Open in browser", true, None::<&str>)?;
             let toggle = MenuItem::with_id(handle, "toggle", "Show/Hide widget", true, None::<&str>)?;
             let autostart_on = handle.autolaunch().is_enabled().unwrap_or(false);
@@ -757,7 +757,7 @@ pub fn run() {
 
             let sup_menu = sup.clone();
             let login_item = login.clone();
-            let mut tray = TrayIconBuilder::with_id(TRAY).tooltip("BrainHub").menu(&menu).on_menu_event(
+            let mut tray = TrayIconBuilder::with_id(TRAY).tooltip("ATLAS").menu(&menu).on_menu_event(
                 move |app, e| match e.id.as_ref() {
                     // The menu runs on the main thread, from tauri's own posted event (muda's handler
                     // only forwards it to the event loop), never inside a sent message: show_main can
@@ -778,8 +778,8 @@ pub fn run() {
                             // Off the menu thread: a slow or stopped hub never freezes the tray.
                             std::thread::spawn(move || match voice::post_pause(port, body) {
                                 Ok(status) if (200..300).contains(&status) => {}
-                                Ok(status) => eprintln!("brainhub-desktop: pause voice: the hub answered {status}"),
-                                Err(e) => eprintln!("brainhub-desktop: pause voice: {e}"),
+                                Ok(status) => eprintln!("atlas-desktop: pause voice: the hub answered {status}"),
+                                Err(e) => eprintln!("atlas-desktop: pause voice: {e}"),
                             });
                         }
                     }
@@ -834,7 +834,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building the BrainHub desktop shell");
+        .expect("error while building the ATLAS desktop shell");
 
     app.run(move |_app, event| {
         if let RunEvent::Exit = event {
@@ -990,17 +990,17 @@ mod tests {
     fn launch_arguments() {
         let none: [&str; 0] = [];
         assert_eq!(wants_main(&none), None);
-        assert_eq!(wants_main(&["/usr/bin/brainhub-desktop"]), None); // autostart: the widget
-        assert_eq!(wants_main(&["brainhub-desktop", "--open"]), Some(None));
-        assert_eq!(wants_main(&["brainhub-desktop", "--open=agents"]), Some(Some("agents".to_string())));
+        assert_eq!(wants_main(&["/usr/bin/atlas-desktop"]), None); // autostart: the widget
+        assert_eq!(wants_main(&["atlas-desktop", "--open"]), Some(None));
+        assert_eq!(wants_main(&["atlas-desktop", "--open=agents"]), Some(Some("agents".to_string())));
         let voice = Some(Some("settings/voice".to_string()));
-        assert_eq!(wants_main(&["brainhub-desktop", "--open=settings/voice"]), voice);
+        assert_eq!(wants_main(&["atlas-desktop", "--open=settings/voice"]), voice);
         // An invalid view, an empty one, look-alikes: the widget, as before.
-        assert_eq!(wants_main(&["brainhub-desktop", "--open=Agents"]), None);
-        assert_eq!(wants_main(&["brainhub-desktop", "--open="]), None);
-        assert_eq!(wants_main(&["brainhub-desktop", "--opened"]), None);
-        assert_eq!(wants_main(&["brainhub-desktop", "-open"]), None);
-        assert_eq!(wants_main(&["brainhub-desktop", "open"]), None);
+        assert_eq!(wants_main(&["atlas-desktop", "--open=Agents"]), None);
+        assert_eq!(wants_main(&["atlas-desktop", "--open="]), None);
+        assert_eq!(wants_main(&["atlas-desktop", "--opened"]), None);
+        assert_eq!(wants_main(&["atlas-desktop", "-open"]), None);
+        assert_eq!(wants_main(&["atlas-desktop", "open"]), None);
         // The first --open… decides; other arguments don't matter.
         assert_eq!(wants_main(&["x", "--verbose", "--open=today", "--open"]), Some(Some("today".to_string())));
         let owned: Vec<String> = ["x", "--open"].iter().map(|a| a.to_string()).collect();

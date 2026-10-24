@@ -2,14 +2,14 @@ from pathlib import Path
 
 import pytest
 
-import brainhub
-from brainhub.config import DEFAULT_SETTINGS
-from brainhub.models import Hit
-from brainhub.recall import (NOTHING, build_fts_query, build_quick_prompt, deeper_answer,
+import atlas
+from atlas.config import DEFAULT_SETTINGS
+from atlas.models import Hit
+from atlas.recall import (NOTHING, build_fts_query, build_quick_prompt, deeper_answer,
                              quick_answer, search_hits)
 from tests.fakes import FakeRunner
 
-PROMPTS = Path(brainhub.__file__).parent / "prompts"
+PROMPTS = Path(atlas.__file__).parent / "prompts"
 
 
 @pytest.mark.parametrize("q", ['what about "ID-3 (base)?', "AND OR NEAR", ":", "*", "-", 'x"y', "ID-3 → ID-7"])

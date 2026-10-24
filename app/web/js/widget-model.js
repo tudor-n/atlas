@@ -178,7 +178,7 @@ export function popupRows(name, w) {
 }
 
 // -- capture draft: what the owner typed survives a widget reload (never silently drop it) -----
-export const DRAFT_KEY = 'brainhub.widget.draft';
+export const DRAFT_KEY = 'atlas.widget.draft';
 
 // `storage` is window.localStorage or null; every access may throw (blocked or full storage).
 export function loadDraft(storage) {

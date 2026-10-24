@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import brainhub.__main__ as main_mod
-from brainhub.config import load_settings
-from brainhub.server import create_app
+import atlas.__main__ as main_mod
+from atlas.config import load_settings
+from atlas.server import create_app
 from tests.test_server import make_runner
 
 APP_DIR = Path(__file__).resolve().parent.parent
@@ -73,7 +73,7 @@ def test_second_hub_on_taken_port_exits_before_startup(tmp_path):
     port = held.getsockname()[1]
     root = tmp_path / "root"
     try:
-        r = subprocess.run([sys.executable, "-m", "brainhub", "--root", str(root), "--port", str(port)],
+        r = subprocess.run([sys.executable, "-m", "atlas", "--root", str(root), "--port", str(port)],
                            cwd=APP_DIR, capture_output=True, text=True, timeout=60)
     finally:
         held.close()

@@ -129,7 +129,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
 
     const swRow = (text, node, hint) => prefRow(text, node, { forId: node.id, hint });
     form.append(
-      intro('BrainHub speaks through the PC speakers when an agent needs you or finishes a long run, when a reminder is due, '
+      intro('ATLAS speaks through the PC speakers when an agent needs you or finishes a long run, when a reminder is due, '
         + 'and to read back what you type on the tablet. Nothing is spoken during quiet hours (see ',
       el('a', { href: '#/settings/preferences' }, 'Preferences'), ').'),
       el('div', { class: 'pfs' }, swRow('VOICE ON', on)),

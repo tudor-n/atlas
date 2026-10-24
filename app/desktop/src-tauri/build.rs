@@ -1,6 +1,6 @@
 //! Tauri's build step, plus the shell-source digest (plan Task 9): the digest of this crate's own
 //! source, computed exactly as the update step's `shell_source` does for the live copy, is baked
-//! in as `BRAINHUB_SHELL_SOURCE`. The shell compares the two to notice a newer shell in the live
+//! in as `ATLAS_SHELL_SOURCE`. The shell compares the two to notice a newer shell in the live
 //! copy ("widget update available").
 //!
 //! Phase 4.5: the app manifest declares the one app command, `open_main` (the widget's tiles
@@ -18,7 +18,7 @@ fn main() {
         println!("cargo:warning=shell source digest failed: {e}");
         String::new()
     });
-    println!("cargo:rustc-env=BRAINHUB_SHELL_SOURCE={digest}");
+    println!("cargo:rustc-env=ATLAS_SHELL_SOURCE={digest}");
     for path in ["Cargo.toml", "Cargo.lock", "build.rs", "tauri.conf.json", "src", "capabilities", "../dist"] {
         println!("cargo:rerun-if-changed={path}");
     }
