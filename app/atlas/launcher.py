@@ -166,8 +166,10 @@ def notify(summary, body, log, *, urgent=False):
 
 # -- processes -----------------------------------------------------------------------------------
 
-def shell_running(proc="/proc", uid=None):
-    """Whether a process of this user named `atlas-desktop` runs (other than us)."""
+def shell_running(proc=None, uid=None):
+    """Whether a process of this user named `atlas-desktop` runs (other than us). `proc` is /proc,
+    or `$ATLAS_LAUNCHER_PROC` (tests: the owner's own ATLAS may be running while they do)."""
+    proc = proc or os.environ.get("ATLAS_LAUNCHER_PROC") or "/proc"
     uid = os.getuid() if uid is None else uid
     me = os.getpid()
     try:
