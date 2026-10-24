@@ -139,14 +139,19 @@ def _rebuild_notes(app: web.Application) -> None:
         app["startup_errors"].append(f"notes index: could not index {failure}")
 
 
-def _repair_claude_integration(app: web.Application) -> None:
-    """Once per full start (rename spec §2.2): our own pre-rename Claude Code hooks, status line,
-    wrapper and CLAUDE.md block are replaced at the current paths. Quiet: a failure is only
-    logged (to hub.log), never a startup error; Settings → Claude Code shows "out of date" with
-    its install button anyway."""
+def _repair_claude_integration(app: web.Application, data_dir: Path | None) -> None:
+    """Once per start, in every mode (rename spec §2.2), and only in the owner's real hub (a
+    runtime hub run from a slot of its own state folder; see routes.repair_legacy_integration):
+    our own pre-rename Claude Code hooks, status line, wrapper and CLAUDE.md block are replaced at
+    the current paths, then the shell's compat link at the old state folder goes. `data_dir` is
+    None in reduced and read-only mode. Quiet: a failure is only logged (to hub.log), never a
+    startup error; Settings → Claude Code shows "out of date" with its install button anyway."""
     try:
-        if repair_legacy_integration(app):
-            log.warning("replaced the pre-rename Claude Code integration in %s", app["claude_settings_path"])
+        repaired, removed = repair_legacy_integration(app, data_dir)
+        if repaired:
+            log.warning("replaced the pre-rename Claude Code integration")
+        if removed:
+            log.warning("removed the pre-rename compat path %s", removed)
     except Exception as e:  # never fails a start
         log.warning("could not replace the pre-rename Claude Code integration: %s", e)
 
@@ -164,7 +169,7 @@ def _startup_sync(app: web.Application) -> list[str]:
             return default
 
     step("database", store.init_schema)
-    _repair_claude_integration(app)  # about Claude Code, not the brain: before setup too
+    _repair_claude_integration(app, paths.data)  # about Claude Code, not the brain: before setup too
     if not setup_done(app):
         return []
     step("git lock", _clear_stale_git_locks, app)
@@ -224,6 +229,7 @@ async def on_startup(app: web.Application) -> None:
         # Every startup step writes (git, hub.db, the brain), and so do the workers, the backup
         # and the agents prune: none of them runs. Only the watch for a writable root does.
         app["tasks"] = [asyncio.create_task(_watch_root(app)), asyncio.create_task(watch_lan(app))]
+        await t(_repair_claude_integration, app, None)  # writes nothing under the root
         return
     for entry_id in await t(_startup_sync, app):
         app["worker"].queue.put_nowait(entry_id)  # on the loop: asyncio.Queue is not thread-safe
@@ -413,6 +419,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
 
 
 async def _start_reduced(app: web.Application) -> None:
+    await t(_repair_claude_integration, app, None)  # writes nothing under the root
     if app["root_status"].state != "newer":  # newer data never turns older while this code runs
         app["tasks"] = [asyncio.create_task(_watch_root(app))]
 

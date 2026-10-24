@@ -725,12 +725,20 @@ def _integration_change(app: web.Application, install: bool) -> dict:
     return _integration_view(app)
 
 
-def repair_legacy_integration(app: web.Application) -> bool:
+def repair_legacy_integration(app: web.Application, data_dir: Path | None) -> tuple[bool, str | None]:
     """The pre-rename hooks replaced at the current paths (rename spec §2.2), with exactly what
     _integration_change's install uses: the target settings, this OS's state folder (its
-    hook_paths()), the hub's port and the shared data/ folder."""
-    return ci.repair_legacy(app["claude_settings_path"], port=app["port"], state_dir=osdirs.state_dir(),
-                            data_dir=app["paths"].data)
+    hook_paths()) and the hub's port; `data_dir` is the shared data/ folder (None in reduced and
+    read-only mode: nothing is adopted from it). Then the shell's compat link or copy at the old
+    state folder goes, once nothing names it. Only for the owner's real hub (runs_from_own_slot):
+    a dev or manual hub never touches Claude Code's settings by itself. Returns (reinstalled,
+    the compat path removed)."""
+    state = osdirs.state_dir()
+    if not ci.runs_from_own_slot(state):
+        return False, None
+    target = app.get("claude_settings_path") or ci.default_settings_path()
+    repaired = ci.repair_legacy(target, port=app["port"], state_dir=state, data_dir=data_dir)
+    return repaired, ci.remove_legacy_compat(target, state)
 
 
 async def post_integration_install(request: web.Request) -> web.Response:

@@ -7,7 +7,12 @@ and the desktop shell keep their own copies (`update_step.LEGACY_PACKAGE`, `migr
 update step is stdlib-only and runs as a file, and the shell is Rust.
 """
 
+from pathlib import Path
+
+from . import osdirs
+
 NAME = "brainhub"  # the package, the Linux state and config folder names
+WINDOWS_NAME = "BrainHub"  # the Windows state-and-config folder under %LOCALAPPDATA%
 # Our own hook client, as whole path components (lowercased, forward slashes): the package's copy
 # and a default state folder's stable copy (`~/.local/share/brainhub/hook/`, `%LOCALAPPDATA%\BrainHub\hook\`).
 HOOK_SUFFIXES = ("brainhub/hook_client.py", "brainhub/hook/hook_client.py")
@@ -21,3 +26,17 @@ MD_END = "<!-- /brainhub -->"
 # The launcher entry and icon (phase 4.5), and what marks the entry as ours.
 LAUNCHER_ID = "dev.brainhub.desktop"
 LAUNCHER_ICON_LINE = "Icon=dev.brainhub.desktop"
+
+# The compat copy the shell leaves on Windows in the old state folder after moving it (rename spec
+# §2.1): the old absolute hook paths keep working until the hub has repaired the hooks. Linux gets
+# a symlink instead. This file marks the folder as that copy, and these are all it may hold.
+COMPAT_MARKER = "moved-to-atlas.txt"
+COMPAT_FILES = (COMPAT_MARKER, "hook/hook_client.py", "hook/request_client.py", "statusline_passthrough.txt")
+
+
+def state_dir(os_name: str | None = None) -> Path:
+    """The default pre-rename state folder: `${XDG_DATA_HOME:-~/.local/share}/brainhub` on Linux,
+    `%LOCALAPPDATA%\\BrainHub` on Windows (no override: the old variable is never read)."""
+    if (os_name or osdirs.os_name()) == "windows":
+        return osdirs._localappdata() / WINDOWS_NAME
+    return osdirs._xdg("XDG_DATA_HOME", ".local/share") / NAME

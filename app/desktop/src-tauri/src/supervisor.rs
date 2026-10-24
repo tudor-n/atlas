@@ -649,6 +649,9 @@ impl Supervisor {
         // captures and integration state) in the state folder the slots are in.
         if let Mode::Runtime { state, .. } = self.cfg.mode() {
             state_env(&mut cmd, &state);
+            // The owner's real hub (claude_integration.runs_from_own_slot): only it repairs the
+            // pre-rename Claude Code hooks by itself.
+            cmd.env("ATLAS_RUNTIME_HUB", "1");
         }
         crate::child_env(&mut cmd);
         // Its own process group: a Ctrl+C in the shell's terminal doesn't reach the hub as well, so
@@ -1005,8 +1008,10 @@ mod tests {
             upd = state.join("update.json").display()
         );
         // Each call records its slot, working folder, ATLAS_STATE_DIR and arguments.
-        let record =
-            |slot: &str| format!("echo \"{slot}|$(pwd)|$ATLAS_STATE_DIR|$*\" >> \"{}\"", calls.display());
+        let record = |slot: &str| {
+            format!("echo \"{slot}|$(pwd)|$ATLAS_STATE_DIR|$*${{ATLAS_RUNTIME_HUB:+|runtime-hub}}\" >> \"{}\"",
+                    calls.display())
+        };
         script(&a.join("venv").join("bin"), "python", &format!("{}\n{step}", record("a")));
         script(&b.join("venv").join("bin"), "python", &record("b"));
 
@@ -1026,7 +1031,7 @@ mod tests {
                     a_app.join("atlas").join("update_step.py").display(), live.display()),
             // The hub runs from the slot the step left current, with no -I: its app folder (the
             // working folder) must stay importable.
-            format!("b|{}|{st}|-m atlas --root {} --port {port}", b_app.display(), root.display()),
+            format!("b|{}|{st}|-m atlas --root {} --port {port}|runtime-hub", b_app.display(), root.display()),
         ];
         assert_eq!(got.lines().collect::<Vec<_>>(), expected);
         let log = std::fs::read_to_string(state.join("hub.log")).unwrap();

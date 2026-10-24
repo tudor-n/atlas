@@ -619,3 +619,79 @@ def repair_legacy(settings_path: Path, *, port: int, state_dir: Path, data_dir: 
     install(settings_path, python=python, script=script, port=port, state_dir=state_dir,
             data_dir=data_dir, now=now)
     return True
+
+
+# The desktop shell sets this for a hub it starts from a runtime slot (supervisor.rs), never for a
+# dev or manual run.
+RUNTIME_HUB_VAR = "ATLAS_RUNTIME_HUB"
+
+
+def runs_from_own_slot(state_dir: Path, *, package_file: Path | None = None,
+                       environ: dict | None = None) -> bool:
+    """Whether this hub is the owner's real one: started by the shell as a runtime hub
+    (RUNTIME_HUB_VAR), running from a runtime slot of `state_dir` (this package resolves under
+    `<state>/runtime/slot-a|b/app/`), with that state folder's `runtime/current.json` and stable
+    hook copy in place. Only then may a start touch the Claude Code settings on its own
+    (repair_legacy): a dev or manual hub, even one given a temp ATLAS_STATE_DIR, never does."""
+    env = os.environ if environ is None else environ
+    if env.get(RUNTIME_HUB_VAR) != "1":
+        return False
+    try:
+        state = Path(state_dir).resolve()
+        package = Path(package_file or __file__).resolve()
+    except OSError:
+        return False
+    runtime = state / "runtime"
+    if not (runtime / "current.json").is_file() or not stable_hook(state).is_file():
+        return False
+    return any(package.is_relative_to(runtime / f"slot-{s}" / "app") for s in "ab")
+
+
+def _is_compat_copy(folder: Path) -> bool:
+    """Whether `folder` is exactly the shell's Windows compat copy: its marker, and nothing but
+    `legacy.COMPAT_FILES` (and their folder)."""
+    if not (folder / legacy.COMPAT_MARKER).is_file():
+        return False
+    for path in folder.rglob("*"):
+        rel = path.relative_to(folder).as_posix()
+        if path.is_dir() and not path.is_symlink():
+            if rel != "hook":
+                return False
+        elif rel not in legacy.COMPAT_FILES:
+            return False
+    return True
+
+
+def remove_legacy_compat(settings_path: Path, state_dir: Path, *, legacy_dir: Path | None = None,
+                         os_name: str | None = None) -> str | None:
+    """Remove what the shell left at the pre-rename state folder so the old hook paths kept working
+    (rename spec §2.1): on Linux a symlink to `state_dir`, on Windows a marked copy of the hook
+    files. Only once the Claude settings no longer name that folder and no marked pre-rename
+    wrapper is left, and only when it is still exactly our symlink or copy. Returns what it
+    removed, or None."""
+    os_name = os_name or osdirs.os_name()
+    old = Path(legacy_dir) if legacy_dir is not None else legacy.state_dir(os_name)
+    state = Path(state_dir)
+    if _norm(old) == _norm(state) or not (old.is_symlink() or old.is_dir()):
+        return None
+    try:
+        text = Path(settings_path).read_text("utf-8") if Path(settings_path).exists() else ""
+    except OSError:
+        return None
+    # JSON doubles backslashes; _norm turns them all into slashes, so one form covers both OSes.
+    if _norm(old).rstrip("/") + "/" in re.sub(r"/+", "/", _norm(text)) or legacy_wrappers(osdirs.bin_dir()):
+        return None
+    if old.is_symlink():
+        try:
+            target = Path(os.path.join(old.parent, os.readlink(old)))
+            ours = target.resolve() == state.resolve()
+        except OSError:
+            return None
+        if not ours:
+            return None
+        old.unlink()
+        return str(old)
+    if os_name == "windows" and _is_compat_copy(old):
+        shutil.rmtree(old)
+        return str(old)
+    return None
