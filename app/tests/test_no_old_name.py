@@ -42,7 +42,7 @@ ALLOWED = {
     "NEXT-SESSION.md": [_WAS, r"settings\.json\.brainhub-backup-[\w*-]+"],  # the real backups, made before the rename
     "TODO.md": [_WAS, r"mv /mnt/data/BrainHub /mnt/data/ATLAS", r"~/\.cache/brainhub-target",
                 r"~/\.local/share/dev\.brainhub\.desktop", r"~/\.config/dev\.brainhub\.desktop",
-                r'"BrainHub" project', r"%LOCALAPPDATA%\\BrainHub", r"D:\\BrainHub"],
+                r'"BrainHub" project', r"%LOCALAPPDATA%\\BrainHub", r"D:\\BrainHub", r'"Quit BrainHub first"'],
 }
 
 

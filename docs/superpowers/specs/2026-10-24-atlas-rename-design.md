@@ -43,18 +43,22 @@ This spec covers the rename itself plus the cut-over: what the code does on the 
 
 ## 2. The cut-over, done by the code
 
-### 2.1 The folders: the desktop shell, first thing at start (`config.rs`)
+### 2.1 The folders: the desktop shell, first thing at start (`migrate.rs`, beside `config.rs`)
 The migration runs only when all three hold:
 - no `ATLAS_CONFIG_DIR` / `ATLAS_STATE_DIR` override is set;
 - the new `desktop.json` is absent;
 - the legacy `desktop.json` (`${XDG_CONFIG_HOME:-~/.config}/brainhub/desktop.json`, `%LOCALAPPDATA%\BrainHub\desktop.json`) exists.
 
+It waits, for this start, while the pre-rename app still runs: when the legacy `desktop.json`'s port answers, or the legacy update step holds `runtime/update.lock`. It logs "Quit BrainHub first" and runs on the legacy `desktop.json` as before.
+
 When it runs, the shell:
-1. Renames the legacy state folder to the new one, and the legacy config folder to the new one. On Windows these are one folder. Each rename is a single rename, and only when the target doesn't exist or is empty.
+1. Renames the legacy state folder to the new one, then the legacy config folder to the new one (state first, so the new `desktop.json` existing always means "done"). On Windows these are one folder. Each rename is a single rename, and only when the target doesn't exist or is empty.
+   - Right after the state move it leaves a **compat path** at the old state folder, so the absolute paths in the old hooks, wrapper and status line passthrough keep working until the hub repairs them: on Linux a symlink to the new folder; on Windows the old folder again with copies of `hook/hook_client.py`, `hook/request_client.py` and `statusline_passthrough.txt`, plus a marker file. Neither holds a `desktop.json`, so the migration never fires again through it, and a later start counts it as already moved.
 2. Rewrites the moved `desktop.json`:
    - `state` gets the new state folder when it named the legacy one;
    - each of `root`, `live` and (legacy mode) `app_dir` is swapped when it is missing on disk and a sibling path exists with `BrainHub` replaced by `ATLAS` (one path component). That's the owner's renamed folder.
    - If the owner hasn't renamed the folder yet, the old path stays and still works.
+   - The sibling swap (and the state swap) also runs on **every** start without an override, against whichever `desktop.json` is in use (atomically, only when something changes; logged to `hub.log`), and in memory when it can't be written. So a root renamed, or a drive mounted, only after the first start is followed at the next one.
 3. Writes `<state>/migrated.json` (`{"from": "brainhub", "at", "moved": [...], "repointed": [...]}`) and logs one line to `hub.log`.
 4. Autostart: if the legacy login entry is there (Linux `~/.config/autostart/BrainHub Desktop.desktop`; Windows the HKCU Run value `BrainHub Desktop`), the shell removes it and turns its own autostart on.
 
@@ -62,13 +66,15 @@ When it runs, the shell:
 
 The old web view folders (`~/.local/share/dev.brainhub.desktop`, `~/.config/dev.brainhub.desktop`) are not moved; the owner deletes them (`TODO.md`). The window position gets remembered again.
 
-### 2.2 The Claude Code hooks: the hub, once per full start (`claude_integration.repair_legacy`)
-This runs on a full (not reduced, not read-only) start, only when **our own old entries** are in the target settings: hooks or a status line whose script path ends in `brainhub/hook/hook_client.py` or `brainhub/hook_client.py` (the legacy suffixes, as whole path components). In that case the hub:
+### 2.2 The Claude Code hooks: the hub, once per start (`claude_integration.repair_legacy`)
+This runs only in **the owner's real hub**: a runtime hub the shell started (it sets `ATLAS_RUNTIME_HUB=1` for those only), whose package runs from `<state>/runtime/slot-a|b/app/` of its own state folder, with that folder's `runtime/current.json` and stable hook copy in place (`runs_from_own_slot`). A dev or manual hub never touches Claude Code's settings by itself, whatever its `ATLAS_STATE_DIR`. It runs in every mode: full, reduced and read-only (then without the shared `data/` folder for adoption). It acts only when **our own old entries** are in the target settings: hooks or a status line whose script path ends in `brainhub/hook/hook_client.py` or `brainhub/hook_client.py` (the legacy suffixes, as whole path components). In that case the hub:
 - reinstalls the integration at the current paths, with the same python, port and passthrough, through the existing `install` code (a backup first, an atomic write);
 - removes a `brainhub-request` wrapper that carries the legacy mark, and installs `atlas-request`;
 - replaces a legacy `<!-- brainhub: … -->` CLAUDE.md block with the new block, where it was.
 
-Anything that isn't recognisably ours is left alone. A failure is a quiet `log_error`; Settings → Claude Code already shows "out of date" with its install button. It runs once per start and is a no-op when nothing legacy is found.
+Afterwards, once the settings no longer name the old state folder and no marked old wrapper is left, the hub removes the shell's compat path (§2.1), only while it is still exactly our symlink to the state folder in use, or our marked copy holding nothing else (`remove_legacy_compat`).
+
+Anything that isn't recognisably ours is left alone. A failure is quietly logged to `hub.log`; Settings → Claude Code already shows "out of date" with its install button. It runs once per start and is a no-op when nothing legacy is found.
 
 `install`, `uninstall` and `status` also recognise the legacy suffixes as ours from now on, so nothing is ever duplicated.
 
@@ -88,8 +94,8 @@ The new `update_step.install_hook` looks in `app/atlas/`, then in `app/brainhub/
    - `git -C /mnt/data/ATLAS pull --ff-only`
    - Do the same `set-url` for the dev copy.
 5. Build the shell: `cd /mnt/data/ATLAS/app/desktop/src-tauri && CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`.
-6. Install the launcher: `~/.local/share/atlas/runtime/slot-*/venv/bin/python -m atlas desktop-entry install --exe ~/.cache/atlas-target/release/atlas-desktop` (exact line in `TODO.md`). It also removes the old BrainHub entry and icon.
-7. Start ATLAS from the launcher. It moves the folders, then repairs the hooks. Check:
+6. Start the new shell once from a terminal (`~/.cache/atlas-target/release/atlas-desktop`). It moves the folders, builds the new runtime slot and repairs the hooks. Settings may say "update pending: hook client copy failed" this once.
+7. Install the launcher with the new slot's python, from the slot's `app/` (`desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop`; exact line in `TODO.md`). It also removes the old BrainHub entry and icon. Quit, then start ATLAS from the launcher. Check:
    - Settings → Claude Code says installed;
    - a Claude Code session shows up in Agents;
    - `atlas-request` works.

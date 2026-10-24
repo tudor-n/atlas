@@ -91,9 +91,12 @@ The app is called ATLAS now. Most of the switch happens by itself the first time
 - [ ] **Start it once from the terminal**, so it can move its folders and build its new runtime (give it a minute or two):
   `~/.cache/atlas-target/release/atlas-desktop`
   Leave that terminal open; the widget appears when the hub is up. Open a new terminal tab (Ctrl+Shift+T) for the next step. If the tray menu says "connect only", tell Claude and paste the end of the log: `tail -n 30 ~/.local/share/atlas/hub.log`.
+  - Settings → Runtime may say **update pending: hook client copy failed** this once. That's expected (the old update step looked for the hook in the old place); it clears at the next start.
+  - If the log says "Quit BrainHub first", the old app is still running somewhere: quit it from its tray icon, then start ATLAS again.
 - [ ] **Add ATLAS to the KDE launcher.** This one line finds the runtime ATLAS just built and installs the launcher entry with it. It also removes the old launcher entry and icon (was BrainHub):
   `cd ~/.local/share/atlas/runtime/slot-$(sed -n 's/.*"slot": "\([ab]\)".*/\1/p' ~/.local/share/atlas/runtime/current.json)/app && ../venv/bin/python -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop; cd ~`
   If ATLAS doesn't show up in the menu, run `kbuildsycoca6`.
+  If it says **No module named atlas**, the first start couldn't build the new runtime yet (no internet for the download, for example). Quit ATLAS from the tray, start it once more from the first terminal (the same `~/.cache/atlas-target/release/atlas-desktop` line), wait a minute, check the end of the log with `tail ~/.local/share/atlas/hub.log`, then run the launcher line again. Tell Claude if it still fails.
 - [ ] **Quit it from the tray** (the first terminal gets its prompt back; close it), **and from now on start ATLAS from the launcher.** Check that:
   - Settings → Claude Code says **installed** (not "out of date");
   - a new Claude Code session shows up in **Agents**;
