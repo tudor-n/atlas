@@ -55,10 +55,25 @@ body { font: 400 15px/1.4 Roboto, "Droid Sans", sans-serif; color: #ffffff; -web
 /* home */
 .mode { position: absolute; top: 90px; width: 452px; height: 380px; border: 1px solid #3a3a3a; border-radius: 4px; }
 .mode.down { background: #262626; }
-.mode .name { position: absolute; left: 32px; top: 110px; font-size: 56px; line-height: 66px; font-weight: 600;
-              letter-spacing: 0.08em; }
-.mode .sub { position: absolute; left: 52px; top: 300px; width: 380px; font-size: 17px; line-height: 20px; }
-.mode .dot { left: 32px; top: 306px; }
+/* the hero lockup (logo handoff): 104px mark at 32,92; the column 24px right of it, shrink-to-fit,
+   so the ribbon or rule is the wordmark's width (its negative margin drops the trailing tracking) */
+.mode .hero { position: absolute; left: 160px; top: 98px; }
+.hero .word { font-size: 56px; line-height: 56px; font-weight: 600; letter-spacing: 0.14em; margin-right: -0.14em;
+              white-space: nowrap; color: #ffffff; }
+.hero .ribbon { margin-top: 12px; }
+.hero .ribbon i { display: block; height: 4px; }
+.hero .ribbon i + i { margin-top: 3px; }
+.hero .ribbon .gnd { background: #7a4a2a; }
+.hero .ribbon .vp { background: #d92d20; }
+.hero .ribbon .sig { background: #ffc21a; }
+.hero .rule { margin-top: 12px; height: 1px; background: #3a3a3a; }
+.hero .tag { margin-top: 12px; font-size: 13px; line-height: 13px; letter-spacing: 0.14em; color: #8a8a8a;
+             white-space: nowrap; }
+.mode .sub { position: absolute; left: 52px; top: 330px; width: 380px; font-size: 17px; line-height: 20px; }
+.mode .dot { left: 32px; top: 336px; }
+/* the footer: a hairline, then the status line centred in the 79px below it */
+.mode .sep { position: absolute; left: 0; top: 300px; width: 450px; height: 1px; background: #262626; }
+.mode.down .sep { background: #3a3a3a; }
 
 /* journal: the top bar (HOME in the brand slot, the tabs, the status), the panes, the message line */
 .bar { position: absolute; left: 0; top: 0; width: 1024px; height: 56px; border-bottom: 1px solid #262626; }

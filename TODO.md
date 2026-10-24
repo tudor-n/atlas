@@ -40,7 +40,7 @@ Tell Claude about anything that fails.
 - [ ] Send a note with the laptop's Wi-Fi off. It shows "Waiting to send (1)", arrives once when the Wi-Fi is back, and **File this** on the PC files it.
 - [ ] Run `atlas-request "Test" "Width of the desk" "Height of the desk"`. It shows on NOTES within about a second, and the widget says "1 request". Answer it with the unit chips, then SEND. The answer shows in the PC's **Tablet** view.
 - [ ] IGNORE a note (two taps within 2 s), then bring it back with **Show ignored** on the PC.
-- [ ] ROBOT → arm UI → **‹ HOME** (hold it or tap it twice) brings you back. It refuses with "LIVE ON" while LIVE is on, and with "LET GO" while you hold a grip button.
+- [ ] DUMMY → arm UI → **‹ HOME** (hold it or tap it twice) brings you back. It refuses with "LIVE ON" while LIVE is on, and with "LET GO" while you hold a grip button.
 
 ### 6. Phase 4: the voice
 - [x] Merge the phase 4 PR (#5). Done on 2026-10-23.
@@ -72,6 +72,7 @@ Tell Claude about anything that fails.
 - [ ] Use it for a few days. Then tell Claude what still feels off, screen by screen.
 - [ ] On the tablet:
   - **‹ HOME** is now top left. It shows as `‹`, not an empty box.
+  - The home screen shows two tiles, **DUMMY** and **ATLAS**, each with its logo, and both logos look crisp at arm's length.
   - The 22px letters on the keys read well at arm's length.
   - The `2 REQUESTS` chip sits in the top bar.
 

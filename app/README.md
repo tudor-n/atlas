@@ -179,7 +179,7 @@ All in the Settings view.
 | `widget_tiles` | all eight, in order | Which tiles the expanded widget shows, and their order. |
 
 ## Phase 3: the workbench tablet
-The Samsung SM-T110 at the bench, in Fully Kiosk Browser, is a separate ES5 page at `/tablet`. Its home screen has **ROBOT**, which opens the arm UI, and **JOURNAL**. JOURNAL has three tabs:
+The Samsung SM-T110 at the bench, in Fully Kiosk Browser, is a separate ES5 page at `/tablet`. Its home screen has two tiles, each with its logo: **DUMMY**, which opens the arm UI, and **ATLAS**, the journal. The journal has three tabs:
 - **TODAY:** a glance only.
 - **NOTES:** measurement requests and free-text notes.
 - **AGENTS:** Claude Code sessions and the usage meters.
@@ -201,7 +201,7 @@ All typing uses an in-page keyboard, so the Android keyboard never opens. On the
 
 **IGNORE** on the tablet needs a second tap within 2 s. It hides a note or request without deleting it, and **Show ignored** on the PC brings it back.
 
-**ROBOT and HOME:** ROBOT opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `atlas-home` branch.
+**DUMMY and HOME:** DUMMY opens the arm UI with `?home=` pointing back to the tablet page. The arm UI's top-left corner then becomes **‹ HOME**: hold it, or tap it twice. HOME refuses while LIVE is on, was just switched on, or isn't known yet, and while another control is held, because the arm keeps moving when its page goes. This needs the arm project's `atlas-home` branch.
 
 ## Phase 4: voice and sass
 ATLAS speaks through the PC speakers, in Atlas's voice (Kokoro, British English: 70 % `bm_george`, 30 % `bm_fable`, speed 0.95). Everything runs locally and offline, on the CPU. It speaks only for:
