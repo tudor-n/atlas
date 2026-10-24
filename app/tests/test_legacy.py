@@ -440,3 +440,13 @@ def test_our_old_icon_alone_is_removed(tmp_path):
     _, icon = _old_entry(home, None, de.ICON_SOURCE.read_bytes())
     assert de.install(_exe(tmp_path), home)["removed_legacy"] == [str(icon)]
 
+
+# -- the holding inbox: a capture held for the old root path ---------------------------------
+def test_a_capture_held_for_the_old_root_path_reaches_the_renamed_root(tmp_path):
+    from atlas import holding
+    old, new = tmp_path / "mnt" / "BrainHub", tmp_path / "mnt" / "ATLAS"
+    record = {"root": {"id": None, "path": str(old)}}  # held while the drive was missing: no marker id
+    assert holding._for_root(record, {"id": "abc", "path": str(new)})
+    assert not holding._for_root(record, {"id": "abc", "path": str(tmp_path / "mnt" / "Other")})
+    # The marker ids still decide when both have one.
+    assert not holding._for_root({"root": {"id": "x", "path": str(old)}}, {"id": "y", "path": str(new)})

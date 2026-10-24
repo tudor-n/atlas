@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import rawlog, rootguard
+from . import legacy, rawlog, rootguard
 from .config import Paths
 
 log = logging.getLogger(__name__)
@@ -129,7 +129,15 @@ def _for_root(record: dict, root: dict) -> bool:
     meant = record["root"]
     if meant["id"] and root["id"]:
         return meant["id"] == root["id"]
-    return _path_key(meant["path"]) == _path_key(root["path"])
+    return _path_key(root["path"]) in {_path_key(p) for p in (meant["path"], *_renamed(meant["path"]))}
+
+
+def _renamed(path: str) -> list[str]:
+    """`path` with one pre-rename root folder name replaced by ATLAS (rename spec §3: the owner
+    renames the shared folder), so a capture held for the old path still reaches the renamed root."""
+    parts = Path(path).parts
+    return [str(Path(*parts[:i], "ATLAS", *parts[i + 1:])) for i, part in enumerate(parts)
+            if part.casefold() == legacy.WINDOWS_NAME.casefold()]
 
 
 # -- hold --------------------------------------------------------------------
