@@ -23,8 +23,8 @@ update available"). This does, before the shell starts:
    the old binary, and says so.
 4. **Start:** exec the shell with the arguments given after `--exe`.
 
-Only one launcher works at a time (`<state>/launcher.lock`): a second click waits, then finds the
-shell running and hands over. Everything is logged to `<state>/launcher.log`. Any failure in
+Only one launcher works at a time (`<state>/launcher.lock`, held until the exec): a second click
+waits, and hands over as soon as the shell runs. Everything is logged to `<state>/launcher.log`. Any failure in
 steps 2 and 3 only skips them: the shell always starts, if its binary exists.
 
 Stdlib only, run as a file: never import anything from `atlas`.
@@ -223,8 +223,10 @@ def run_bounded(cmd, *, cwd, env, limit, log, what):
 
 
 def git_head(live):
+    safe = live.replace(os.sep, "/")
     try:
-        out = subprocess.run(["git", "-C", live, "rev-parse", "HEAD"], env=child_env(), stdin=subprocess.DEVNULL,
+        out = subprocess.run(["git", "-c", f"safe.directory={safe}", "-C", live, "rev-parse", "HEAD"], env=child_env(),
+                             stdin=subprocess.DEVNULL,
                              capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -297,20 +299,27 @@ def build(live, state, exe, log):
 
 
 def take_lock(state, log):
+    """True once this launcher holds `launcher.lock`, False when a shell started while it waited
+    (then it only hands over). The fd is close-on-exec and never closed by hand: the exec that
+    starts the shell releases it, so no second launcher slips in between the release and the shell
+    showing up. Without a lock file it goes on unlocked (True)."""
     try:
-        fd = os.open(os.path.join(state, "launcher.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(os.path.join(state, "launcher.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     except OSError as e:
         log(f"lock: {e}; going on without it")
-        return None
+        return True
     deadline = time.monotonic() + LOCK_WAIT_S
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fd
+            return True
         except OSError:
+            if shell_running():
+                os.close(fd)
+                return False
             if time.monotonic() > deadline:
                 log("lock: another launcher kept it too long; going on")
-                return fd
+                return True
             time.sleep(0.5)
 
 
@@ -327,15 +336,10 @@ def prepare(exe, log_for):
             return
         log = log_for(state)
         log.trim()
-        fd = take_lock(state, log)
-        try:
-            if shell_running():  # another launcher started it while we waited
-                return
-            update(live, state, log)
-            build(live, state, exe, log)
-        finally:
-            if fd is not None:
-                os.close(fd)
+        if not take_lock(state, log) or shell_running():  # another launcher started it meanwhile
+            return
+        update(live, state, log)
+        build(live, state, exe, log)
     except Exception as e:  # never stop the shell from starting
         try:
             Log(os.path.join(default_state_dir(), "launcher.log"))(f"launcher: {type(e).__name__}: {e}")

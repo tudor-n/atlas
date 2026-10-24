@@ -260,3 +260,29 @@ def test_stdlib_only():
     names |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     assert "atlas" not in names
     assert all(n in sys.stdlib_module_names for n in names), names
+
+
+@posix_only
+def test_a_waiting_launcher_hands_over_once_the_shell_runs(tmp_path, monkeypatch):
+    import fcntl
+    holder = os.open(tmp_path / "launcher.lock", os.O_RDWR | os.O_CREAT)
+    fcntl.flock(holder, fcntl.LOCK_EX)  # another launcher, busy building
+    log = la.Log(str(tmp_path / "l.log"))
+    monkeypatch.setattr(la, "shell_running", lambda *a, **k: True)
+    assert la.take_lock(str(tmp_path), log) is False
+    os.close(holder)
+    monkeypatch.setattr(la, "shell_running", lambda *a, **k: False)
+    def lock_fds():
+        out = []
+        for f in os.listdir("/proc/self/fd"):
+            try:
+                if os.readlink(f"/proc/self/fd/{f}") == str(tmp_path / "launcher.lock"):
+                    out.append(int(f))
+            except OSError:
+                pass
+        return out
+    assert la.take_lock(str(tmp_path), log) is True
+    held = lock_fds()
+    assert len(held) == 1 and not os.get_inheritable(held[0])  # released by the exec, not before
+    for f in held:
+        os.close(f)
