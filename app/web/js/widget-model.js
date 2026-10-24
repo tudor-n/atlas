@@ -10,8 +10,49 @@ export const TILE_LABEL = {
 // The arm tile opens the `arm` target instead of a view.
 export const TILE_VIEW = {
   today: 'today', usage: 'usage', agents: 'agents', people: 'people',
-  deadlines: 'deadlines', review: 'today', projects: 'settings',
+  deadlines: 'deadlines', review: 'today', projects: 'browse',
 };
+
+// How a tile opens its view. In the desktop shell the widget asks the shell for the main window
+// (`open_main`, design §6); in a plain browser, or when that call fails, it posts /api/open, which
+// opens the browser. The arm tile always posts its own target. `invoke` is the shell's
+// `__TAURI__.core.invoke` or null (tauriInvoke below).
+export function openPlan(name, view, invoke) {
+  if (name === 'arm') return { invoke: null, view: null, body: { target: 'arm' } };
+  const v = view || TILE_VIEW[name] || null;
+  return { invoke: typeof invoke === 'function' ? invoke : null, view: v, body: v ? { target: 'app', view: v } : { target: 'app' } };
+}
+
+// How long the widget waits for the shell's `open_main` before it falls back to POST /api/open.
+export const OPEN_MAIN_TIMEOUT_MS = 3000;
+
+// Race the shell's `open_main` call against a timeout: 'shell' when it resolved (the main window
+// is showing), 'fallback' when it rejected (an older shell, or one that could not show the
+// window) or did not answer within `ms` (a stuck main thread). Never rejects. `wait` is
+// injectable for tests (default: setTimeout).
+export async function openOutcome(call, ms = OPEN_MAIN_TIMEOUT_MS, wait = (t, f) => setTimeout(f, t)) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = wait(ms, () => resolve('fallback')); });
+  let attempt;
+  try {
+    attempt = Promise.resolve(call()).then(() => 'shell', () => 'fallback');
+  } catch (_) {
+    attempt = Promise.resolve('fallback');
+  }
+  const outcome = await Promise.race([attempt, timeout]);
+  if (timer !== undefined && typeof clearTimeout === 'function') clearTimeout(timer);
+  return outcome;
+}
+
+// The shell's command bridge on a window-like object, or null (a browser, or a shell without it).
+export function tauriInvoke(win) {
+  try {
+    const core = win && win.__TAURI__ && win.__TAURI__.core;
+    return core && typeof core.invoke === 'function' ? core.invoke.bind(core) : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 const MAX_ROWS = 6;
 const hhmm = (iso) => String(iso || '').slice(-5);
@@ -25,7 +66,7 @@ export function synopsisText(w) {
 }
 const hasUsed = (win) => !!win && win.used !== null && win.used !== undefined;
 
-function usageWindow(w) {
+export function usageWindow(w) {
   const u = w.usage || {};
   if (hasUsed(u.five_hour)) return { win: u.five_hour, label: '5h' };
   if (hasUsed(u.seven_day)) return { win: u.seven_day, label: '7d' };
@@ -69,8 +110,9 @@ export function tileSummary(name, w) {
     }
     case 'review': {
       const r = w.review || {};
-      const n = (r.proposals || 0) + (r.failed || 0);
-      return { value: String(n), caption: 'to confirm', warn: n > 0 };
+      // Entries, as Today's TO REVIEW counts them (older hubs: proposals + failed filings).
+      const n = Number.isFinite(r.entries) ? r.entries : (r.proposals || 0) + (r.failed || 0);
+      return { value: String(n), caption: n === 1 ? 'entry to review' : 'entries to review', warn: n > 0 };
     }
     case 'projects':
       return { value: String((w.projects || []).filter((p) => p.open > 0).length), caption: 'with open items', warn: false };
@@ -102,7 +144,9 @@ export function popupRows(name, w) {
     case 'agents':
       rows = ((w.agents || {}).rows || []).map((r) => ({
         text: [r.project_name, r.part].filter(Boolean).join(' · ') || '(unknown)',
-        meta: [r.status, r.where, r.next_time ? 'next time' : ''].filter(Boolean).join(' · '),
+        // "unknown" (no entrypoint seen) and empty parts say nothing: left out.
+        meta: [r.status, r.where === 'unknown' ? '' : r.where, r.next_time ? 'next time' : '']
+          .map((m) => String(m || '').trim()).filter(Boolean).join(' · '),
       }));
       break;
     case 'people':

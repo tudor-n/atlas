@@ -1,0 +1,53 @@
+/* BROWSE view (phase 4.5 design §4): a 240px rail (DEADLINES, PEOPLE, PROJECTS) and the selected page:
+   deadlines, people, or a project/course page (title, then OPEN ITEMS, NOTES with a viewer, JOURNAL).
+   The rail's rows are the tab-style nav rows of components.css (.rail > .row). Item rows are Today's
+   (the done ring .dn, SNOOZE .snz and its line .snz-pick come from today.css). The entry cards in
+   JOURNAL are the shared .ecard (css/views/journal.css). Everything starts on the 20px gutter. */
+
+/* -- rail ----------------------------------------------------------------------------------- */
+.browse > .rail { display: flex; flex-direction: column; }
+.browse > .rail > .row { flex: none; }
+.browse > .rail > .row .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse > .rail > .sect-h { flex: none; margin-top: 16px; border-top: 1px solid var(--line); }
+.browse > .rail > .row .sb { font-family: var(--sans); font-weight: 600; font-size: 11px; letter-spacing: .14em; }
+.browse > .rail > .row.cur .sb { color: var(--ground); }
+
+/* -- page ----------------------------------------------------------------------------------- */
+.bpage .bmsg:empty { display: none; }
+.bpage .bmsg { padding: 14px 20px; border-bottom: 1px solid var(--sub); }
+.bh { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 16px; row-gap: 10px; padding: 20px; border-bottom: 1px solid var(--line); }
+.bh > .lb { flex: 0 0 100%; }
+.bh .ttl { font-size: 16px; line-height: 20px; font-weight: 600; }
+.bh .pfx { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--faint); }
+.bpanel + .bpanel { border-top: 1px solid var(--line); }
+.bpanel:has(+ .bpanel) > .items > .row:last-child, .bpanel:has(+ .bpanel) > .empty { border-bottom: 0; }
+.bpage.proj .bpanel + .bpanel { margin-top: 24px; }
+.bpage.proj .bpanel:last-child { padding-bottom: 24px; }
+.bnote { padding: 12px 20px; font-size: 13px; line-height: 18px; color: var(--faint); }
+
+/* item rows, as Today's: the 40px ring (its circle on the gutter), the text, a mono 12 dim meta line */
+.browse .row.it { flex-wrap: wrap; gap: 12px; padding: 6px 12px 6px 10px; }
+.browse .row.it > .grow { flex: 1 1 0; min-width: 0; }
+.browse .it .t { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.browse .it .mt {
+  margin-top: 3px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.browse .it .mt .p { white-space: nowrap; }
+.browse .it .mt a { color: var(--dim); }
+.browse .it .mt a:hover { color: var(--text); }
+.browse .it-err:empty { display: none; }
+.browse .it-err { margin-top: 4px; font-size: 13px; line-height: 18px; }
+
+/* notes: the list (260px) and the viewer side by side */
+.nsplit { display: flex; align-items: stretch; min-height: 240px; }
+.nlist { flex: none; width: 260px; border-right: 1px solid var(--line); }
+.nlist .nrow { font-family: var(--mono); font-weight: 500; font-size: 13px; }
+.nlist .nrow .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nview { flex: 1 1 auto; min-width: 0; padding: 16px 20px 24px; }
+.nview-h { margin-bottom: 12px; font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+
+@media (max-width: 1099px) {
+  .nsplit { flex-direction: column; }
+  .nlist { width: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+}

@@ -1,0 +1,50 @@
+/* BrainHub design tokens (phase 4.5 design §2).
+   The language is the owner's 6-DOF arm control UI (~/dev/RobotArmControl/index.html and its
+   design_handoff_tablet_ui/README.md): a pure black ground, hairline grey rules, small tracked
+   uppercase labels, mono numbers, and outlined controls that invert to white. Colour carries
+   meaning only: green = live or healthy, amber = attention or a risky action. No red (no STOP).
+   Hex only, no alpha; no shadows, gradients, filters or translucency (tests/test_web_design.py). */
+:root {
+  /* colours */
+  --ground: #000;       /* the background */
+  --text: #fff;         /* text, primary fills, selected fills */
+  --dim: #8a8a8a;       /* labels, inactive tabs, links */
+  --faint: #5c5c5c;     /* hints, units, empty states */
+  --line: #262626;      /* dividers, panel borders, switch off */
+  --line2: #3a3a3a;     /* button and field borders, disabled text */
+  --sub: #1a1a1a;       /* sub-dividers, pressed list row */
+  --key: #141414;       /* key fill */
+  --key-line: #2a2a2a;  /* key border */
+  --pressed: #b8b8b8;   /* primary button while pressed */
+  --pressed-row: #d0d0d0; /* current row while pressed */
+  --green: #30d158;     /* live, healthy, done */
+  --amber: #ffb020;     /* attention, risky, armed */
+  --err: #ff6a5c;       /* error text only */
+
+  /* type */
+  --sans: "Roboto", "Droid Sans", system-ui, sans-serif;
+  --mono: "Roboto Mono", "Droid Sans Mono", Menlo, Consolas, monospace;
+
+  /* spacing */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+
+  /* radii: buttons, chips and fields; cards and panels; keys */
+  --r-btn: 3px;
+  --r-card: 4px;
+  --r-key: 6px;
+
+  /* heights: compact control, button, list row, top bar, action bar */
+  --h40: 40px;
+  --h48: 48px;
+  --h52: 52px;
+  --h56: 56px;
+  --h72: 72px;
+
+  /* fixed widths used by several screens */
+  --rail: 240px;
+}

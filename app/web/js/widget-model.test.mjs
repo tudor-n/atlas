@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft } from './widget-model.js';
+import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome, OPEN_MAIN_TIMEOUT_MS } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -17,7 +17,7 @@ test('labels and views', () => {
   assert.equal(TILE_LABEL.review, 'To review');
   assert.equal(TILE_LABEL.arm, 'Robot arm');
   assert.equal(TILE_VIEW.review, 'today');
-  assert.equal(TILE_VIEW.projects, 'settings');
+  assert.equal(TILE_VIEW.projects, 'browse');
   assert.equal(TILE_VIEW.arm, undefined);
 });
 
@@ -47,7 +47,7 @@ test('people, deadlines, review, projects, arm', () => {
   assert.deepEqual(tileSummary('people', W({ people: { waiting: [{}, {}], to_read: 0 } })), { value: '2', caption: 'waiting on others', warn: false });
   assert.deepEqual(tileSummary('deadlines', W({ deadlines: [{ due: '2026-10-25' }, { due: '2026-11-01' }] })), { value: '2', caption: 'next: 2026-10-25', warn: false });
   assert.deepEqual(tileSummary('deadlines', W()), { value: '0', caption: 'none', warn: false });
-  assert.deepEqual(tileSummary('review', W({ review: { proposals: 2, failed: 1 } })), { value: '3', caption: 'to confirm', warn: true });
+  assert.deepEqual(tileSummary('review', W({ review: { proposals: 2, failed: 1 } })), { value: '3', caption: 'entries to review', warn: true });
   assert.equal(tileSummary('review', W()).warn, false);
   const projects = [{ slug: 'a', open: 2 }, { slug: 'b', open: 0 }, { slug: 'c', open: 1 }];
   assert.deepEqual(tileSummary('projects', W({ projects })), { value: '2', caption: 'with open items', warn: false });
@@ -111,4 +111,54 @@ test('capture draft: storage missing or throwing never breaks capture', () => {
   assert.equal(loadDraft(null), '');
   assert.doesNotThrow(() => saveDraft(undefined, 'x'));
   assert.equal(loadDraft({ getItem: () => 42 }), '');
+});
+
+test('openPlan: the shell when it is there, else POST /api/open; the arm always posts', () => {
+  const inv = () => {};
+  assert.deepEqual(openPlan('agents', undefined, null), { invoke: null, view: 'agents', body: { target: 'app', view: 'agents' } });
+  const p = openPlan('projects', undefined, inv);
+  assert.equal(p.invoke, inv); assert.equal(p.view, 'browse'); assert.deepEqual(p.body, { target: 'app', view: 'browse' });
+  assert.equal(openPlan('projects', 'project/robotarm', inv).view, 'project/robotarm');
+  assert.equal(openPlan('review', undefined, inv).view, 'today');
+  assert.deepEqual(openPlan('arm', undefined, inv), { invoke: null, view: null, body: { target: 'arm' } });
+  assert.deepEqual(openPlan('nope', undefined, 'not a function'), { invoke: null, view: null, body: { target: 'app' } });
+});
+
+test('tauriInvoke finds the shell bridge or nothing', () => {
+  assert.equal(tauriInvoke(null), null);
+  assert.equal(tauriInvoke({}), null);
+  assert.equal(tauriInvoke({ __TAURI__: {} }), null);
+  assert.equal(tauriInvoke({ __TAURI__: { core: { invoke: 1 } } }), null);
+  const core = { calls: [], invoke(cmd, args) { this.calls.push([cmd, args]); return 'ok'; } };
+  const f = tauriInvoke({ __TAURI__: { core } });
+  assert.equal(f('open_main', { view: 'agents' }), 'ok');
+  assert.deepEqual(core.calls, [['open_main', { view: 'agents' }]]);
+  const trap = { get __TAURI__() { throw new Error('denied'); } };
+  assert.equal(tauriInvoke(trap), null);
+});
+
+test('agents popup meta leaves out "unknown" and empty parts', () => {
+  const rows = (r) => popupRows('agents', W({ agents: { rows: [r] } }))[0].meta;
+  assert.equal(rows({ project_name: 'P', status: 'waiting', where: 'unknown', next_time: true }), 'waiting · next time');
+  assert.equal(rows({ project_name: 'P', status: 'running', where: 'terminal', next_time: false }), 'running · terminal');
+  assert.equal(rows({ project_name: 'P', status: 'idle', where: '', next_time: false }), 'idle');
+  assert.equal(rows({ project_name: 'P', status: ' ', where: null }), '');
+  assert.equal(rows({ project_name: 'P', status: 'finished', where: 'IDE', next_time: true }), 'finished · IDE · next time');
+});
+
+test('openOutcome: the shell when open_main resolves, else the fallback (rejected, thrown, too slow)', async () => {
+  assert.equal(OPEN_MAIN_TIMEOUT_MS, 3000);
+  const never = (_t, _f) => 0; // a timer that never fires
+  assert.equal(await openOutcome(() => Promise.resolve(null), 3000, never), 'shell');
+  assert.equal(await openOutcome(() => 'sync value', 3000, never), 'shell');
+  assert.equal(await openOutcome(() => Promise.reject(new Error('could not show the main window')), 3000, never), 'fallback');
+  assert.equal(await openOutcome(() => { throw new Error('no bridge'); }, 3000, never), 'fallback');
+  // No answer: the timer decides, with the timeout it was given.
+  let asked;
+  const now = (t, f) => { asked = t; f(); return 0; };
+  assert.equal(await openOutcome(() => new Promise(() => {}), 1234, now), 'fallback');
+  assert.equal(asked, 1234);
+  // A real (short) timer, and an answer that comes in time.
+  assert.equal(await openOutcome(() => new Promise(() => {}), 10), 'fallback');
+  assert.equal(await openOutcome(() => new Promise((r) => setTimeout(r, 1)), 200), 'shell');
 });

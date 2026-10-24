@@ -1,0 +1,51 @@
+/* TABLET view, the PC page (phase 4.5 design §4); the tablet's own page is web/tablet/. NOTES as
+   blocks in .main (mono time, an ANSWER chip for measurement answers, the text in .read, FILE THIS,
+   IGNORE through twice(), RESTORE), OPEN REQUESTS as hairline blocks in a 400px .side, SHOW IGNORED a
+   switch row. FILE THIS is an outline; only the focused note's (else the first one's) is the primary. */
+
+/* -- notes ---------------------------------------------------------------------------------- */
+.tablet .tintro { padding: 14px 20px; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 18px; color: var(--dim); }
+.tablet .tmsg:empty { display: none; }
+.tablet .tmsg { padding: 12px 20px; border-bottom: 1px solid var(--sub); font-size: 15px; line-height: 21px; }
+.tablet .tmsg .ok { color: var(--dim); }
+.tablet .terr { padding: 16px 20px; }
+
+.tnote { padding: 18px 20px 20px; border-bottom: 1px solid var(--sub); }
+.tnote-h { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.tnote-h .tm { font-family: var(--mono); font-weight: 500; font-size: 13px; color: var(--text); white-space: nowrap; }
+.tnote-h .ans { font-size: 13px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tnote-h .grow { flex: 1 1 auto; }
+.tnote-h .dl.amb { color: var(--amber); }
+.tnote-x { margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tnote-a { display: flex; gap: 8px; margin-top: 16px; }
+.tnote-a .b { min-width: 104px; }
+/* an ignored note (SHOW IGNORED on): its text goes faint */
+.tnote.hid .tnote-x, .tnote.hid .tnote-h .tm { color: var(--faint); }
+
+/* -- requests: hairline blocks, as the notes are ---------------------------------------------- */
+.treq { padding: 18px 20px 20px; border-bottom: 1px solid var(--sub); }
+.treq-t { font-weight: 600; font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.treq-m { margin-top: 6px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); }
+.treq-l { margin-top: 12px; border-top: 1px solid var(--sub); }
+.treq-l > li { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--sub); font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.treq-l .i { flex: none; width: 16px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 20px; color: var(--faint); }
+.treq-f { display: flex; gap: 8px; margin-top: 16px; }
+.treq-f .b { min-width: 104px; }
+.treq.hid .treq-t, .treq.hid .treq-l > li { color: var(--faint); }
+
+/* -- SHOW IGNORED: a switch row under the OPEN REQUESTS header ------------------------------ */
+.tsw { border-bottom: 1px solid var(--line); }
+.tsw .swb { display: flex; width: 100%; min-height: var(--h52); padding: 0 16px 0 20px; gap: 12px; }
+.tsw .swb > .lb { flex: 1 1 auto; text-align: left; }
+.tsw .swb > .n { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--dim); }
+
+/* narrow: the requests go above the notes (side by side, a hairline between) and the view scrolls */
+@media (max-width: 1099px) {
+  .vw.split.tablet { display: flex; flex-direction: column; height: auto; min-height: 100%; }
+  .vw.split.tablet > * { overflow: visible; }
+  .vw.split.tablet > .side.w400 { order: -1; width: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .tablet .treqs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .tablet .treqs > .empty { grid-column: 1 / -1; }
+  .tablet .treq { border-right: 1px solid var(--sub); }
+  .tablet .treq-l > li { padding: 6px 0; }
+}

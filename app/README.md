@@ -1,4 +1,4 @@
-# BrainHub (phases 1–4, on Kubuntu and Windows)
+# BrainHub (phases 1–4.5, on Kubuntu and Windows)
 
 BrainHub is a local second brain. You type free text; a headless Claude Code agent files it into a git-versioned Markdown `brain/` and *proposes* tasks, which you confirm. Recall is instant local search plus a cited answer.
 
@@ -35,6 +35,8 @@ BrainHub is a local second brain. You type free text; a headless Claude Code age
 - `runtime/` (the two runtime slots and `current.json`), `update.json` (the last update step), `shell.json` (the running shell's source digest), `hook/hook_client.py` (the stable copy the hooks run).
 - `claude-sync.json`, `claude-sync.log`, `claude-sync-last.json` and `claude-sync-backups/` ([claude-sync](#claude-code-sync-claude-sync)).
 - `voice.json` (the reminder tick's last time, a pause, where each quote pool is up to), `voice-worker.log` (the voice worker's errors) and `voice/` (the clip being played) (phase 4).
+
+**Per OS: the launcher** (phase 4.5, written by `desktop-entry install`): `~/.local/share/applications/dev.brainhub.desktop.desktop` and its icon in `~/.local/share/icons/hicolor/256x256/apps/`.
 
 **Per OS: the config folder**: `${XDG_CONFIG_HOME:-~/.config}/brainhub/desktop.json` on Kubuntu, `%LOCALAPPDATA%\BrainHub\desktop.json` on Windows (`BRAINHUB_CONFIG_DIR` replaces the folder). Also per OS: the shell's window position and web view data (see `desktop/README.md`), and its start-at-login entry.
 
@@ -213,6 +215,35 @@ It never reads text an agent wrote: only your project names and your own words. 
 **Setting it up:** Settings → **Voice** → **Download the voice** (about 121 MB, once, checked against pinned checksums), then **Play sample**. Settings also has the switches, which events speak, the voice blend, speed, volume and the model. **Pause** (an hour, or until morning) is there and in the tray menu. The widget's speaker icon switches the voice off and on.
 
 **How it runs:** a child process (`python -m brainhub voice-worker`) starts on the first line and exits after 10 minutes of silence, so its model's memory (about 300 MB) goes back. It plays with `pw-play`, `paplay` or `aplay` on Linux and `winsound` on Windows. If it fails (no audio device, a damaged voice file), the hub carries on and Settings shows the error. A read-only root has no voice.
+
+## Phase 4.5: the native app and the instrument-panel look
+**BrainHub is an app now, not a browser tab.** The desktop shell opens it in its own window:
+- **Opening it:** from the tray's **Open BrainHub**, from the KDE launcher, or by clicking a widget tile, which jumps to that page.
+- **The window:** it has a taskbar entry and an icon, appears in Alt+Tab, and remembers its size and maximised state. Closing it only hides it; the tray's **Quit** quits.
+- **Fallback:** the tray still has **Open in browser**.
+
+Add the launcher entry once with `python -m brainhub desktop-entry install --exec <path to brainhub-desktop>`. `desktop/README.md` has the details.
+
+**The look is the arm UI's language,** taken from the robot arm's own control screen:
+- a black ground split by 1px hairlines;
+- small uppercase labels over white content, with every number in mono;
+- outlined controls that invert to white when pressed, and one white primary button per panel;
+- colour only when it means something: green is ok or live, amber is attention or a risky action. Risky buttons (dismiss, remove, revoke, ignore) need a second tap within 2 s.
+
+**Where things are:**
+- **Top bar:** the tabs TODAY · ASK · JOURNAL · BROWSE · AGENTS · TABLET, then a status cluster, then SETTINGS.
+  - The status cluster holds attention chips, the review count, the 5-hour usage, the agents running and waiting, and the voice switch.
+  - Keys: Alt+1…6 for the tabs, Alt+0 for Settings, Alt+C to jump to capture.
+- **Capture** is always at the bottom: Ctrl+Enter saves. New filings show as compact rows just above it; open one with **REVIEW**.
+- **Today:**
+  - TO REVIEW is a queue; the selected entry's card opens below it. Use ↑/↓ to move through the queue.
+  - Each proposal has ✓, EDIT and ✕. **CONFIRM ALL** confirms them all, and **TELL IT WHAT'S WRONG** re-files.
+  - Items have a ring to tick them done and an inline **SNOOZE** (1 D / 3 D / 1 W).
+- **Browse** has a rail: DEADLINES, PEOPLE, then your projects and courses.
+- **Agents** shows the sessions table, with the usage panel beside it.
+- **Settings** is a rail of sections, and each section saves on its own.
+
+Fonts: Roboto and Roboto Mono (OFL) are bundled in `web/fonts/`.
 
 ## Claude Code sync (`claude-sync`)
 `python -m brainhub claude-sync` keeps your own Claude Code the same on both OSes through the shared store (`/mnt/data/ClaudeShared` = `D:\ClaudeShared`). Your login, sessions, history and plugin installs stay per OS.

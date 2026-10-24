@@ -28,3 +28,26 @@ export function countdown(secs) {
   const s = Math.max(0, Math.floor(secs));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+// The dot next to a note's filing state: green once filed, grey while filing, none otherwise (a
+// failed filing shows the amber square instead, and "not filed" is plain text).
+export function noteDot(n) {
+  const f = n.filing;
+  if (!f) return null;
+  if (f === 'queued' || f === 'running') return '';
+  if (f === 'failed') return 'a';
+  return 'g';
+}
+
+// A note's or request's time, short and mono: "14:05" today, "10-21 09:00" this year, else the date
+// and time in full. Anything unparseable comes back as typed.
+export function shortWhen(iso, now) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  const pad = (n) => String(n).padStart(2, '0');
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = m[4] ? `${m[4]}:${m[5]}` : '';
+  if (`${m[1]}-${m[2]}-${m[3]}` === today && time) return time;
+  const day = m[1] === String(now.getFullYear()) ? `${m[2]}-${m[3]}` : `${m[1]}-${m[2]}-${m[3]}`;
+  return time ? `${day} ${time}` : day;
+}

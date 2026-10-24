@@ -51,3 +51,33 @@ test('statusText: an ended session shows as ended whatever its last status', () 
   assert.equal(statusText({ status: 'running', ended: true }), 'ended');
   assert.equal(statusText({ status: 'odd' }), 'odd');
 });
+
+test('statusDot: green running, amber waiting, grey otherwise, a ring once ended', async () => {
+  const { statusDot } = await import('./agents-model.js');
+  assert.equal(statusDot({ status: 'running' }), 'g');
+  assert.equal(statusDot({ status: 'waiting', ended: false }), 'a');
+  assert.equal(statusDot({ status: 'idle' }), '');
+  assert.equal(statusDot({ status: 'finished' }), '');
+  assert.equal(statusDot({ status: 'running', ended: true }), 'ring');
+});
+
+test('usedText and meterCells: the usage value and its 20 segments', async () => {
+  const { usedText, meterCells } = await import('./agents-model.js');
+  assert.equal(usedText({ used: 84.2 }), '84%');
+  assert.equal(usedText({ used: null }), '–');
+  assert.equal(usedText(null), '–');
+  assert.equal(meterCells(84.2), 17);
+  assert.equal(meterCells(0.4), 1);
+  assert.equal(meterCells(0), 0);
+  assert.equal(meterCells(null), 0);
+  assert.equal(meterCells(100), 20);
+  assert.equal(meterCells(130), 20);
+  assert.equal(meterCells(50, 10), 5);
+});
+
+test('whereText: the override, else auto with what the hooks saw', async () => {
+  const { whereText } = await import('./agents-model.js');
+  assert.equal(whereText({ where: 'terminal', where_override: null }), 'auto (terminal)');
+  assert.equal(whereText({ where: 'terminal', where_override: 'IDE' }), 'IDE');
+  assert.equal(whereText({}), 'auto (unknown)');
+});

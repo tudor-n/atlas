@@ -531,7 +531,8 @@ def install_hook(state, cur):
 
 
 SHELL_FILES = ("Cargo.toml", "Cargo.lock", "build.rs", "tauri.conf.json")
-SHELL_FOLDERS = ("capabilities", "src")
+# `../dist` is the shell's starting pages (`frontendDist`, beside `src-tauri`; phase 4.5).
+SHELL_FOLDERS = ("../dist", "capabilities", "src")
 
 
 def _raise(err):
@@ -544,9 +545,10 @@ def shell_source(live_path):
     file can't be read.
 
     Under `app/desktop/src-tauri`, the files are `Cargo.toml`, `Cargo.lock`, `build.rs` and
-    `tauri.conf.json` (each one that exists) and every file under `src/` and `capabilities/`, at
-    any depth. Each file, in order of its `/`-separated path relative to `src-tauri` (compared as
-    UTF-8 bytes), adds `<path> NUL <byte length in decimal> NUL <bytes>` to one sha256; the result
+    `tauri.conf.json` (each one that exists) and every file under `src/`, `capabilities/` and
+    `../dist/` (the starting pages), at any depth. Each file, in order of its `/`-separated path
+    relative to `src-tauri` (compared as UTF-8 bytes; a starting page's path is
+    `../dist/<name>`), adds `<path> NUL <byte length in decimal> NUL <bytes>` to one sha256; the result
     is its lowercase hex digest."""
     base = os.path.join(live_path, "app", "desktop", "src-tauri")
     try:

@@ -1,0 +1,156 @@
+/* Components: the arm UI's controls, values copied from ~/dev/RobotArmControl/index.html.
+   State changes only swap classes. Press feedback is the .prs class (js/press.js), never :active.
+   The one transition in the app is the switch knob (.sw i). */
+
+/* -- text helpers -------------------------------------------------------------------------- */
+.lb { font-weight: 600; font-size: 11px; line-height: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.m { font-family: var(--mono); font-weight: 500; }
+.big { font-family: var(--mono); font-weight: 500; font-size: 64px; line-height: 64px; letter-spacing: -.02em; }
+.hn { font-size: 12px; line-height: 12px; color: var(--faint); white-space: nowrap; }
+.d { color: var(--dim); }
+.f { color: var(--faint); }
+.amb { color: var(--amber); }
+.err { color: var(--err); }
+.read { font-size: 16px; line-height: 1.6; max-width: 72ch; }
+/* the 6×6 amber attention square (warning lines, failed rows) */
+.sq { display: inline-block; flex: none; width: 6px; height: 6px; background: var(--amber); margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
+
+/* hairline rules */
+.bl { border-left: 1px solid var(--line); }
+.br { border-right: 1px solid var(--line); }
+.bt { border-top: 1px solid var(--line); }
+.bb { border-bottom: 1px solid var(--line); }
+
+/* -- buttons ------------------------------------------------------------------------------- */
+.b {
+  display: inline-block; vertical-align: middle; height: var(--h48); line-height: 46px; padding: 0 12px;
+  border: 1px solid var(--line2); border-radius: var(--r-btn); background: var(--ground);
+  font-family: var(--sans); font-weight: 600; font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text); text-align: center; white-space: nowrap; text-decoration: none; cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+}
+/* desktop: hover lifts an outline; the state rules below win over it by order */
+@media (hover: hover) { .b:hover { border-color: var(--dim); color: var(--text); } }
+.b.pr { background: var(--text); color: var(--ground); border-color: var(--text); font-weight: 700; }
+.b.am { border-color: var(--amber); color: var(--amber); }
+.b.prs, .b.on { background: var(--text); color: var(--ground); border-color: var(--text); }
+.b.pr.prs, .b.on.prs { background: var(--pressed); border-color: var(--pressed); }
+.b.am.prs, .b.arm, .b.am.arm { background: var(--amber); color: var(--ground); border-color: var(--amber); }
+.b.dis, .b:disabled, .b.dis:hover, .b:disabled:hover {
+  color: var(--line2); border-color: var(--line); background: var(--ground); cursor: default;
+}
+.b.h40 { height: var(--h40); line-height: 38px; }
+.b.h52 { height: var(--h52); line-height: 50px; padding: 0 20px; }
+input.h40, select.h40 { height: var(--h40); }
+input.h52, select.h52 { height: var(--h52); }
+
+/* -- switch: the button is the hit area; only the knob moves ------------------------------ */
+.swb { display: inline-flex; align-items: center; gap: 12px; min-height: var(--h40); padding: 0; cursor: pointer; }
+.swb:disabled { cursor: default; }
+.sw { position: relative; display: inline-block; flex: none; width: 56px; height: 30px; border-radius: 15px; background: var(--line); border: 1px solid var(--line2); }
+.sw i { position: absolute; left: 2px; top: 2px; width: 24px; height: 24px; border-radius: 12px; background: var(--text); transition: left 120ms linear; }
+.swb[aria-checked="true"] > .sw, .on > .sw { background: var(--green); border-color: var(--green); }
+.swb[aria-checked="true"] > .sw i, .on > .sw i { background: var(--ground); left: 28px; }
+.sw.s2 { width: 48px; height: 26px; border-radius: 13px; }
+.sw.s2 i { width: 20px; height: 20px; border-radius: 10px; }
+.swb[aria-checked="true"] > .sw.s2, .on > .sw.s2 { background: var(--text); border-color: var(--text); }
+.swb[aria-checked="true"] > .sw.s2 i, .on > .sw.s2 i { left: 24px; }
+.swb:disabled > .sw { background: var(--ground); border-color: var(--line); }
+.swb:disabled > .sw i { background: var(--line2); }
+@media (prefers-reduced-motion: reduce) { .sw i { transition: none; } }
+
+/* -- chip, dot, readout -------------------------------------------------------------------- */
+.chip {
+  display: inline-flex; align-items: center; height: 28px; padding: 0 10px; flex: none;
+  border: 1px solid var(--amber); border-radius: var(--r-btn); color: var(--amber);
+  font-weight: 600; font-size: 11px; line-height: 26px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+}
+.chip::before { content: ""; flex: none; width: 6px; height: 6px; background: var(--amber); margin-right: 8px; }
+.dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 4px; background: var(--faint); margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
+.dot.g { background: var(--green); }
+.dot.a { background: var(--amber); }
+.dot.ring { background: var(--ground); border: 1px solid var(--faint); }
+/* a status line next to a dot: mono 12 dim */
+.dl { display: inline-flex; align-items: center; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 12px; color: var(--dim); white-space: nowrap; }
+/* readout: a dim label, then a white mono value */
+.ro { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 12px; color: var(--dim); white-space: nowrap; }
+.ro .v { color: var(--text); }
+.ro.warn .v { color: var(--amber); }
+
+/* -- list rows ----------------------------------------------------------------------------- */
+.row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: var(--h52); padding: 8px 20px;
+  border-bottom: 1px solid var(--sub); background: var(--ground); color: var(--text); text-align: left;
+}
+button.row, .row[data-press] { cursor: pointer; }
+@media (hover: hover) { button.row:hover, .row[data-press]:hover { background: var(--key); } }
+.row.prs { background: var(--sub); }
+.row.cur { background: var(--text); color: var(--ground); font-weight: 600; border-bottom-color: var(--text); }
+.row.cur .lb, .row.cur .m, .row.cur .d, .row.cur .f, .row.cur .hn, .row.cur .dl { color: var(--ground); }
+.row.cur .dot { display: none; }
+.row.cur.prs { background: var(--pressed-row); border-bottom-color: var(--pressed-row); }
+.row:disabled { color: var(--line2); cursor: default; }
+.row > .dot { margin-right: 0; }
+.row .grow { flex: 1 1 auto; min-width: 0; }
+.row .sb { margin-left: auto; font-family: var(--mono); font-weight: 500; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.empty { display: flex; align-items: center; min-height: var(--h52); padding: 8px 20px; border-bottom: 1px solid var(--sub); color: var(--faint); }
+
+/* -- segmented control: one bordered box, the selected cell is white ------------------------ */
+.seg { display: inline-flex; height: var(--h48); border: 1px solid var(--line2); border-radius: var(--r-btn); overflow: hidden; vertical-align: middle; }
+.seg > button { min-width: 60px; height: 100%; padding: 0 12px; font-size: 13px; color: var(--text); background: var(--ground); text-align: center; white-space: nowrap; }
+@media (hover: hover) { .seg > button:hover { background: var(--key); } }
+.seg > button.sel, .seg > button[aria-pressed="true"] { background: var(--text); color: var(--ground); }
+.seg > button.prs { background: var(--line2); color: var(--text); }
+.seg > button:disabled { color: var(--line2); background: var(--ground); }
+.seg.h40 { height: var(--h40); }
+
+/* -- panels, rails, section headers -------------------------------------------------------- */
+.panel { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--ground); }
+.rail { flex: none; width: var(--rail); border-right: 1px solid var(--line); overflow-y: auto; }
+/* a navigation rail's own rows (direct children: Browse, Settings) read as tabs: 600 13px .1em uppercase */
+.rail > .row { font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+.rail > a.row { color: var(--text); text-decoration: none; }
+.rail > a.row:hover { color: var(--text); }
+.rail > a.row.cur, .rail > a.row.cur:hover { color: var(--ground); }
+/* the one left gutter (20px, the arm's): headers, rows, fields and text all start on it */
+.sect-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--h40); padding: 0 20px; border-bottom: 1px solid var(--line); }
+.sect-h .n { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--dim); white-space: nowrap; }
+
+/* -- select: a field with a CSS-drawn caret (selectBox() in ui.js wraps the <select> in .sel) --- */
+.sel { position: relative; display: inline-block; vertical-align: middle; max-width: 100%; }
+.sel > select { -webkit-appearance: none; appearance: none; width: 100%; padding-right: 34px; cursor: pointer; }
+.sel > select:disabled { cursor: default; }
+.sel::after {
+  content: ""; position: absolute; right: 13px; top: 50%; margin-top: -2px; width: 0; height: 0; pointer-events: none;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--dim);
+}
+.sel:focus-within::after { border-top-color: var(--text); }
+.sel.dis::after { border-top-color: var(--line2); }
+.sel > select option { background: var(--ground); color: var(--text); }
+
+/* -- tabs: 3px white underline on the selected one ---------------------------------------- */
+.tabs { display: flex; align-items: stretch; height: 55px; white-space: nowrap; }
+.tab {
+  position: relative; display: inline-flex; align-items: center; height: 100%; padding: 0 22px;
+  font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+@media (hover: hover) { .tab:hover { color: var(--text); } }
+.tab.sel, .tab.prs, .tab[aria-current="page"] { color: var(--text); }
+.tab.sel::after, .tab[aria-current="page"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--text); }
+
+/* -- segmented progress bar: 4px cells on a 3px gap, white done, amber at the warn level ---- */
+.meter4 { display: flex; gap: 3px; width: 100%; height: 4px; }
+.meter4 > i { flex: 1 1 0; height: 4px; background: var(--line); }
+.meter4 > i.on { background: var(--text); }
+.meter4.warn > i.on { background: var(--amber); }
+
+/* -- notice: an amber outline panel with its square ---------------------------------------- */
+.notice { padding: 18px 20px; border: 1px solid var(--amber); border-radius: var(--r-card); background: var(--ground); }
+.notice .lb { display: flex; align-items: center; color: var(--amber); font-size: 12px; line-height: 12px; }
+.notice .lb::before { content: ""; flex: none; width: 6px; height: 6px; background: var(--amber); margin-right: 8px; }
+.notice p { margin-top: 8px; font-size: 15px; line-height: 21px; }
+.notice > p:first-child { margin-top: 0; }
+
+/* the aria-live region press.js uses to announce "TAP AGAIN" (visually hidden) */
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

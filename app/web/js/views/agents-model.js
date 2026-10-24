@@ -50,3 +50,30 @@ export function resetText(w, now) {
   const min = Math.max(0, Math.floor((at.getTime() - now.getTime()) / 60000));
   return `resets ${clock} (in ${span(min)})`;
 }
+
+// The status dot (phase 4.5 design §4): green running, amber waiting, grey ready or finished, and a
+// hollow ring once the session has ended, whatever its last status.
+export function statusDot(row) {
+  if (row.ended) return 'ring';
+  if (row.status === 'running') return 'g';
+  if (row.status === 'waiting') return 'a';
+  return '';
+}
+
+// A usage window's value: "84%", or "–" when there is no reading.
+export function usedText(w) {
+  const used = w && w.used != null && Number.isFinite(Number(w.used)) ? Math.round(Number(w.used)) : null;
+  return used == null ? '–' : `${used}%`;
+}
+
+// How many of a meter's segments a used percentage lights: any use lights at least one, 100% all.
+export function meterCells(used, segments = 20) {
+  const u = Number(used);
+  if (used == null || !Number.isFinite(u) || u <= 0) return 0;
+  return Math.min(segments, Math.ceil((u / 100) * segments));
+}
+
+// The WHERE cell's value: the owner's override, else `auto (<what the hooks saw>)`.
+export function whereText(row) {
+  return row.where_override ? String(row.where_override) : `auto (${row.where || 'unknown'})`;
+}

@@ -57,7 +57,7 @@ def synopsis(today: dict, review: dict, waiting: list[dict], usage: dict, agents
         parts.append(f"1 waiting on {w.get('name') or w.get('person') or 'someone'}")
     elif waiting:
         parts.append(f"{len(waiting)} waiting")
-    rv = review.get("proposals", 0) + review.get("failed", 0)
+    rv = review.get("entries", review.get("proposals", 0) + review.get("failed", 0))
     if rv > 0:
         parts.append(f"{rv} to review")
     if requests:  # an agent asked for workbench measurements (phase 3)
@@ -77,7 +77,8 @@ def build_widget(app_state: dict) -> dict:
     items, settings, bmap = app_state["items"], app_state["settings"], app_state.get("map")
     now: datetime = app_state["now"]
     usage, rows = app_state["usage"], app_state["agents"]
-    review = {"proposals": app_state["proposals"], "failed": app_state["failed"]}
+    review = {"proposals": app_state["proposals"], "failed": app_state["failed"],
+              "entries": app_state.get("entries", app_state["proposals"] + app_state["failed"])}
     today = compute_today(items, [None] * review["proposals"], [None] * review["failed"],
                           now, settings["nudge_days"])
     names = {p["slug"]: p.get("name") or p["slug"] for p in (bmap.people if bmap else [])}

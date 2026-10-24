@@ -52,7 +52,7 @@ def test_build_widget_shapes():
     dues = [d["due"] for d in w["deadlines"]]
     assert len(dues) == 6 and dues == sorted(dues) and dues[0] == "2026-10-19"
     assert w["projects"] == [{"slug": "robotarm", "name": "RobotArm", "open": 3, "next_time": 1}]
-    assert w["review"] == {"proposals": 1, "failed": 0}
+    assert w["review"] == {"proposals": 1, "failed": 0, "entries": 1}
     assert w["arm"] == {"url": "http://127.0.0.1:8080", "reachable": True}
     assert w["synopsis"].startswith("2 due today (1 overdue) · 1 waiting on Teammate A")
 
@@ -159,3 +159,10 @@ def test_synopsis_counts_measurement_requests():
     """Phase 3: an agent asked for workbench measurements; the owner should notice at the PC too."""
     assert synopsis({"overdue": [], "due_today": []}, NO_REVIEW, [], NO_USAGE, NO_AGENTS, 1) == "1 request"
     assert synopsis({"overdue": [], "due_today": []}, NO_REVIEW, [], NO_USAGE, NO_AGENTS, 2) == "2 requests"
+
+
+def test_review_counts_entries_like_today(tmp_path):
+    """The widget and the top bar count what Today's TO REVIEW counts: entries, not proposals."""
+    from brainhub.widget import synopsis
+    review = {"proposals": 14, "failed": 2, "entries": 7}
+    assert "7 to review" in synopsis({"overdue": [], "due_today": []}, review, [], {}, {})

@@ -1,8 +1,17 @@
-// Confirm card (spec 5.3): what was filed, one row per proposal, confirm / edit / dismiss,
-// "Confirm all", "Tell it what's wrong", and Retry for failed filings.
+// Confirm card (spec 5.3; phase 4.5 design §4): what was filed, one row per proposal, confirm / edit /
+// dismiss, "Confirm all", "Tell it what's wrong", and Retry for failed filings.
+// Layout: a header row (date, synopsis, status readout; HIDE and × in the tray), FILED TO, proposal
+// rows (a 104px kind column, the text and a mono meta line, amber warnings, ✓ EDIT ✕), and an action
+// bar (TELL IT WHAT'S WRONG, then CONFIRM ALL, the one primary, rightmost; the correction folds under
+// it). In the tray the card rests as one compact 52px row; REVIEW opens the full card, or, while Today
+// has that entry in its queue, opens Today's review pop-up on it (one live full card per entry). Every card reloads on
+// items.changed, so it never offers a proposal that was handled elsewhere. Styles: css/views/today.css.
 import * as api from '../api.js';
-import { el, clear, fmtWhen } from '../dom.js';
-import { filingStatus } from './filing-status.js';
+import { el, clear } from '../dom.js';
+import { twice } from '../press.js';
+import { button, chip, dot, label } from './ui.js';
+import { filingStatus, filingReadout } from './filing-status.js';
+import { entryStamp, firstWords, shortWhen, mapNames, nameIn, stillProposed } from '../views/today-model.js';
 
 // -- map cache (project options) ------------------------------------------------------------
 let mapCache = null;
@@ -57,22 +66,86 @@ function orderProposals(proposals) {
   return out;
 }
 
-// Per-entry UI drafts (typed correction, open edit and its field values, last message). They live
-// outside the card so a re-render, reload or recreated card never loses what the owner typed.
+// -- one full card per entry ----------------------------------------------------------------
+// Today's selected card (in its review pop-up) is a full card outside the tray. While it exists for an
+// entry, the tray's card for that entry rests compact, and its REVIEW asks Today (setReviewHandler) to
+// open the pop-up on that entry instead of opening a second full card.
+const fullCards = new Map();   // entry id -> how many full (non-tray) cards are live for it
+const trayWatch = new Set();   // tray cards' callbacks: (entryId) => void, run when fullCards changes
+let reviewHandler = null;      // (entryId) => true when the view took the review (Today)
+
+function claim(entryId, delta) {
+  const n = (fullCards.get(entryId) || 0) + delta;
+  if (n > 0) fullCards.set(entryId, n); else fullCards.delete(entryId);
+  for (const f of [...trayWatch]) f(entryId);
+}
+
+// Today sets this while it is the current view; the returned function clears it again.
+export function setReviewHandler(fn) {
+  reviewHandler = fn;
+  return () => { if (reviewHandler === fn) reviewHandler = null; };
+}
+
+// Ask the current view to open its review (Today's pop-up): entryId selects that entry, null keeps
+// the current selection (the top bar's REVIEW n). True when the view took it.
+export function requestReview(entryId = null) {
+  return !!(reviewHandler && reviewHandler(entryId));
+}
+
+// -- a redraw waits for the press -----------------------------------------------------------
+// A redraw at pointer-down (a field's blur) would replace the button under the pointer before the
+// click lands, so a deferred redraw runs after the click (or 400 ms, when the press makes none).
+let pressing = false;
+const afterPress = [];
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', () => { pressing = true; }, true);
+  const released = () => {
+    pressing = false;
+    if (!afterPress.length) return;
+    const fns = afterPress.splice(0);
+    let done = false;
+    const go = () => { if (!done) { done = true; for (const f of fns) f(); } };
+    document.addEventListener('click', () => setTimeout(go, 0), { capture: true, once: true });
+    setTimeout(go, 400);
+  };
+  document.addEventListener('pointerup', released, true);
+  document.addEventListener('pointercancel', released, true);
+}
+export function whenFree(fn) {
+  if (pressing) afterPress.push(fn); else setTimeout(fn, 0);
+}
+
+const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+
+const badUpdate = (p) => p.ptype === 'update' && ((p.warnings || []).some((w) => /unknown item/i.test(w)) || !p.payload.item_id);
+
+// Per-entry UI drafts (typed correction, open edit and its field values, last message, whether the
+// correction box and the tray card are open). They live outside the card so a re-render, reload or
+// recreated card never loses what the owner typed.
 const drafts = new Map();
 function draftFor(entryId) {
-  if (!drafts.has(entryId)) drafts.set(entryId, { correction: '', editing: null, edits: {}, msg: '' });
+  if (!drafts.has(entryId)) {
+    drafts.set(entryId, { correction: '', editing: null, edits: {}, msg: '', fixOpen: false, expanded: false });
+  }
   return drafts.get(entryId);
 }
 
-// `blocked()` returns why confirming can't work right now (a read-only root), or ''.
-export function confirmCard(entryId, { entryText, onChange, onClose, blocked = () => '' } = {}) {
-  const root = el('section', { class: 'card', 'aria-label': 'Filing review' });
+// `blocked()` returns why writing can't work right now (a read-only root), or ''.
+// `onClose` (the tray's ×) also makes the card compact unless `compact: false` is passed.
+export function confirmCard(entryId, { entryText, onChange, onClose, blocked = () => '', compact = !!onClose } = {}) {
+  const root = el('section', { class: compact ? 'cc tray' : 'cc', 'aria-label': 'Filing review' });
   const s = {
     data: null, map: null, items: {}, loadError: '', notice: '', busy: false,
     progress: null,  // while filing: {started, step}, from the card's load and filing.progress
     draft: draftFor(entryId),
+    focus: null,     // data-k of the control to focus after the next draw
+    stale: false,    // a background redraw is waiting for the owner to leave a field
+    take: false,     // the pending focus is the owner's move to this card (focusFirst): it may take
+                     // the keyboard from elsewhere (the tray's REVIEW button)
   };
+  const tray = compact;  // a tray card (else a full card: Today's)
+  // A draft from before (a reload, a recreated card) opens the correction box again.
+  if (s.draft.correction) s.draft.fixOpen = true;
   const unsubs = [];
   let destroyed = false;
 
@@ -86,6 +159,20 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     tick();
   }));
   unsubs.push(api.onEvent('ws.open', () => reload()));
+  // A confirm or dismiss anywhere (this card, the other card for the entry, another tab, the tablet)
+  // changes which proposals are left; the event names no entry, so every card checks its own.
+  unsubs.push(api.onEvent('items.changed', () => reload()));
+  if (tray) {
+    const watch = (id) => {
+      if (id !== entryId || !fullCards.get(entryId) || !s.draft.expanded) return;
+      s.draft.expanded = false;  // the entry's full card is open on Today: rest compact here
+      render();
+    };
+    trayWatch.add(watch);
+    unsubs.push(() => trayWatch.delete(watch));
+  } else {
+    claim(entryId, 1);
+  }
 
   // Events can trigger reloads milliseconds apart (filing.started, then a fast filing.failed): only
   // the latest request may draw, or a stale "running" answer would leave the card counting forever.
@@ -110,10 +197,12 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       if (mineLoad !== loads) return;
       s.loadError = e.message;
     }
-    if (!destroyed && mineLoad === loads) render();
+    if (!destroyed && mineLoad === loads) render({ background: true });
   }
 
   const pending = () => (s.data ? s.data.proposals.filter((p) => p.status === 'proposed') : []);
+  const filingState = () => (s.data && s.data.filing ? s.data.filing.status : '');
+  const refiling = () => ['queued', 'running'].includes(filingState());
 
   // One action at a time: the row and card buttons stay disabled until the server answers.
   async function act(fn, errPrefix) {
@@ -132,79 +221,165 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     if (onChange) onChange();
   }
 
-  const confirmIds = (ids) => act(() => api.post('/api/proposals/confirm', { ids }), "Couldn't confirm");
-  const dismissIds = (ids) => act(() => api.post('/api/proposals/dismiss', { ids }), "Couldn't dismiss");
+  // Only ids still to confirm in the latest load are sent: one handled meanwhile would make the server
+  // refuse the whole batch ("unknown or already handled proposal").
+  const live = (ids) => stillProposed(ids, s.data ? s.data.proposals : []);
+  const confirmIds = (ids) => act(async () => {
+    const send = live(ids);
+    if (send.length) await api.post('/api/proposals/confirm', { ids: send });
+  }, "Couldn't confirm");
+  const dismissIds = (ids) => act(async () => {
+    const send = live(ids);
+    if (send.length) await api.post('/api/proposals/dismiss', { ids: send });
+  }, "Couldn't dismiss");
+
+  // A button with a key, so the same control gets the focus back after a redraw.
+  const keyed = (node, key, aria) => {
+    node.dataset.k = key;
+    if (aria) node.setAttribute('aria-label', aria);
+    return node;
+  };
+
+  // -- header and the compact tray row -------------------------------------------------------
+  function synopsisText() {
+    const f = s.data && s.data.filing;
+    return (f && f.synopsis) || firstWords(entryText) || `Entry ${entryStamp(entryId) || entryId}`;
+  }
+
+  const ticking = { head: null, line: null, mini: null };  // the parts tick() updates while filing
+
+  function readout() {
+    const f = s.data && s.data.filing;
+    return filingReadout(f ? f.status : '', s.progress, Date.now(), pending().length);
+  }
+
+  function statusNode() {
+    const r = readout();
+    if (r.state === 'failed') return chip('Failed', { title: (s.data.filing.error || '').slice(0, 300) || null });
+    if (r.state === 'filed') return el('span', { class: 'dl cc-st' }, dot('g'), 'FILED');
+    if (r.state === 'queued') return el('span', { class: 'dl cc-st' }, dot('ring'), r.text);
+    if (r.state === 'filing') {
+      ticking.head = el('span', {}, r.text);
+      return el('span', { class: 'dl cc-st', 'aria-hidden': 'true' }, dot(''), ticking.head);
+    }
+    return null;
+  }
+
+  function closeButton() {
+    return keyed(button('×', { size: 40, cls: 'x', title: 'Close', onclick: onClose }), 'close', 'Close card');
+  }
+
+  function header() {
+    const stamp = entryStamp(entryId);
+    return el('div', { class: 'cc-h' },
+      stamp ? el('span', { class: 'm dt' }, stamp) : null,
+      el('span', { class: 'syn' }, synopsisText()),
+      statusNode(),
+      compact ? keyed(button('Hide', { size: 40, onclick: () => { s.draft.expanded = false; s.focus = 'review'; render(); } }), 'hide') : null,
+      compact && onClose ? closeButton() : null);
+  }
+
+  function compactRow() {
+    const r = readout();
+    const mark = r.state === 'failed' ? el('span', { class: 'sq', title: 'Filing failed' })
+      : r.state === 'filed' ? dot(pending().length ? 'a' : 'g')
+        : r.state === 'queued' ? dot('ring') : dot('');
+    let progress = r.text;
+    if (r.state === 'filing') {
+      const st = filingStatus('running', s.progress, Date.now());
+      progress = st.elapsed ? `${st.text} · ${st.elapsed}` : st.text;
+    }
+    if (!s.data && !s.loadError) progress = 'Loading…';
+    if (s.loadError) progress = "Couldn't load";
+    ticking.mini = el('span', { class: r.state === 'failed' || s.loadError ? 'm pg amb' : 'm pg' }, progress);
+    return el('div', { class: 'cc-min' },
+      mark,
+      el('span', { class: 'syn' }, synopsisText()),
+      ticking.mini,
+      keyed(button('Review', { size: 40, onclick: () => {
+        // Today has this entry in its queue: its pop-up opens on it rather than a second card here.
+        if (requestReview(entryId)) return;
+        s.draft.expanded = true; s.focus = 'hide'; render();
+      } }), 'review'),
+      onClose ? closeButton() : null);
+  }
 
   // -- rows ---------------------------------------------------------------------------------
   function dateLine(pl, kind) {
     const bits = [];
-    if (pl.due) bits.push(`due ${fmtWhen(pl.due)}`);
-    if (pl.remind_at) bits.push(`remind ${fmtWhen(pl.remind_at)}`);
+    if (pl.due) bits.push(`due ${shortWhen(pl.due)}`);
+    if (pl.remind_at) bits.push(`remind ${shortWhen(pl.remind_at)}`);
     if (kind === 'next_time') bits.push('next session');
     if (kind === 'waiting') bits.push(`waiting since ${entryDate(entryId) || 'now'}`);
     return bits.join(' · ');
   }
 
   function warnings(p) {
-    return (p.warnings || []).map((w) => el('div', { class: 'warn', role: 'note' }, `⚠ ${w}`));
+    return (p.warnings || []).map((w) => el('div', { class: 'warn', role: 'note' }, el('span', { class: 'sq' }), w));
   }
 
   function actions(p, canConfirm) {
-    const f = s.data && s.data.filing;
-    if (f && (f.status === 'queued' || f.status === 'running')) canConfirm = false;  // re-filing
+    if (refiling()) canConfirm = false;
     const reason = blocked();
-    return el('div', { class: 'row-actions' },
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Confirm', title: reason || 'Confirm',
-        disabled: !canConfirm || !!reason || s.busy || null, onclick: () => confirmIds([p.id]) }, '✓'),
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Edit', title: 'Edit', disabled: s.busy || null,
-        onclick: () => { s.draft.editing = p.id; render(); } }, '✎'),
-      el('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss', disabled: s.busy || null,
-        onclick: () => dismissIds([p.id]) }, '✕'));
+    const ok = keyed(button('✓', { size: 40, title: reason || 'Confirm', disabled: !canConfirm || !!reason || s.busy,
+      onclick: () => { s.focus = 'first'; confirmIds([p.id]); } }), `ok:${p.id}`, 'Confirm');
+    const edit = keyed(button('Edit', { size: 40, title: reason || null, disabled: !!reason || s.busy,
+      onclick: () => { s.draft.editing = p.id; s.focus = `edit:${p.id}`; render(); } }), `ed:${p.id}`);
+    const no = keyed(button('✕', { size: 40, cls: 'no', title: reason || 'Dismiss (press twice)', disabled: !!reason || s.busy }),
+      `no:${p.id}`, 'Dismiss');
+    twice(no, { onGo: () => { s.focus = 'first'; dismissIds([p.id]); } });
+    return el('div', { class: 'acts' }, ok, edit, no);
+  }
+
+  function propRow(kind, main, meta, p, canConfirm) {
+    return el('li', { class: 'pp' },
+      el('span', { class: 'k lb' }, kind),
+      el('div', { class: 'grow' },
+        el('div', { class: 't' }, main),
+        meta ? el('div', { class: 'mt' }, meta) : null,
+        warnings(p)),
+      actions(p, canConfirm));
+  }
+
+  // A slug's name from the map, looked up in its own kind (a new node proposed on this card keeps its
+  // slug).
+  function nameOf(kind, slug) {
+    if (!slug) return '';
+    return nameIn(mapNames(s.map), kind, slug);
   }
 
   function itemRow(p) {
     const pl = p.payload;
-    const where = [pl.area, pl.project, pl.person].filter(Boolean).join(' / ');
-    return el('li', { class: 'row' },
-      el('div', { class: 'row-main' },
-        el('div', {}, el('span', { class: 'badge' }, KIND_LABEL[pl.kind] || pl.kind || 'item'), pl.text),
-        el('div', { class: 'meta' }, [where, dateLine(pl, pl.kind)].filter(Boolean).join(' · ')),
-        warnings(p)),
-      actions(p, true));
+    const where = [pl.project ? nameOf('project', pl.project) : nameOf('area', pl.area), nameOf('person', pl.person)]
+      .filter(Boolean).join(' / ');
+    return propRow(KIND_LABEL[pl.kind] || pl.kind || 'item', pl.text,
+      [where, dateLine(pl, pl.kind)].filter(Boolean).join(' · '), p, true);
   }
 
   function nodeRow(p) {
     const pl = p.payload;
-    return el('li', { class: 'row' },
-      el('div', { class: 'row-main' },
-        el('div', {}, el('span', { class: 'badge new' }, `new ${pl.type || 'node'}`), pl.name),
-        pl.parent ? el('div', { class: 'meta' }, `under ${pl.parent}`) : null,
-        warnings(p)),
-      actions(p, true));
+    return propRow(`new ${pl.type || 'node'}`, pl.name, pl.parent ? `under ${pl.parent}` : '', p, true);
   }
 
   function updateRow(p) {
     const pl = p.payload;
     const item = s.items[pl.item_id];
-    const label = pl.status === 'done' ? 'Mark done' : pl.status === 'to_read' ? 'Move to "to read"' : `Set ${pl.status}`;
-    const bad = (p.warnings || []).some((w) => /unknown item/i.test(w)) || !pl.item_id;
-    return el('li', { class: 'row' },
-      el('div', { class: 'row-main' },
-        el('div', {}, el('span', { class: 'badge' }, 'update'), `${label}: `, item ? item.text : (pl.item_id || '(no item)')),
-        warnings(p)),
-      actions(p, !bad));
+    const what = pl.status === 'done' ? 'Mark done' : pl.status === 'to_read' ? 'Move to "to read"' : `Set ${pl.status}`;
+    return propRow('update', `${what}: ${item ? item.text : (pl.item_id || '(no item)')}`,
+      pl.note || '', p, !badUpdate(p));
   }
 
   // -- inline edit --------------------------------------------------------------------------
-  function field(label, control, wide) {
-    const id = `f-${Math.random().toString(36).slice(2, 8)}`;
+  function field(text, control, wide) {
+    const id = control.id || `f-${Math.random().toString(36).slice(2, 8)}`;
     control.id = id;
-    return el('div', { class: wide ? 'wide' : null }, el('label', { for: id }, label), control);
+    control.classList.add('h40');
+    return el('div', { class: wide ? 'fld wide' : 'fld' }, el('label', { class: 'lb', for: id }, text), control);
   }
 
   function select(options, current) {
     const sel = el('select', {});
-    for (const [value, label] of options) sel.appendChild(el('option', { value, selected: value === current || null }, label));
+    for (const [value, text] of options) sel.appendChild(el('option', { value, selected: value === current || null }, text));
     return sel;
   }
 
@@ -212,7 +387,9 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     const pl = p.payload;
     const saved = s.draft.edits[p.id] || (s.draft.edits[p.id] = {});
     // Field values are mirrored into the draft as they change, so a redraw restores them.
+    // Every field has a stable key (data-k), so a redraw gives the focus back to the same field.
     const track = (key, ctrl) => {
+      ctrl.dataset.k = `f:${p.id}:${key}`;
       if (saved[key] !== undefined) ctrl.value = saved[key];
       const store = () => { saved[key] = ctrl.value; };
       ctrl.addEventListener('input', store);
@@ -220,11 +397,13 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       return ctrl;
     };
     const close = () => { s.draft.editing = null; delete s.draft.edits[p.id]; };
-    const cancel = () => { close(); render(); };
-    const keys = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); cancel(); } };
+    const cancel = () => { close(); s.focus = `ed:${p.id}`; render(); };
+    const keys = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cancel(); } };
     let controls;
     let collect;
+    let kindText = 'update';
     if (p.ptype === 'item') {
+      kindText = KIND_LABEL[pl.kind] || pl.kind || 'item';
       const text = track('text', el('input', { type: 'text', value: pl.text || '' }));
       const kind = track('kind', select(KINDS.map((k) => [k, KIND_LABEL[k]]), pl.kind));
       const map = s.map || {};
@@ -260,6 +439,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
         return patch;
       };
     } else if (p.ptype === 'node') {
+      kindText = `new ${pl.type || 'node'}`;
       const name = track('name', el('input', { type: 'text', value: pl.name || '' }));
       controls = [field('Name', name, true)];
       collect = () => (name.value !== (pl.name || '') ? { name: name.value } : {});
@@ -268,8 +448,10 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       controls = [field('New status', status)];
       collect = () => (status.value !== pl.status ? { status: status.value } : {});
     }
-    const errBox = el('div', { class: 'error', role: 'alert' });
-    const saveBtn = el('button', { class: 'primary', type: 'button', onclick: async () => {
+    controls[0].querySelector('input, select').dataset.k = `edit:${p.id}`;  // what EDIT focuses
+    const errBox = el('div', { class: 'err cc-err', role: 'alert' });
+    const reason = blocked();
+    const saveBtn = keyed(button('Save', { primary: true, size: 40, title: reason || null, disabled: !!reason, onclick: async () => {
       const patch = collect();
       if (Object.keys(patch).length === 0) { cancel(); return; }
       saveBtn.disabled = true;
@@ -277,49 +459,89 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
         await api.patch(`/api/proposals/${encodeURIComponent(p.id)}`, patch);
         close();
         s.draft.msg = '';
+        s.focus = `ed:${p.id}`;
         await reload();
       } catch (e) {
         errBox.textContent = `Not saved: ${e.message}`;
         saveBtn.disabled = false;
       }
-    } }, 'Save');
-    return el('li', { class: 'row', onkeydown: keys },
-      el('div', { class: 'row-main' },
-        el('div', { class: 'edit-grid' }, controls),
-        el('div', { class: 'row-actions' }, saveBtn, el('button', { type: 'button', onclick: cancel }, 'Cancel')),
+    } }), `save:${p.id}`);
+    // Enter in a one-line field saves, as a form would.
+    const enter = (ev) => {
+      if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && !ev.isComposing) { ev.preventDefault(); saveBtn.click(); }
+    };
+    return el('li', { class: 'pp ed', onkeydown: (ev) => { keys(ev); enter(ev); } },
+      el('span', { class: 'k lb' }, kindText),
+      el('div', { class: 'grow' },
+        el('div', { class: 'eg' }, controls),
+        // CANCEL, then SAVE (the primary) on the right, as in every action bar.
+        el('div', { class: 'eb' }, keyed(button('Cancel', { size: 40, onclick: cancel }), `cancel:${p.id}`), saveBtn),
         errBox));
   }
 
-  // -- correction and retry -----------------------------------------------------------------
-  function correctionBox() {
-    const ta = el('textarea', { id: `fix-${entryId}`, rows: 2, placeholder: 'e.g. the present is for the 12th',
+  // -- footer: confirm all, and the correction folded behind TELL IT WHAT'S WRONG ------------
+  function footer(list) {
+    const reason = blocked();
+    const bar = el('div', { class: 'actbar cc-bar' });
+    const open = s.draft.fixOpen;
+    // Stays an outline while open (a white fill beside CONFIRM ALL would read as a second primary).
+    const tell = keyed(button("Tell it what's wrong", { onclick: () => {
+      s.draft.fixOpen = !s.draft.fixOpen;
+      s.focus = s.draft.fixOpen ? 'fix' : 'tell';
+      render();
+    } }), 'tell');
+    tell.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tell.setAttribute('aria-controls', `fixbox-${entryId}`);
+    bar.append(tell, el('span', { class: 'grow' }));
+    if (list.length > 0) {
+      // The card's one primary, rightmost. It sends what the card shows that is still to confirm.
+      const ok = list.filter((p) => !badUpdate(p));
+      bar.appendChild(keyed(button(s.busy ? 'Working…' : 'Confirm all', { primary: true, title: reason || null,
+        disabled: ok.length === 0 || !!reason || s.busy || refiling(),
+        onclick: () => { s.focus = 'first'; confirmIds(ok.map((p) => p.id)); } }), 'all'));
+    }
+    return [bar, open ? correctionBox(reason) : null];
+  }
+
+  function correctionBox(reason) {
+    const ta = el('textarea', { id: `fix-${entryId}`, rows: 3, placeholder: 'e.g. the present is for the 12th',
       oninput: () => { s.draft.correction = ta.value; } });
+    ta.dataset.k = 'fix';
     ta.value = s.draft.correction;
-    const err = el('div', { class: 'error', role: 'alert' });
-    const btn = el('button', { type: 'button', onclick: async () => {
+    const err = el('div', { class: 'err cc-err', role: 'alert' });
+    const btn = keyed(button('Re-file', { title: reason || 'Re-file with this correction', disabled: !!reason, onclick: async () => {
       const text = ta.value.trim();
-      if (!text) return;
+      if (!text) { ta.focus(); return; }
       btn.disabled = true;
       err.textContent = '';
       try {
         await api.post(`/api/filings/${encodeURIComponent(entryId)}/correct`, { text });
         s.draft.correction = '';
+        s.draft.fixOpen = false;
         ta.value = '';
         s.notice = 'Re-filing with your correction…';
+        s.focus = 'tell';  // the box folds: the keyboard goes back to its button
         await reload();  // now queued: the old rows (and their ✓) are gone until the new card
       } catch (e) {
         err.textContent = e.status === 409 ? 'Still filing, try again in a moment' : `Couldn't send the correction: ${e.message}`;
       } finally {
-        btn.disabled = false;
+        btn.disabled = !!reason;
       }
-    } }, 'Re-file with this correction');
-    return el('div', {}, el('label', { for: ta.id }, "Tell it what's wrong"), ta,
-      el('div', { class: 'actions' }, btn), err);
+    } }), 'refile', 'Re-file with this correction');
+    const keys = (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); s.draft.fixOpen = false; s.focus = 'tell'; render(); }
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); btn.click(); }
+    };
+    return el('div', { class: 'cc-fix', id: `fixbox-${entryId}`, onkeydown: keys },
+      el('label', { class: 'lb', for: ta.id }, "What's wrong"),
+      el('div', { class: 'fx' }, ta, btn),
+      err);
   }
 
-  function retryBox(filing) {
-    const err = el('div', { class: 'error', role: 'alert' });
-    const btn = el('button', { class: 'primary', type: 'button', onclick: async () => {
+  function failBox(filing) {
+    const reason = blocked();
+    const err = el('div', { class: 'err cc-err', role: 'alert' });
+    const btn = keyed(button('Retry', { primary: true, title: reason || null, disabled: !!reason, onclick: async () => {
       btn.disabled = true;
       try {
         await api.post(`/api/filings/${encodeURIComponent(entryId)}/retry`, {});
@@ -329,87 +551,148 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
         err.textContent = e.status === 409 ? 'Still filing, try again in a moment' : `Couldn't retry: ${e.message}`;
         btn.disabled = false;
       }
-    } }, 'Retry');
-    return el('div', {},
-      el('div', { class: 'error', role: 'alert' }, `Filing failed: ${filing.error || 'unknown error'}`),
-      entryText ? el('p', { class: 'meta' }, `Your text is safe in the log: ${entryText}`) : el('p', { class: 'meta' }, 'Your text is safe in the log.'),
-      btn, err);
+    } }), 'retry');
+    return [
+      el('div', { class: 'cc-fail' },
+        el('p', { class: 'err', role: 'alert' }, `Filing failed: ${filing.error || 'unknown error'}`),
+        el('p', { class: 'safe' }, 'Your text is safe in the log.'),
+        entryText ? el('p', { class: 'read q' }, entryText) : null),
+      el('div', { class: 'actbar cc-bar' }, el('span', { class: 'grow' }), err, btn),
+    ];
   }
 
-  // -- filing status line (ticks once a second while filing) ---------------------------------
-  let statusEl = null;
+  // -- filing status (ticks once a second while filing) --------------------------------------
   let ticker = null;
   function tick() {
-    if (!statusEl || !s.data || !s.data.filing) return;
-    const { text, elapsed } = filingStatus(s.data.filing.status, s.progress, Date.now());
-    if (statusEl.text.textContent !== text) statusEl.text.textContent = text;
-    statusEl.elapsed.textContent = elapsed ? ` · ${elapsed}` : '';
+    if (!s.data || !s.data.filing) return;
+    const status = s.data.filing.status;
+    if (ticking.line) {
+      const { text } = filingStatus(status, s.progress, Date.now());
+      if (ticking.line.textContent !== text) ticking.line.textContent = text;
+    }
+    if (ticking.head) ticking.head.textContent = filingReadout(status, s.progress, Date.now()).text;
+    if (ticking.mini && status === 'running') {
+      const st = filingStatus(status, s.progress, Date.now());
+      ticking.mini.textContent = st.elapsed ? `${st.text} · ${st.elapsed}` : st.text;
+    }
   }
   function syncTicker() {
-    if (statusEl && !ticker) ticker = setInterval(tick, 1000);
-    if (!statusEl && ticker) { clearInterval(ticker); ticker = null; }
+    const on = refiling() && !destroyed;
+    if (on && !ticker) ticker = setInterval(tick, 1000);
+    if (!on && ticker) { clearInterval(ticker); ticker = null; }
   }
 
   // -- render -------------------------------------------------------------------------------
-  function render() {
-    statusEl = null;
+  const typingHere = () => {
+    const a = document.activeElement;
+    return !!(a && root.contains(a) && TYPING.has(a.tagName));
+  };
+
+  // background: a reload's redraw. It waits while the owner is in one of the card's fields (it would
+  // break an IME composition or close an open <select>) and runs once they leave it.
+  function render({ background = false } = {}) {
+    if (background && !s.focus && typingHere()) { s.stale = true; return; }
+    s.stale = false;
+    // Keep the keyboard where it was: the same control (by data-k) after the redraw, with its caret.
+    const a = document.activeElement;
+    const had = a && root.contains(a) ? (a.dataset && a.dataset.k) || 'first' : null;
+    let caret = null;
+    if (had && TYPING.has(a.tagName)) {
+      try { if (typeof a.selectionStart === 'number') caret = [a.selectionStart, a.selectionEnd, a.selectionDirection]; } catch (_) { /* no selection API */ }
+    }
+    const want = s.focus || had;
+    const scroll = !!s.focus;  // the owner's own move may scroll; a background redraw never does
+    s.focus = null;
+    ticking.head = null; ticking.line = null; ticking.mini = null;
     draw();
     syncTicker();
+    if (!want) return;
+    // Never take the keyboard from elsewhere (the capture bar, another card): only when it was here
+    // or has nowhere to be. While busy every row button is disabled: try again at the next draw.
+    const b = document.activeElement;
+    // The pop-up the card sits in (a <dialog>) counts as nowhere: a disabled button's focus may land on it.
+    const free = (s.take && !(b && TYPING.has(b.tagName))) || !b || b === document.body || root.contains(b)
+      || (b.tagName === 'DIALOG' && b.contains(root));
+    if (!free) return;
+    if (s.busy || !refocus(want, scroll, want === had ? caret : null)) s.focus = want;
+    else s.take = false;
+  }
+  root.addEventListener('focusout', (ev) => {
+    if (!s.stale) return;
+    if (ev.relatedTarget && root.contains(ev.relatedTarget) && TYPING.has(ev.relatedTarget.tagName)) return;
+    whenFree(() => { if (s.stale && !destroyed && !typingHere()) render(); });
+  });
+
+  // caret: the field's selection before a redraw, put back; the owner's own move to the correction
+  // box (no caret kept) puts it at the end.
+  function refocus(key, scroll, caret) {
+    let n = key === 'first' ? null : root.querySelector(`[data-k="${CSS.escape(key)}"]`);
+    if (!n || n.disabled) n = root.querySelector('.pp .b:not(:disabled), [data-k="all"]:not(:disabled), [data-k="tell"], [data-k="retry"], [data-k="review"]');
+    if (!n) return false;
+    n.focus({ preventScroll: !scroll });
+    try {
+      if (caret) n.setSelectionRange(caret[0], caret[1], caret[2] || 'none');
+      else if (n.tagName === 'TEXTAREA' && scroll) n.setSelectionRange(n.value.length, n.value.length);
+    } catch (_) { /* a date field has no caret */ }
+    return document.activeElement === n;
   }
 
   function draw() {
     clear(root);
-    const title = el('div', { class: 'card-title' }, el('span', {}, 'Filing review'),
-      onClose ? el('button', { class: 'icon', type: 'button', 'aria-label': 'Close card', title: 'Close', onclick: onClose }, '×') : null);
-    root.appendChild(el('header', {}, title));
-    if (s.loadError) { root.appendChild(el('div', { class: 'error', role: 'alert' }, `Couldn't load this card: ${s.loadError}`)); return; }
-    if (!s.data) { root.appendChild(el('p', { class: 'status' }, 'Loading…')); return; }
+    root.classList.toggle('min', compact && !s.draft.expanded);
+    if (compact && !s.draft.expanded) { root.appendChild(compactRow()); return; }
+    root.appendChild(header());
+    if (s.loadError) { root.appendChild(el('div', { class: 'err cc-line', role: 'alert' }, `Couldn't load this card: ${s.loadError}`)); return; }
+    if (!s.data) { root.appendChild(el('div', { class: 'cc-line f' }, 'Loading…')); return; }
     const filing = s.data.filing;
-    if (!filing) { root.appendChild(el('p', { class: 'meta' }, 'Not filed yet.')); return; }
-    if (s.notice) root.appendChild(el('p', { class: 'status', role: 'status' }, s.notice));
-    if (filing.status === 'failed') { root.appendChild(retryBox(filing)); return; }
+    if (!filing) { root.appendChild(el('div', { class: 'cc-line f' }, 'Not filed yet.')); return; }
+    // "Retrying…" or "Re-filing with your correction…" until the agent runs; then its steps say it.
+    if (s.notice && filing.status !== 'running') root.appendChild(el('div', { class: 'cc-line m d', role: 'status' }, s.notice));
+    if (filing.status === 'failed') { root.append(...failBox(filing)); return; }
     if (filing.status === 'queued' || filing.status === 'running') {
-      // Only the step is announced; the seconds tick beside it, outside the live region.
-      statusEl = { text: el('span', { role: 'status' }), elapsed: el('span', { 'aria-hidden': 'true' }) };
-      root.appendChild(el('p', { class: 'status' }, statusEl.text, statusEl.elapsed));
+      // Only the step is announced; the seconds tick in the header, outside the live region.
+      ticking.line = el('span', { role: 'status' });
+      root.appendChild(el('div', { class: 'cc-line m d' }, ticking.line));
       tick();
       return;
     }
-    root.appendChild(el('div', {},
-      el('div', { class: 'meta' }, 'Filed to'),
-      el('ul', { class: 'files' }, (filing.files || []).map((f) => el('li', {}, f))),
-      filing.synopsis ? el('p', {}, filing.synopsis) : null));
+    const files = filing.files || [];
+    if (files.length) {
+      root.appendChild(el('div', { class: 'cc-files' }, label('Filed to'),
+        el('ul', {}, files.map((f) => el('li', {}, f)))));
+    }
     const list = pending();
     if (list.length === 0) {
-      root.appendChild(el('p', { class: 'empty' }, 'Nothing left to review.'));
+      root.appendChild(el('div', { class: 'cc-line cc-done' }, dot('g'), 'Nothing left to review.'));
     } else {
-      root.appendChild(el('ul', { class: 'rows' }, orderProposals(list).map((p) => {
+      root.appendChild(el('ul', { class: 'pps', 'aria-label': 'Proposals' }, orderProposals(list).map((p) => {
         if (s.draft.editing === p.id) return editRow(p);
         return p.ptype === 'node' ? nodeRow(p) : p.ptype === 'update' ? updateRow(p) : itemRow(p);
       })));
     }
-    if (s.draft.msg) root.appendChild(el('div', { class: 'error', role: 'alert' }, s.draft.msg));
-    const foot = el('div', { class: 'card-foot' });
-    if (list.length > 0) {
-      const ok = list.filter((p) => !(p.ptype === 'update' && ((p.warnings || []).some((w) => /unknown item/i.test(w)) || !p.payload.item_id)));
-      const reason = blocked();
-      foot.appendChild(el('div', { class: 'actions' },
-        el('button', { class: 'primary', type: 'button', title: reason || null,
-          disabled: ok.length === 0 || !!reason || s.busy || null,
-          onclick: () => confirmIds(ok.map((p) => p.id)) }, s.busy ? 'Working…' : 'Confirm all')));
-    }
-    foot.appendChild(correctionBox());
-    root.appendChild(foot);
+    if (s.draft.msg) root.appendChild(el('div', { class: 'err cc-line', role: 'alert' }, s.draft.msg));
+    root.append(...footer(list).filter(Boolean));
   }
 
   render();
   reload();
 
   root.reload = reload;
+  root.refiling = refiling;  // true while this entry is queued or being filed
+  // The owner's move to this card (Today: the selection moved on after a confirm, or the tray's
+  // REVIEW): the first ✓, once the card has loaded.
+  root.focusFirst = () => {
+    s.focus = 'first';
+    s.take = true;
+    if (s.data || s.loadError) render();
+  };
+  root.wantsFocus = () => !!s.focus;  // a move of the owner's waits for the next draw
   root.destroy = () => {
+    if (destroyed) return;
     destroyed = true;
+    if (!tray) claim(entryId, -1);
     for (const u of unsubs) u();
-    statusEl = null;
+    ticking.head = null; ticking.line = null; ticking.mini = null;
     syncTicker();
   };
   return root;

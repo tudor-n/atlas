@@ -462,8 +462,11 @@ _HTTPS_RX = re.compile(r"https://\S+")
 def _widget_state(app) -> dict:
     store, paths = app["store"], app["paths"]
     settings = load_settings(paths)
-    return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(store.list_proposals()),
-            "failed": len(store.list_filings("failed")), "map": load_map(paths.brain),
+    proposals, failed = store.list_proposals(), store.list_filings("failed")
+    # Entries to review, as Today's TO REVIEW counts them: each with proposals, or a failed filing.
+    entries = len({p.entry_id for p in proposals} | {f.entry_id for f in failed})
+    return {"items": store.list_items(status=LIVE_STATUSES), "proposals": len(proposals),
+            "failed": len(failed), "entries": entries, "map": load_map(paths.brain),
             "usage": app["usage"].view(settings["usage_warn_pct"], settings["fable_usage_url"]),
             "agents": app["agents"].rows(), "settings": settings, "now": datetime.now(),
             "requests": _open_requests(store)}

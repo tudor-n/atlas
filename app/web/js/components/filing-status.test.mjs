@@ -30,3 +30,14 @@ test('a clock behind the start never shows negative seconds', () => {
 test('queued waits its turn', () => {
   assert.deepEqual(filingStatus('queued', { started, step: 'x' }, at(9)), { text: 'Waiting to be filed…', elapsed: '' });
 });
+
+test('readout: the header and tray line for each state', async () => {
+  const { filingReadout } = await import('./filing-status.js');
+  assert.deepEqual(filingReadout('queued', null, at(1)), { state: 'queued', text: 'QUEUED' });
+  assert.deepEqual(filingReadout('running', { started, step: 'x' }, at(12.4)), { state: 'filing', text: 'FILING · 12 S' });
+  assert.deepEqual(filingReadout('running', null, at(3)), { state: 'filing', text: 'FILING' });
+  assert.deepEqual(filingReadout('failed', null, at(0)), { state: 'failed', text: 'FAILED' });
+  assert.deepEqual(filingReadout('done', null, at(0)), { state: 'filed', text: 'FILED' });
+  assert.deepEqual(filingReadout('done', null, at(0), 3), { state: 'filed', text: '3 TO CONFIRM' });
+  assert.deepEqual(filingReadout(undefined, null, at(0)), { state: '', text: '' });
+});

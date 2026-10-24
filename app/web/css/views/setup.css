@@ -1,0 +1,51 @@
+/* SETUP view (phase 4.5 design §4): the first-run wizard. A 760px column (20px gutters) that scrolls, a six-step
+   progress bar of 4px segments (done / current / to do), and BACK and NEXT/FINISH in a 72px action
+   bar under it. The rows (.pf) and the map editor's hairline rows are styled in settings.css. */
+.vw.setup { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.sp-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sp-col { width: 100%; max-width: 800px; margin: 0 auto; padding: 0 20px; }
+.sp-scroll > .sp-col { padding-bottom: 40px; }
+
+.sp-intro { padding-top: 28px; }
+.sp-lead { margin-top: 10px; font-size: 14px; line-height: 21px; color: var(--dim); }
+
+/* progress: one cell per step; done is dim, the current one white, the rest a hairline */
+.sp-steps { display: flex; gap: 4px; margin-top: 24px; }
+.sp-steps li { flex: 1 1 0; min-width: 0; }
+.sp-steps li > i { display: block; height: 4px; background: var(--line); }
+.sp-steps li.done > i { background: var(--dim); }
+.sp-steps li.cur > i { background: var(--text); }
+.sp-steps .sl {
+  display: block; margin-top: 10px; font-weight: 600; font-size: 11px; line-height: 15px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint);
+}
+.sp-steps li.done .sl { color: var(--dim); }
+.sp-steps li.cur .sl { color: var(--text); }
+.sp-steps .sl .m { margin-right: 2px; }
+
+.sp-head { margin-top: 36px; }
+.sp-head h1 { margin-top: 10px; font-weight: 600; font-size: 24px; line-height: 30px; }
+.sp-hint { margin-top: 8px; max-width: 72ch; font-size: 15px; line-height: 22px; color: var(--dim); }
+.sp-hint:empty { display: none; }
+.sp-body { margin-top: 20px; }
+.sp-body > .notice { margin-top: 4px; }
+
+/* the editors and rows run the column's full width, flush with the heading */
+.setup .editor .ecols, .setup .editor .erow, .setup .editor .eadd, .setup .editor .eerr, .setup .editor .empty,
+.setup .pf { padding-left: 0; padding-right: 0; }
+.setup .editor .eadd { padding-top: 16px; }
+
+.sp-err:empty { display: none; }
+.sp-err { margin-top: 12px; }
+.sp-err .err { padding: 4px 0; font-size: 14px; line-height: 20px; }
+
+/* review: a row per answer with EDIT, problems first with FIX */
+.setup .pf.sp-rv { grid-template-columns: minmax(140px, 200px) minmax(0, 1fr) auto; min-height: var(--h52); }
+.sp-probs { margin-bottom: 20px; border-top: 1px solid var(--sub); }
+.sp-prob { display: flex; align-items: center; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--sub); }
+.sp-prob .err { flex: 1 1 auto; min-width: 0; font-size: 14px; line-height: 20px; }
+
+.sp-bar { flex: none; padding: 11px 0 12px; }
+.sp-nav { display: flex; align-items: center; gap: 8px; }
+.sp-nav > .grow { flex: 1 1 auto; }
+.sp-nav .b { min-width: 112px; }
