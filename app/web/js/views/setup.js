@@ -5,6 +5,7 @@ import { el, clear } from '../dom.js';
 import { button, notice } from '../components/ui.js';
 import { prefRow } from './settings-sections.js';
 import { stepState } from './settings-model.js';
+import { adoptLegacy } from '../legacy-keys.js';
 import { createMapEditors, defaultMap, normalizeMap, hasErrors, validateMap } from '../components/map-editor.js';
 
 const KEY = 'atlas.setup.v1';
@@ -13,6 +14,7 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function loadSaved() {
   try {
+    adoptLegacy(localStorage, KEY); // a wizard started before the rename
     const d = JSON.parse(localStorage.getItem(KEY));
     if (!d || typeof d !== 'object') return null;
     const step = Number.isInteger(d.step) && d.step >= 0 && d.step < STEPS.length ? d.step : 0;
