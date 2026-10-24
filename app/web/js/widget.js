@@ -31,14 +31,29 @@ function draftStore() {
 }
 
 // -- Tauri bridge: no-op in a plain browser ---------------------------------------------------
+// The window is exactly the panel, in device pixels: the shell's `fit_widget` pins it to that size
+// (an older shell only has setSize, which GTK may ignore).
 function fitWindow() {
   if (!window.__TAURI__) return;
   try {
     const panel = root.firstElementChild;
     if (!panel) return;
     const h = Math.ceil(panel.getBoundingClientRect().height);
-    window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(WIDTH, h));
+    // In device pixels: the page may be drawn at another scale than the window's (125 % desktop).
+    const scale = window.devicePixelRatio || 1;
+    const invoke = tauriInvoke(window);
+    const fallback = () => window.__TAURI__.window.getCurrentWindow()
+      .setSize(new window.__TAURI__.dpi.PhysicalSize(Math.ceil(WIDTH * scale), Math.ceil(h * scale)));
+    if (invoke) Promise.resolve(invoke('fit_widget', { width: WIDTH, height: h, scale })).catch(fallback);
+    else fallback();
   } catch (_) { /* not running in the desktop shell */ }
+}
+
+// The – button: hide the widget (only in the desktop shell). ATLAS stays in the taskbar or the
+// tray; the widget comes back the next time the main window is minimised.
+function hideWidget() {
+  const invoke = tauriInvoke(window);
+  if (invoke) Promise.resolve(invoke('hide_widget')).catch(() => {});
 }
 
 // -- static shell, built once so the capture field keeps its text and focus ------------------
@@ -58,7 +73,9 @@ const synopsis = el('span', { class: 'wsyn', 'data-tauri-drag-region': true }, '
 const expandBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
 // The voice on/off (spec §2: reachable from the widget); hidden until the voice is installed.
 const voiceBtn = el('button', { class: 'b wg', type: 'button', hidden: true, onclick: toggleVoice });
-const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, dot, synopsis, voiceBtn, expandBtn);
+const hideBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Hide the widget', title: 'Hide the widget (ATLAS stays in the taskbar)',
+  hidden: !tauriInvoke(window), onclick: hideWidget }, '–');
+const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, dot, synopsis, voiceBtn, expandBtn, hideBtn);
 
 const capture = el('input', { class: 'wcap', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
 const captureStatus = el('div', { class: 'wstat', role: 'status' });

@@ -18,7 +18,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, RunEvent, Runtime, Theme, WebviewUrl, WebviewWindow,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, Theme, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, Window, WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -588,6 +588,48 @@ async fn open_main(app: AppHandle, view: Option<String>) -> Result<(), String> {
     }
 }
 
+/// The widget page sizes its window to its panel (`fitWindow`): `width`×`height` CSS px at the
+/// page's `scale` (its devicePixelRatio), i.e. that many device pixels, with the minimum and maximum
+/// pinned to it. Device pixels because the web view and the window don't agree on the scale: on a
+/// 125 % desktop under XWayland WebKitGTK draws the page at 1.25 while the window's own scale is 1,
+/// so a size in the window's logical units cut the expanded panel (and the collapsed bar) short.
+/// The window is resizable only because GTK ignores a resize of a non-resizable one: it stayed at
+/// GTK's default 200 px tall, a transparent strip under the collapsed bar that caught clicks and
+/// the wheel. Pinned like this it can't be dragged to another size either. The widget only
+/// (`allow-fit-widget`).
+#[tauri::command]
+fn fit_widget(window: WebviewWindow, width: f64, height: f64, scale: Option<f64>) -> Result<(), String> {
+    if window.label() != WIDGET {
+        return Err("only the widget fits itself".into());
+    }
+    let scale = scale.filter(|s| s.is_finite()).unwrap_or(1.0).clamp(0.5, 4.0);
+    if !(width.is_finite() && height.is_finite()) {
+        return Err("bad size".into());
+    }
+    let size = widget_device_size(width, height, scale);
+    // Both bounds first, so a smaller or a larger size is allowed before it is asked for.
+    let _ = window.set_min_size(None::<PhysicalSize<u32>>);
+    let _ = window.set_max_size(Some(size));
+    let _ = window.set_min_size(Some(size));
+    window.set_size(size).map_err(|e| e.to_string())
+}
+
+/// `fit_widget`'s size in device pixels: CSS px × scale, rounded up, kept sane.
+pub fn widget_device_size(width: f64, height: f64, scale: f64) -> PhysicalSize<u32> {
+    let px = |v: f64, lo: f64, hi: f64| (v.clamp(lo, hi) * scale).ceil() as u32;
+    PhysicalSize::new(px(width, 200.0, 2000.0), px(height, 20.0, 4000.0))
+}
+
+/// The widget's own – button: hide it. ATLAS stays in the taskbar (the main window, minimised) or
+/// the tray; the widget comes back the next time the main window is minimised (`follow`).
+#[tauri::command]
+fn hide_widget(window: WebviewWindow) -> Result<(), String> {
+    if window.label() != WIDGET {
+        return Err("only the widget hides itself".into());
+    }
+    window.hide().map_err(|e| e.to_string())
+}
+
 /// The default browser at `url`, via `cmd /C start "" <url>` without a console flash.
 #[cfg(windows)]
 fn open_browser(url: &str) {
@@ -756,7 +798,7 @@ pub fn run() {
                 .skip_initial_state(WIDGET)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![open_main])
+        .invoke_handler(tauri::generate_handler![open_main, fit_widget, hide_widget])
         .setup(move |app| {
             app.manage(Hub::new(port));
             // The widget starts shown (the main window isn't opened yet), except when this start
@@ -774,7 +816,10 @@ pub fn run() {
                 .transparent(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
-                .resizable(false)
+                // Resizable for GTK's sake, but pinned to the page's size (`fit_widget`).
+                .resizable(true)
+                .min_inner_size(520.0, 44.0)
+                .max_inner_size(520.0, 44.0)
                 .shadow(false)
                 // Shown below, once its window type is set.
                 .visible(false)
@@ -1033,6 +1078,14 @@ mod tests {
         assert!(hub.window("other").is_none());
         assert_eq!(hub.main.lock().page, Page::Start);
         assert!(!hub.up.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn widget_sizes_are_device_pixels() {
+        assert_eq!(widget_device_size(520.0, 499.0, 1.25), PhysicalSize::new(650, 624));
+        assert_eq!(widget_device_size(520.0, 46.0, 1.0), PhysicalSize::new(520, 46));
+        assert_eq!(widget_device_size(520.0, 45.5, 2.0), PhysicalSize::new(1040, 91));
+        assert_eq!(widget_device_size(10.0, 1.0, 1.0), PhysicalSize::new(200, 20)); // kept sane
     }
 
     #[test]

@@ -62,6 +62,9 @@ def world(tmp_path, monkeypatch):
     (config / "desktop.json").write_text(json.dumps({"port": 8090, "root": str(tmp_path / "root"), "live": str(live),
                                                      "state": str(state)}), encoding="utf-8")
     monkeypatch.setenv("ATLAS_CONFIG_DIR", str(config))
+    # An empty process list: the owner's own ATLAS may be running while the tests do.
+    (tmp_path / "proc").mkdir()
+    monkeypatch.setenv("ATLAS_LAUNCHER_PROC", str(tmp_path / "proc"))
     monkeypatch.setenv("ATLAS_STATE_DIR", str(state))
     monkeypatch.setenv("PATH", f"{bin_}{os.pathsep}{os.environ['PATH']}")
 
