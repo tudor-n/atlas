@@ -289,3 +289,25 @@ def test_a_waiting_launcher_hands_over_once_the_shell_runs(tmp_path, monkeypatch
     assert len(held) == 1 and not os.get_inheritable(held[0])  # released by the exec, not before
     for f in held:
         os.close(f)
+
+
+def test_pending_notice_says_why_an_update_waits():
+    summary, body = la.pending_notice("CI pending")
+    assert "on its way" in summary and "restart" in body
+    assert "failed its checks" in la.pending_notice("CI failed")[0]
+    assert la.pending_notice("CI not green") == la.pending_notice("CI failed")
+    assert la.pending_notice("dirty working tree") == ("ATLAS couldn't update", "Reason: dirty working tree. Settings → Runtime has the details.")
+    assert la.pending_notice("diverged history")[0] == "ATLAS couldn't update"
+    for quiet in (None, "", "fetch failed", "CI status unreadable (gh exit 1)", "fetch timed out",
+                  "fast-forward put off (not enough time)", "hook client copy failed"):
+        assert la.pending_notice(quiet) is None, quiet
+    assert la.pending_notice("gh not found")[1].startswith("Reason: gh not found")  # blocks every update: said
+
+
+@posix_only
+def test_a_held_back_update_is_notified(world):
+    # The fake slot python stands in for the update step: it writes update.json as the real one does.
+    (world.state / "update.json").write_text(json.dumps({"pending": "CI pending"}), encoding="utf-8")
+    assert run_launcher(world).returncode == 0
+    notes = [" ".join(c["argv"]) for c in world.calls("notify-send")]
+    assert any("on its way" in n for n in notes), notes

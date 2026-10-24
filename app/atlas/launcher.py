@@ -14,7 +14,10 @@ update available"). This does, before the shell starts:
 2. **Update:** in runtime mode (`desktop.json` names `live` and `state`), run the update step as
    the shell does (the current slot's python, `-I -S`, `--live`, `--state`, `ATLAS_STATE_DIR`),
    bounded at 90 s. It pulls master only when CI passed, and refreshes the slots. The shell runs it
-   again when it starts; that second run finds nothing to do.
+   again when it starts; that second run finds nothing to do. When the step held an update back
+   (`pending` in `<state>/update.json`), a desktop notification says why (`pending_notice`):
+   a newer master still in CI, one that failed CI, or a live copy that can't be updated. Being
+   offline stays quiet.
 3. **Build:** when the live copy's HEAD isn't the commit the shell was last built from
    (`<state>/launcher.json`), or the binary is missing, run
    `cargo build --release --locked` in `<live>/app/desktop/src-tauri` with the binary's target
@@ -249,6 +252,28 @@ def find_cargo():
 
 # -- the steps -----------------------------------------------------------------------------------
 
+# `pending` reasons (update_step.py) that only mean "not now": offline, slow, or nothing to say.
+# A missing gh, git or uv is not one of them: it holds back every update, so it is said.
+_QUIET = ("fetch failed", "CI status unreadable", "timed out", "put off", "out of time", "hook client copy failed")
+
+
+def pending_notice(pending):
+    """(summary, body) for a desktop notification about why the update step held an update back,
+    or None when there is nothing worth saying."""
+    if not isinstance(pending, str) or not pending:
+        return None
+    if pending == "CI pending":
+        return ("A newer ATLAS is on its way",
+                "Its checks are still running (about 10 minutes). ATLAS opens the version you have: "
+                "restart it after that to get the new one.")
+    if pending in ("CI failed", "CI not green"):
+        return ("The newest ATLAS failed its checks",
+                "ATLAS stays on the version you have until a fixed one passes.")
+    if any(q in pending for q in _QUIET):
+        return None
+    return ("ATLAS couldn't update", f"Reason: {pending}. Settings → Runtime has the details.")
+
+
 def update(live, state, log):
     slot = current_slot(state)
     if slot is None:
@@ -261,6 +286,9 @@ def update(live, state, log):
     run_bounded([python, "-I", "-S", script, "--live", live, "--state", state], cwd=state,
                 env=child_env({"ATLAS_STATE_DIR": state}),
                 limit=UPDATE_LIMIT_S, log=log, what="update step")
+    notice = pending_notice((read_json(os.path.join(state, "update.json")) or {}).get("pending"))
+    if notice is not None:
+        notify(*notice, log)
 
 
 def target_dir_of(exe):
