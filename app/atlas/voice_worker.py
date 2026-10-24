@@ -2,7 +2,7 @@
 
 Run as `python -m atlas voice-worker --state <dir>`. It speaks JSON lines:
   in:  {"op": "say", "id": "…", "parts": ["info", "quip"], "blend": {"bm_george": 0.7, …},
-        "speed": 0.95, "volume": 80, "model": "<model file>", "voices": "<voices file>"}
+        "speed": 0.95, "volume": 80, "boost": true, "duck_to": 30, "model": "<model file>", "voices": "<voices file>"}
        {"op": "stop"}   stops the line playing now (a "say" waiting behind it still plays)
   out: {"id": "…", "ok": true} or {"id": "…", "ok": false, "error": "…"}, one per "say"
 
@@ -71,9 +71,49 @@ def find_player() -> tuple[str, ...] | None:
     return None
 
 
-def to_wav(path: Path, samples, volume: int) -> float:
-    """Write mono 16-bit PCM; returns the length in seconds. Volume 0–100 scales the samples."""
+# Boost (owner, 2026-10-24: the voice was lost under music). Kokoro's lines come out around
+# -21 dBFS RMS, music is mastered near -9: each line is brought to a steady speech loudness, and a
+# soft limiter keeps its peaks under the ceiling instead of clipping them.
+BOOST_TARGET_DB = -14.0  # RMS of the voiced part
+BOOST_MAX_GAIN_DB = 18.0
+LIMIT_KNEE = 0.7  # the limiter starts bending here...
+LIMIT_CEILING = 0.89  # ...and never goes past this (-1 dBFS)
+GATE_DB = -45.0  # 20 ms frames quieter than this are pauses: they don't count towards the loudness
+
+
+def boost(samples):
+    """`samples` brought to BOOST_TARGET_DB (voiced RMS; at most BOOST_MAX_GAIN_DB louder, never
+    quieter), then soft-limited under LIMIT_CEILING."""
     import numpy as np
+    x = np.asarray(samples, dtype=np.float32)
+    frame = SAMPLE_RATE // 50
+    n = len(x) // frame
+    if n == 0:
+        return x
+    power = (x[:n * frame].reshape(n, frame) ** 2).mean(axis=1)
+    voiced = power[power > 10 ** (GATE_DB / 10)]
+    if not len(voiced):
+        return x
+    level_db = 10 * np.log10(voiced.mean())
+    gain = 10 ** (min(max(BOOST_TARGET_DB - level_db, 0.0), BOOST_MAX_GAIN_DB) / 20)
+    return soft_limit(x * gain)
+
+
+def soft_limit(x):
+    """Unchanged below LIMIT_KNEE; above it, bent smoothly towards LIMIT_CEILING (tanh)."""
+    import numpy as np
+    a = np.abs(x)
+    span = LIMIT_CEILING - LIMIT_KNEE
+    bent = LIMIT_KNEE + span * np.tanh((a - LIMIT_KNEE) / span)
+    return np.where(a > LIMIT_KNEE, np.sign(x) * bent, x).astype(np.float32)
+
+
+def to_wav(path: Path, samples, volume: int, boosted: bool = False) -> float:
+    """Write mono 16-bit PCM; returns the length in seconds. With `boosted`, the line is first
+    evened out (`boost`); volume 0–100 then scales the samples."""
+    import numpy as np
+    if boosted:
+        samples = boost(samples)
     pcm = np.clip(np.asarray(samples, dtype=np.float32) * (volume / 100.0), -1.0, 1.0)
     data = (pcm * 32767).astype("<i2").tobytes()
     with wave.open(str(path), "wb") as w:
@@ -82,6 +122,87 @@ def to_wav(path: Path, samples, volume: int) -> float:
         w.setframerate(SAMPLE_RATE)
         w.writeframes(data)
     return len(pcm) / SAMPLE_RATE
+
+
+class Ducker:
+    """Turns other apps down while ATLAS speaks (Linux, PipeWire/PulseAudio via `pactl`): every
+    playback stream that exists when a line starts plays at `duck_to` % of its volume, and gets its
+    own volume back when the line ends, unless it was changed meanwhile (then the owner's change
+    stands). What was lowered is written to `<state>/voice/ducked.json` before anything is lowered,
+    so a worker that dies mid-line is undone by the next one (`recover`). Without pactl, nothing
+    happens. Our own stream doesn't exist yet when `duck` runs (the player starts after)."""
+
+    def __init__(self, state: Path, pactl: str | None = None):
+        self._pactl = pactl if pactl is not None else (shutil.which("pactl") or "")
+        self._file = state / "voice" / "ducked.json"
+
+    def _run(self, *args) -> str | None:
+        if not self._pactl:
+            return None
+        try:
+            r = subprocess.run([self._pactl, *args], capture_output=True, text=True, timeout=3,
+                               stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout if r.returncode == 0 else None
+
+    def _streams(self) -> dict[int, list[int]]:
+        """{sink input index: its channel volumes (raw, 65536 = 100 %)}."""
+        out = self._run("-f", "json", "list", "sink-inputs")
+        try:
+            rows = json.loads(out) if out else []
+        except ValueError:
+            return {}
+        streams = {}
+        for r in rows if isinstance(rows, list) else []:
+            try:
+                streams[int(r["index"])] = [int(c["value"]) for c in r["volume"].values()]
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+        return streams
+
+    def _set(self, index: int, volumes: list[int]) -> None:
+        self._run("set-sink-input-volume", str(index), *map(str, volumes))
+
+    def duck(self, duck_to) -> dict | None:
+        """Lower the other streams; returns what to `restore` (None: nothing lowered)."""
+        if not self._pactl or not isinstance(duck_to, (int, float)) or duck_to >= 100:
+            return None
+        level = max(0.0, float(duck_to)) / 100
+        before = self._streams()
+        if not before:
+            return None
+        lowered = {i: [round(v * level) for v in vols] for i, vols in before.items()}
+        record = {"before": {str(i): v for i, v in before.items()}, "lowered": {str(i): v for i, v in lowered.items()}}
+        try:
+            self._file.parent.mkdir(parents=True, exist_ok=True)
+            self._file.write_text(json.dumps(record), encoding="utf-8")
+        except OSError:
+            return None  # without the record a crash couldn't be undone: don't touch anything
+        for i, vols in lowered.items():
+            self._set(i, vols)
+        return record
+
+    def restore(self, record: dict | None) -> None:
+        if not record:
+            return
+        now = self._streams()
+        for key, vols in record.get("before", {}).items():
+            i = int(key)
+            if i in now and now[i] == record.get("lowered", {}).get(key):  # still as we left it
+                self._set(i, vols)
+        try:
+            self._file.unlink()
+        except OSError:
+            pass
+
+    def recover(self) -> None:
+        """Undo what a worker that died mid-line left lowered."""
+        try:
+            record = json.loads(self._file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        self.restore(record if isinstance(record, dict) else None)
 
 
 class Engine:
@@ -240,7 +361,7 @@ def _trace(msg: str) -> None:
         print(f"voice-worker {os.getpid()}: {msg}", file=sys.stderr, flush=True)
 
 
-def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
+def serve(state: Path, inp, out, *, engine=None, player=None, ducker=None) -> int:
     """The protocol loop. A reader thread takes "stop" at once; "say" requests play in order."""
     _trace("serve")
     # The heavy imports happen here, before the reader thread starts blocking on stdin: on Windows
@@ -256,6 +377,9 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
             player = FakePlayer(Path(fake))
         elif cmd := find_player():
             player = Player(cmd)
+    if ducker is None:
+        ducker = Ducker(state, pactl="" if fake or sys.platform == "win32" else None)
+    ducker.recover()
     says: queue.Queue = queue.Queue()
     out_lock = threading.Lock()
 
@@ -305,9 +429,13 @@ def serve(state: Path, inp, out, *, engine=None, player=None) -> int:
                     player._req = req
                 if not player.cancelled(gen):
                     samples = engine.synth(req)
-                    seconds = to_wav(wav, samples, int(req.get("volume", 80)))
+                    seconds = to_wav(wav, samples, int(req.get("volume", 80)), bool(req.get("boost", False)))
                     if seconds > 0 and not math.isnan(seconds):
-                        player.play(wav, seconds, gen)
+                        lowered = ducker.duck(req.get("duck_to", 100))
+                        try:
+                            player.play(wav, seconds, gen)
+                        finally:
+                            ducker.restore(lowered)
                 _trace(f"played {rid}")
                 reply({"id": rid, "ok": True})
             except Exception as e:  # one bad line never ends the worker

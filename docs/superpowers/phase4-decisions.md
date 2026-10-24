@@ -73,3 +73,9 @@ Three subagents reviewed the branch: the backend, security and robustness, and t
   - The long-run threshold keeps its exact value (fractional minutes), and the volume slider steps by 1.
   - The status line is a live region, and the blend rows are labelled by number.
 - **V42 The voice API tests switch quiet hours off.** They failed between 23:00 and 08:00, and CI runs at every hour, in UTC.
+
+## Owner feedback: the voice is lost under music (2026-10-24)
+
+- **V-L1 Measured:** Kokoro's lines come out around −21 dBFS RMS (peaks −3 to −6); at the default volume 80 that is about −23, while music is mastered near −9: some 13 dB quieter. Volume 100 only added 2 dB.
+- **V-L2 Even loudness** (`voice_boost`, on by default): the worker brings each line's voiced RMS (20 ms frames above −45 dBFS) to −14 dBFS, never quieter and at most +18 dB, then a tanh soft limiter bends anything above 0.7 under a −1 dBFS ceiling. Volume then scales that. On the owner's voice a real line went from −23 to about −16 dBFS at volume 80.
+- **V-L3 Ducking** (`voice_duck_to`, 30 % by default, 100 = off): `Ducker` in `voice_worker.py` lowers every playback stream that exists when a line starts (`pactl -f json list sink-inputs`, then `set-sink-input-volume` to that share of each channel), and restores each one after the line unless its volume changed meanwhile (the owner's change stands). The record is written to `<state>/voice/ducked.json` before anything is lowered, and a new worker undoes a leftover one (`recover`). Our own stream doesn't exist yet when the ducking runs. No pactl (or Windows): nothing happens. Verified silently on a null sink: a test stream went 100 % → 30 % → 100 % around a real line.

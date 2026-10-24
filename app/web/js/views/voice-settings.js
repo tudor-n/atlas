@@ -98,6 +98,12 @@ export async function renderVoiceSettings(box, isDead, ui) {
     const volume = el('input', { type: 'range', id: 'voice-volume', min: '0', max: '100', step: '1', value: String(s.voice_volume) });
     const volOut = el('span', { class: 'pv m out' }, `${s.voice_volume} %`);
     volume.oninput = () => { volOut.textContent = `${volume.value} %`; };
+    const boost = sw(s.voice_boost !== false, 'voice-boost', 'Even loudness');
+    const duckVal = Number.isFinite(s.voice_duck_to) ? s.voice_duck_to : 100;
+    const duck = el('input', { type: 'range', id: 'voice-duck', min: '0', max: '100', step: '5', value: String(duckVal) });
+    const duckText = (v) => (Number(v) >= 100 ? 'unchanged' : `${v} %`);
+    const duckOut = el('span', { class: 'pv m out' }, duckText(duckVal));
+    duck.oninput = () => { duckOut.textContent = duckText(duck.value); };
     const model = el('select', { id: 'voice-model' },
       el('option', { value: 'int8', selected: s.voice_model === 'int8' || null }, `Standard (${mb(v.sizes.int8)})`),
       el('option', { value: 'fp32', selected: s.voice_model === 'fp32' || null }, `Higher quality (${mb(v.sizes.fp32)})`));
@@ -112,14 +118,15 @@ export async function renderVoiceSettings(box, isDead, ui) {
         voice_enabled: on.isOn(), voice_sass: sass.isOn(), voice_sass_readback: sassRb.isOn(),
         voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.isOn()])),
         voice_finish_min_s: Math.round(mins * 60), voice_blend: b.blend, voice_speed: Number(speed.value),
-        voice_volume: Number(volume.value), voice_model: model.value,
+        voice_volume: Number(volume.value), voice_boost: boost.isOn(), voice_duck_to: Number(duck.value),
+        voice_model: model.value,
       };
     }
     const save = () => act(() => api.put('/api/settings', read()), 'Saved.');
     const sample = () => act(async () => {
       const f = read();
       await api.post('/api/voice/sample', { voice_blend: f.voice_blend, voice_speed: f.voice_speed,
-        voice_volume: f.voice_volume, voice_model: f.voice_model });
+        voice_volume: f.voice_volume, voice_boost: f.voice_boost, voice_duck_to: f.voice_duck_to, voice_model: f.voice_model });
     }, 'Playing a sample…');
 
     const pause = v.paused_until
@@ -151,6 +158,10 @@ export async function renderVoiceSettings(box, isDead, ui) {
         prefRow('BLEND', el('div', {}, rowsBox, addBtn), { hint: 'Up to three voices, mixed by share.', cls: 'pf-top' }),
         prefRow('SPEED', el('div', { class: 'pair' }, speed, speedOut), { forId: 'voice-speed' }),
         prefRow('VOLUME', el('div', { class: 'pair' }, volume, volOut), { forId: 'voice-volume' }),
+        prefRow('Even loudness', boost, { forId: boost.id, cls: 'pf-t',
+          hint: 'Brings every line up to a steady, clear loudness, so it carries over music.' }),
+        prefRow('OTHER SOUNDS WHILE SPEAKING', el('div', { class: 'pair' }, duck, duckOut), { forId: 'voice-duck',
+          hint: 'Music and other apps play at this share of their volume while ATLAS speaks, then come back. 100 % leaves them alone. Linux.' }),
         prefRow('MODEL', selectBox(model), { forId: 'voice-model' }))),
       el('section', { class: 'st-grp' }, groupHead('LISTEN'), el('div', { class: 'pfs' },
         prefRow('SAMPLE', el('div', { class: 'pair' },

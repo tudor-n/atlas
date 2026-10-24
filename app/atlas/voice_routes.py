@@ -23,7 +23,7 @@ from .voice import TICK_S, Announcer, Speaker
 
 log = logging.getLogger(__name__)
 t = asyncio.to_thread
-SAMPLE_KEYS = ("voice_blend", "voice_speed", "voice_volume", "voice_model")
+SAMPLE_KEYS = ("voice_blend", "voice_speed", "voice_volume", "voice_boost", "voice_duck_to", "voice_model")
 
 
 def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> None:

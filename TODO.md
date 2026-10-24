@@ -54,6 +54,7 @@ Tell Claude about anything that fails.
   - an agent that works for 2 minutes or more ("… has finished. It took …");
   - a reminder due a minute ahead;
   - a tablet note ("Note saved. …").
+- [ ] **Over music** (2026-10-24): play Spotify loud, then press Settings → Voice → **Play sample**. The voice should carry, and the music should dip while it speaks and come back after. Tune **Volume** and **Other sounds while speaking** to taste.
 - [ ] Tray → **Pause voice** → For 1 hour: nothing is spoken. Then **Resume**.
 - [ ] The widget's speaker icon switches the voice off and on.
 - [ ] Settings → Voice → **Edit quotes**: read through the quips and change or delete what doesn't land.
