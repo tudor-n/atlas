@@ -4,7 +4,7 @@
 // rows (a 104px kind column, the text and a mono meta line, amber warnings, ✓ EDIT ✕), and an action
 // bar (TELL IT WHAT'S WRONG, then CONFIRM ALL, the one primary, rightmost; the correction folds under
 // it). In the tray the card rests as one compact 52px row; REVIEW opens the full card, or, while Today
-// shows that entry in its queue, selects it there (one live full card per entry). Every card reloads on
+// has that entry in its queue, opens Today's review pop-up on it (one live full card per entry). Every card reloads on
 // items.changed, so it never offers a proposal that was handled elsewhere. Styles: css/views/today.css.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
@@ -67,9 +67,9 @@ function orderProposals(proposals) {
 }
 
 // -- one full card per entry ----------------------------------------------------------------
-// Today's selected card is a full card outside the tray. While it exists for an entry, the tray's card
-// for that entry rests compact, and its REVIEW asks Today (setReviewHandler) to select the entry in the
-// queue instead of opening a second full card.
+// Today's selected card (in its review pop-up) is a full card outside the tray. While it exists for an
+// entry, the tray's card for that entry rests compact, and its REVIEW asks Today (setReviewHandler) to
+// open the pop-up on that entry instead of opening a second full card.
 const fullCards = new Map();   // entry id -> how many full (non-tray) cards are live for it
 const trayWatch = new Set();   // tray cards' callbacks: (entryId) => void, run when fullCards changes
 let reviewHandler = null;      // (entryId) => true when the view took the review (Today)
@@ -84,6 +84,12 @@ function claim(entryId, delta) {
 export function setReviewHandler(fn) {
   reviewHandler = fn;
   return () => { if (reviewHandler === fn) reviewHandler = null; };
+}
+
+// Ask the current view to open its review (Today's pop-up): entryId selects that entry, null keeps
+// the current selection (the top bar's REVIEW n). True when the view took it.
+export function requestReview(entryId = null) {
+  return !!(reviewHandler && reviewHandler(entryId));
 }
 
 // -- a redraw waits for the press -----------------------------------------------------------
@@ -105,7 +111,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('pointerup', released, true);
   document.addEventListener('pointercancel', released, true);
 }
-function whenFree(fn) {
+export function whenFree(fn) {
   if (pressing) afterPress.push(fn); else setTimeout(fn, 0);
 }
 
@@ -291,8 +297,8 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       el('span', { class: 'syn' }, synopsisText()),
       ticking.mini,
       keyed(button('Review', { size: 40, onclick: () => {
-        // Today shows this entry in its queue: select it there rather than open a second card.
-        if (reviewHandler && reviewHandler(entryId)) return;
+        // Today has this entry in its queue: its pop-up opens on it rather than a second card here.
+        if (requestReview(entryId)) return;
         s.draft.expanded = true; s.focus = 'hide'; render();
       } }), 'review'),
       onClose ? closeButton() : null);
@@ -604,7 +610,9 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     // Never take the keyboard from elsewhere (the capture bar, another card): only when it was here
     // or has nowhere to be. While busy every row button is disabled: try again at the next draw.
     const b = document.activeElement;
-    const free = (s.take && !(b && TYPING.has(b.tagName))) || !b || b === document.body || root.contains(b);
+    // The pop-up the card sits in (a <dialog>) counts as nowhere: a disabled button's focus may land on it.
+    const free = (s.take && !(b && TYPING.has(b.tagName))) || !b || b === document.body || root.contains(b)
+      || (b.tagName === 'DIALOG' && b.contains(root));
     if (!free) return;
     if (s.busy || !refocus(want, scroll, want === had ? caret : null)) s.focus = want;
     else s.take = false;

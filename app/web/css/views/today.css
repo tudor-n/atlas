@@ -1,31 +1,78 @@
-/* TODAY view (phase 4.5 design §4) and the confirm card (.cc), which the tray (#tray, above the
-   capture bar) uses too: this file is linked globally in index.html. The shell's layout hooks
-   (.vw.split, .main, .side.w400, .actbar) are in css/app.css. */
+/* TODAY view (phase 4.5 design §4; owner feedback 2026-10-24, T-P lines), its review pop-up (.rvd)
+   and the confirm card (.cc), which the tray (#tray, above the capture bar) uses too: this file is
+   linked globally in index.html. The shell's layout hooks (.vw.split, .main, .side.w400, .actbar) are
+   in css/app.css. */
 
 /* -- columns: two from 1100px, one below --------------------------------------------------- */
 .today .tdy-note { padding: 16px 20px; border-bottom: 1px solid var(--line); }
-.today .sec + .sec > .sect-h { border-top: 1px solid var(--line); }
-.today .sec > .empty { color: var(--faint); }
+.vw.today > .main:focus { outline: none; }  /* where the keyboard lands when the pop-up closes empty */
+/* the rhythm: a section is a ruled 40px head and its rows, then 24px of ground and the next head's
+   rule (the last row drops its sub-divider, so one line, not two, separates sections) */
+.today .sec + .sec, .today .rv-line + .sec, .today .tdy-note + .sec { margin-top: 24px; }
+.today .sec:not(:first-child) > .sect-h { border-top: 1px solid var(--line); }
+.today .sec > .row:last-child { border-bottom: 0; }
+.today .tdy-none { color: var(--faint); }
 @media (max-width: 1099px) {
   .vw.split.today { display: block; height: auto; }
   .vw.split.today > * { overflow: visible; }
   .vw.today > .side, .vw.today > .side.w400 { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+  .vw.today > .side > .sec:first-child > .sect-h { border-top: 0; }
 }
 
-/* -- TO REVIEW: the queue (master) and the selected entry's card (detail) ------------------
-   Past five entries the queue scrolls on its own at 4½ rows (the cut row says there is more), so the
-   card stays near the top of the column; the card's action bar is sticky at the column's foot. */
-.rq { position: relative; }
-.rq.more { max-height: calc(var(--h52) * 4.5); overflow-y: auto; border-bottom: 1px solid var(--line); }
-.rq .row.q { gap: 14px; }
-.rq .sq, .rq .sq0 { flex: none; width: 6px; height: 6px; margin: 0; top: 0; }
-.rq .n { flex: none; min-width: 20px; font-size: 13px; text-align: right; color: var(--dim); }
-.rq .syn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rq .dt { flex: none; font-size: 12px; color: var(--dim); }
-.rq .row.cur .sq0 { background: var(--text); }
-.rv-none .dot { margin-right: 12px; }
-.rv-card { padding: 16px 20px 20px; }
-.rv-card > .cc { border: 1px solid var(--line); border-radius: var(--r-card); }
+/* -- the one review line: amber square, mono count, "entries to review", REVIEW -------------- */
+.today .rv-line { gap: 0; padding: 6px 12px 6px 20px; border-bottom: 0; }
+.today .rv-line > .sq { margin-right: 14px; top: 0; }
+.today .rv-line .n { font-size: 15px; }
+.today .rv-line > .b { flex: none; min-width: 96px; }
+
+/* -- the review pop-up: an opaque ground over everything, one hairline panel ----------------
+   The <dialog> itself is the whole window (its own background, so it never relies on ::backdrop,
+   which older WebKitGTK doesn't style from custom properties); the panel sits centred in it. */
+.vw.split.today > dialog.rvd, dialog.rvd {
+  position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0;
+  padding: 24px; border: 0; background: var(--ground); color: var(--text); overflow: hidden;
+}
+dialog.rvd[open] { display: flex; align-items: center; justify-content: center; }
+dialog.rvd::backdrop { background: var(--ground); }
+.rvd-p {
+  display: flex; flex-direction: column; width: min(1120px, 100%); height: min(780px, 100%);
+  border: 1px solid var(--line); border-radius: var(--r-card); background: var(--ground); overflow: hidden;
+}
+.rvd-h { flex: none; display: flex; align-items: center; gap: 12px; height: var(--h52); padding: 0 6px 0 20px; border-bottom: 1px solid var(--line); }
+.rvd-h .n { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--text); }
+.rvd-h .grow { flex: 1 1 auto; }
+.rvd-h .b.x { min-width: 40px; padding: 0; font-size: 18px; font-weight: 400; letter-spacing: 0; }
+.rvd-b { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 1fr); }
+/* the queue: a rail of two-line rows (the synopsis, then the state and the date in mono) */
+.rvd-q { position: relative; min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); }
+.rvd-q .row.q { align-items: flex-start; gap: 12px; min-height: 68px; padding: 12px 16px 12px 20px; }
+.rvd-q .sq, .rvd-q .sq0 { flex: none; width: 6px; height: 6px; margin: 7px 0 0; top: 0; }
+.rvd-q .row.q > .grow { display: flex; flex-direction: column; gap: 5px; }
+.rvd-q .syn {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  font-size: 14px; line-height: 20px; overflow-wrap: anywhere;
+}
+.rvd-q .mt {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); white-space: nowrap;
+}
+.rvd-q .st { text-transform: uppercase; }
+.rvd-q .row.cur .mt, .rvd-q .row.cur .st.amb { color: var(--ground); }
+.rvd-q .row:focus-visible { outline-offset: -3px; }
+.rvd-q .row.cur:focus-visible { outline-color: var(--ground); }
+/* the selected entry's card fills the rest; its action bar sits at the foot (sticky when it is long) */
+.rvd-c { position: relative; min-height: 0; overflow-y: auto; }
+.rvd-c > .cc { display: flex; flex-direction: column; min-height: 100%; }
+.rvd-c > .cc > .cc-bar { margin-top: auto; }
+@media (max-width: 1099px) {
+  dialog.rvd { padding: 16px; }
+  .rvd-b { grid-template-columns: 260px minmax(0, 1fr); }
+  .rvd-h .hn { display: none; }
+}
+@media (max-width: 759px) {
+  .rvd-b { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 30%) minmax(0, 1fr); }
+  .rvd-q { border-right: 0; border-bottom: 1px solid var(--line); }
+}
 
 /* -- item rows: the done ring (.dn), text and a mono meta line, SNOOZE ---------------------- */
 .today .row.it { gap: 12px; padding: 6px 12px 6px 10px; }
@@ -34,7 +81,7 @@
 @media (hover: hover) { .dn:hover::before { border-color: var(--text); } }
 .dn.prs::before, .dn.done::before { background: var(--green); border-color: var(--green); }
 .dn:disabled::before, .dn:disabled:hover::before { background: var(--ground); border-color: var(--line2); }
-.today .it .t { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.today .it .t { max-width: 72ch; font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
 .today .it .mt, .cc .mt {
   margin-top: 3px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim);
   overflow-wrap: anywhere;
@@ -55,6 +102,11 @@
 .today .snz .b.tx:focus-visible, .today .snz .b.tx.on { border-color: var(--line2); background: var(--ground); color: var(--text); }
 .today .snz .b.tx:disabled, .today .snz .b.tx:disabled:hover { border-color: var(--ground); color: var(--line2); }
 .today .snz .b.tx.prs { background: var(--text); border-color: var(--text); color: var(--ground); }
+/* SNOOZE shows on the row's hover or focus (it keeps its place, so the text never re-wraps, and stays
+   in the Tab order: the ring's focus shows it); where there is no hover it always shows */
+@media (hover: hover) {
+  .today .row.it:not(:hover):not(:focus-within) .snz .b.tx:not(.on) { color: var(--ground); border-color: var(--ground); }
+}
 .snz-pick { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 2px 0 4px 52px; }
 .snz-pick .seg > button { min-width: 56px; font-family: var(--mono); font-weight: 500; font-size: 12px; }
 .today .grp {
@@ -105,11 +157,10 @@
 .pp .cc-err { margin-top: 8px; }
 
 /* footer: TELL IT WHAT'S WRONG, then CONFIRM ALL (the card's one primary) on the right; the folded
-   correction under it. The bar sticks to the foot of whatever scrolls the card (Today's column, #view
-   below 1100px, the tray), so CONFIRM ALL never scrolls out of sight while the card shows. */
+   correction under it. The bar sticks to the foot of whatever scrolls the card (the review pop-up's card pane,
+   the tray), so CONFIRM ALL never scrolls out of sight while the card shows. */
 .cc .cc-bar { position: sticky; bottom: 0; z-index: 1; min-height: 64px; padding: 8px 12px 8px 20px; border-top: 1px solid var(--line); }
 .cc .pps > .pp:last-child { border-bottom: 0; }
-.rv-card > .cc .cc-bar { border-radius: 0 0 var(--r-card) var(--r-card); }
 .cc-bar .err { font-size: 13px; line-height: 18px; text-align: right; }
 .cc-fix { display: flex; flex-direction: column; gap: 8px; padding: 6px 12px 16px 20px; }
 .cc-fix .fx { display: flex; align-items: flex-end; gap: 8px; }

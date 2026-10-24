@@ -129,3 +129,39 @@ test('scrollToShow and revealCard', () => {
   assert.equal(revealCard(600, 800, 300, 56, 700, 220), 100);
   assert.equal(revealCard(-300, 200, -340, 56, 700, 220), -396);  // scrolled past: back up, the row too
 });
+
+test('the pop-up: seen ids parse, prune and decide what is new', async () => {
+  const m = await import('./today-model.js');
+  assert.deepEqual(m.parseSeen('["e-1","e-2","e-1",3,"",null]'), ['e-1', 'e-2']);
+  for (const junk of [null, undefined, '', 'nope', '{"a":1}', '42']) assert.deepEqual(m.parseSeen(junk), []);
+  assert.deepEqual(m.unseenIds(['e-1', 'e-2', 'e-3'], new Set(['e-2'])), ['e-1', 'e-3']);
+  assert.deepEqual(m.unseenIds(['e-1'], ['e-1']), []);
+  assert.deepEqual(m.unseenIds([], null), []);
+  assert.deepEqual(m.pruneSeen(new Set(['e-1', 'e-9']), ['e-1', 'e-2']), ['e-1']);
+  assert.deepEqual(m.pruneSeen(['e-9'], []), []);
+  assert.equal(m.REVIEW_SEEN_KEY, 'brainhub.review.seen');
+});
+
+test('the pop-up opens by itself only for something new, never over typing or when read-only', async () => {
+  const { shouldAutoOpen } = await import('./today-model.js');
+  assert.equal(shouldAutoOpen({ open: false, typing: false, readonly: '', unseen: 1 }), true);
+  assert.equal(shouldAutoOpen({ open: false, typing: false, readonly: '', unseen: 0 }), false);
+  assert.equal(shouldAutoOpen({ open: true, typing: false, readonly: '', unseen: 2 }), false);
+  assert.equal(shouldAutoOpen({ open: false, typing: true, readonly: '', unseen: 2 }), false);
+  assert.equal(shouldAutoOpen({ open: false, typing: false, readonly: 'The drive is read-only', unseen: 2 }), false);
+});
+
+test('?review= asks for the pop-up, with an entry when it names one', async () => {
+  const { reviewTarget, reviewNoun } = await import('./today-model.js');
+  const q = (s) => new URLSearchParams(s);
+  assert.equal(reviewTarget(q('')), null);
+  assert.equal(reviewTarget(q('notice=setup-done')), null);
+  assert.equal(reviewTarget(null), null);
+  assert.deepEqual(reviewTarget(q('review=1')), { id: null });
+  assert.deepEqual(reviewTarget(q('review=')), { id: null });
+  assert.deepEqual(reviewTarget(q('review=e-20261024-022200-ab12')), { id: 'e-20261024-022200-ab12' });
+  assert.deepEqual(reviewTarget(q('review=<b>x</b>')), { id: null });
+  assert.equal(reviewNoun(1), 'entry to review');
+  assert.equal(reviewNoun(0), 'entries to review');
+  assert.equal(reviewNoun(7), 'entries to review');
+});

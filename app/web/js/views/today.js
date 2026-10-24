@@ -1,43 +1,42 @@
-// Today (spec 3.2; phase 4.5 design §4). Two columns from 1100px: on the left TO REVIEW as master
-// and detail (a queue of entries, at most 4½ rows tall with its own scroll, and the selected one's
-// confirm card below it, its action bar sticky at the column's foot; ↑/↓ move through the queue and
-// bring the card into view), then OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER (anything open that fits nowhere
-// else, so nothing confirmed ever vanishes); on the right NEXT TIME (by project), WAITING, TO READ.
+// Today (spec 3.2; phase 4.5 design §4; owner feedback 2026-10-24, T-P1…). Two columns from 1100px:
+// on the left OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER (anything open that fits nowhere else,
+// so nothing confirmed ever vanishes); on the right NEXT TIME (by project), WAITING, TO READ. Empty
+// sections are left out. What waits for confirmation is not on the page: it is one line at the top
+// ("7 entries to review", REVIEW) and a pop-up (today-review.js) that opens by itself when the queue
+// holds an entry this viewer hasn't been shown yet, never while the owner is typing anywhere.
 // Pure helpers: today-model.js. Styles: css/views/today.css.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
-import { confirmCard, setReviewHandler } from '../components/confirm-card.js';
-import { button, dot, notice as noticePanel, sectionHead, seg, emptyRow } from '../components/ui.js';
+import { setReviewHandler, whenFree } from '../components/confirm-card.js';
+import { button, notice as noticePanel, sectionHead, seg } from '../components/ui.js';
 import { readonlyReason } from '../drive.js';
 import {
-  SNOOZES, SNOOZE_NAMES, snoozeUntil, entryStamp, reviewQueue, pickSelection, moveSelection,
-  mapNames, groupName, projectSlugs, itemMeta, localDay, scrollToShow, revealCard,
+  SNOOZES, SNOOZE_NAMES, snoozeUntil, mapNames, groupName, projectSlugs, itemMeta, localDay,
+  REVIEW_SEEN_KEY, parseSeen, unseenIds, pruneSeen, shouldAutoOpen, reviewTarget, reviewNoun,
 } from './today-model.js';
+import { reviewDialog } from './today-review.js';
 
 export { snoozeUntil };
 
-// Survive re-renders and visits: the selected review entry (and its place), the open snooze.
-let selectedId = null;
-let selectedIndex = 0;
+// Survives re-renders and visits: the open snooze.
 let snoozeFor = null;
 
-// The queue shows at most this many rows before it scrolls (then 4½, so a cut row says "more").
-const QUEUE_ROWS = 5;
-
-// The nearest ancestor that scrolls: .main from 1100px, #view below.
-function scrollerOf(n) {
-  for (let p = n.parentElement; p; p = p.parentElement) {
-    const oy = getComputedStyle(p).overflowY;
-    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p;
-  }
-  return null;
+// The entries this viewer has been shown in the pop-up: in memory, and in localStorage so a reload
+// doesn't open it again for the same ones (try/catch: storage may be off or full).
+let seen = new Set();
+function loadSeen() {
+  try { for (const id of parseSeen(localStorage.getItem(REVIEW_SEEN_KEY))) seen.add(id); } catch (_) { /* no storage */ }
+}
+function saveSeen() {
+  try { localStorage.setItem(REVIEW_SEEN_KEY, JSON.stringify([...seen])); } catch (_) { /* no storage */ }
 }
 
-// Keep a queue row visible inside the queue's own scroll (.rq is its offset parent).
-function keepRowInList(list, row) {
-  const d = scrollToShow(row.offsetTop, row.offsetTop + row.offsetHeight, list.scrollTop, list.scrollTop + list.clientHeight);
-  if (d) list.scrollTop += d;
-}
+const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+// The owner is typing somewhere in the app: the capture box, a tray card's field, a field on a view.
+const typingAnywhere = () => {
+  const a = document.activeElement;
+  return !!(a && (TYPING.has(a.tagName) || a.isContentEditable));
+};
 
 const NOTICES = {
   'setup-done': 'Setup was already completed; set the backup URL in Settings.',
@@ -53,35 +52,35 @@ export async function render(container, _params, query) {
   const blocked = () => readonly;
   let names = mapNames(null);
   let linkable = null;
-  let review = null;  // the drawn queue: {has(id), select(id, opts)}, or null while it is empty
-
-  // The selected entry's card is kept across redraws (a refresh never flashes "Loading…" or drops
-  // what the card holds); it is replaced only when the selection moves.
-  let card = null;
-  let cardId = null;
-  let cardQ = null;  // the queue row the card was opened from
-  const dropCard = () => { if (card) { card.destroy(); card.remove(); } card = null; cardId = null; cardQ = null; };
-  // A kept card reloads (sequence-guarded, focus kept): the redraw comes after a change, and a card
-  // still showing a proposal handled elsewhere would send it with CONFIRM ALL.
-  const cardFor = (q) => {
-    if (card && cardId === q.id) { card.reload(); return card; }
-    dropCard();
-    card = confirmCard(q.id, { entryText: q.text, blocked, onChange: () => refresh() });
-    cardId = q.id;
-    cardQ = q;
-    return card;
-  };
+  let waitingToOpen = false;  // something new came while the owner was typing: open once they stop
 
   const view = el('div', { class: 'vw split today' });
-  const main = el('div', { class: 'main' });
+  const main = el('div', { class: 'main', tabindex: '-1', 'aria-label': 'Today' });
   const side = el('div', { class: 'side w400' });
   const note = query && NOTICES[query.get('notice')];
-  view.append(main, side);
+  const target = reviewTarget(query);  // #/today?review=… (the top bar's REVIEW n, off Today)
+  let reviewBtn = null;                // the line's REVIEW, while there is something to review
+
+  const rv = reviewDialog({
+    blocked,
+    onChange: () => refresh(),
+    onOpen: (ids) => {
+      let added = false;
+      for (const id of ids) if (!seen.has(id)) { seen.add(id); added = true; }
+      if (added) saveSeen();
+    },
+    // Back on Today: to what had the keyboard before, else the line's REVIEW, else the column.
+    onClosed: (opener) => {
+      if (dead) return;
+      (opener || (reviewBtn && reviewBtn.isConnected ? reviewBtn : main)).focus({ preventScroll: true });
+    },
+  });
+  view.append(main, side, rv.node);
   container.appendChild(view);
 
   function typing() {
     const a = document.activeElement;
-    return a && view.contains(a) && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT' || a.tagName === 'SELECT');
+    return a && view.contains(a) && TYPING.has(a.tagName);
   }
 
   async function refresh() {
@@ -113,135 +112,74 @@ export async function render(container, _params, query) {
     setTimeout(() => { if (dirty && !typing()) { dirty = false; refresh(); } }, 0);
   });
 
+  // -- the pop-up opens by itself for something new (T-P2) -----------------------------------
+  function maybeOpen() {
+    if (dead) return;
+    loadSeen();  // another window of the app may have shown some meanwhile
+    const unseen = unseenIds(rv.ids(), seen);
+    if (!shouldAutoOpen({ open: rv.isOpen(), typing: false, readonly, unseen: unseen.length })) { waitingToOpen = false; return; }
+    if (typingAnywhere()) { waitingToOpen = true; return; }  // the focusout below tries again
+    waitingToOpen = false;
+    rv.open({ id: unseen[0] });  // on the first new entry
+  }
+  // Leaving a field anywhere (the capture box too): after the press that moved the focus has landed
+  // (a pop-up at pointer-down would take the click), and only when the focus didn't go to another field.
+  const onFocusOut = () => { if (waitingToOpen) whenFree(maybeOpen); };
+  document.addEventListener('focusout', onFocusOut, true);
+  subs.push(() => document.removeEventListener('focusout', onFocusOut, true));
+
   function draw({ today, proposals, failed }) {
-    // Where the keyboard was: the queue's current row, or a control with a key, gets it back.
+    // Where the keyboard was on the page (not in the pop-up, which keeps its own): a control with a key.
     const a = document.activeElement;
-    const inQueue = a && a.closest && a.closest('.rq');
-    const inCard = !inQueue && a && card && card.contains(a) ? a : null;  // the card is kept: refocus the node
-    // The card was busy (its buttons disabled, the focus on <body>) and meant to take it back.
-    const cardWants = !inQueue && !inCard && (!a || a === document.body) && card && card.wantsFocus();
-    const prevCard = card;
-    const key = !inQueue && !inCard && a && view.contains(a) ? a.dataset.k : null;
-    const oldList = main.querySelector('.rq');
-    const listTop = oldList ? oldList.scrollTop : 0;
+    const key = a && (main.contains(a) || side.contains(a)) ? a.dataset.k : null;
+    const n = rv.update(proposals, failed);
+    // Forget the entries that left the queue, so the stored list stays small.
+    const kept = pruneSeen(seen, rv.ids());
+    if (kept.length !== seen.size) { seen = new Set(kept); saveSeen(); }
     clear(main);
     clear(side);
+    reviewBtn = null;
     if (note) main.appendChild(el('div', { class: 'tdy-note' }, noticePanel(note)));
-    main.appendChild(reviewSection(proposals, failed));
-    main.appendChild(section('Overdue', today.overdue));
-    main.appendChild(section('Due today', today.due_today));
-    main.appendChild(section('Upcoming', today.upcoming));
-    main.appendChild(section('Open tasks', today.open_tasks));
-    if ((today.other || []).length) main.appendChild(section('Other', today.other));
-    side.appendChild(nextTimeSection(today.next_time || {}));
-    side.appendChild(section('Waiting', today.waiting, (w) => itemRow(w.item, { nudge: w.nudge })));
-    side.appendChild(section('To read', today.to_read));
-    // The queue keeps its own scroll, and its selected row stays in it.
-    const list = main.querySelector('.rq');
-    const cur = main.querySelector('.rq .row.cur');
-    if (list) {
-      list.scrollTop = listTop;
-      if (cur) keepRowInList(list, cur);
+    if (n) main.appendChild(reviewLine(n));
+    const lists = [['Overdue', today.overdue], ['Due today', today.due_today], ['Upcoming', today.upcoming],
+      ['Open tasks', today.open_tasks], ['Other', today.other]].filter(([, l]) => (l || []).length);
+    for (const [title, l] of lists) main.appendChild(section(title, l));
+    if (!lists.length) main.appendChild(el('div', { class: 'empty tdy-none' }, 'Nothing due, nothing open.'));
+    const nt = today.next_time || {};
+    const sides = [];
+    if (Object.keys(nt).length) sides.push(nextTimeSection(nt));
+    if ((today.waiting || []).length) sides.push(section('Waiting', today.waiting, (w) => itemRow(w.item, { nudge: w.nudge })));
+    if ((today.to_read || []).length) sides.push(section('To read', today.to_read));
+    side.append(...sides);
+    if (!sides.length) side.appendChild(el('div', { class: 'empty tdy-none' }, 'Nothing waiting, nothing to read.'));
+    if (key) {
+      const k = view.querySelector(`[data-k="${CSS.escape(key)}"]`);
+      if (k) k.focus({ preventScroll: true });
     }
-    if (inQueue) {
-      if (cur) cur.focus({ preventScroll: true });
-    } else if ((inCard || cardWants) && card && card !== prevCard) {
-      // The selected entry was done with (its last proposal handled) and the selection moved on:
-      // the keyboard goes to the next entry's first ✓, not to <body>.
-      card.focusFirst();
-    } else if (inCard) {
-      if (inCard.isConnected) inCard.focus({ preventScroll: true });
-    } else if (key) {
-      const n = view.querySelector(`[data-k="${CSS.escape(key)}"]`);
-      if (n) n.focus({ preventScroll: true });
-    }
+    whenFree(maybeOpen);
   }
 
-  // -- To review: the queue and the selected entry's card ------------------------------------
-  // groups: /api/proposals; failedRows: /api/filings?status=failed ({entry_id, error, ts, text}).
-  function reviewSection(groups, failedRows) {
-    const queue = reviewQueue(groups, failedRows);
-    // An entry being filed again (RETRY, RE-FILE) is in neither list until it is done: while its
-    // card is open it keeps its row, so the card doesn't vanish under the owner's eyes.
-    if (card && cardQ && !queue.some((q) => q.id === cardId) && card.refiling()) {
-      queue.splice(Math.min(selectedIndex, queue.length), 0, { ...cardQ, failed: false, filing: true });
-    }
-    selectedId = pickSelection(queue, selectedId, selectedIndex);
-    const box = el('section', { class: 'sec rv', 'aria-label': 'To review' }, sectionHead('To review', queue.length));
-    if (!queue.length) {
-      review = null;
-      dropCard();
-      box.appendChild(el('div', { class: 'empty rv-none' }, dot('g'), 'Nothing to review'));
-      return box;
-    }
-    const slot = el('div', { class: 'rv-card' });
-    const rows = new Map();
-    // reveal: the owner's own move (a click, ↑/↓, the tray's REVIEW) brings the card into view; a
-    // background redraw never scrolls.
-    const select = (id, { focus, reveal } = {}) => {
-      selectedId = id;
-      selectedIndex = Math.max(0, queue.findIndex((q) => q.id === id));
-      for (const [rid, r] of rows) {
-        const on = rid === id;
-        r.classList.toggle('cur', on);
-        r.setAttribute('aria-current', on ? 'true' : 'false');
-        r.tabIndex = on ? 0 : -1;
-      }
-      const c = cardFor(queue[selectedIndex]);
-      if (slot.firstChild !== c) slot.replaceChildren(c);
-      const row = rows.get(id);
-      if (!list.isConnected) return;
-      keepRowInList(list, row);
-      if (focus) row.focus({ preventScroll: false });
-      if (reveal) {
-        const sc = scrollerOf(slot);
-        if (!sc) return;
-        const v = sc.getBoundingClientRect();
-        const cb = slot.getBoundingClientRect();
-        const d = revealCard(cb.top, cb.bottom, Math.max(row.getBoundingClientRect().top, list.getBoundingClientRect().top), v.top, v.bottom, 300);
-        if (d) sc.scrollTop += d;
-      }
-    };
-    const list = el('div', { class: queue.length > QUEUE_ROWS ? 'rq more' : 'rq', role: 'group',
-      'aria-label': 'Entries to review (arrow keys move)',
-      onkeydown: (ev) => {
-        if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
-        const to = moveSelection(queue, selectedId, ev.key);
-        if (!to) return;
-        ev.preventDefault();
-        if (to !== selectedId) select(to, { focus: true, reveal: true });
-      } });
-    const today = localDay();
-    for (const q of queue) {
-      const r = el('button', { type: 'button', class: q.failed ? 'row q fl' : 'row q',
-        title: q.failed ? `Filing failed: ${q.error}`.slice(0, 300) : null,
-        onclick: () => select(q.id, { reveal: true }) },
-        q.failed ? el('span', { class: 'sq' }) : el('span', { class: 'sq0', 'aria-hidden': 'true' }),
-        el('span', { class: 'm n' }, q.failed || q.filing ? '–' : String(q.count)),
-        el('span', { class: 'sr' }, q.failed ? 'Filing failed: ' : q.filing ? 'Filing: ' : q.count === 1 ? 'proposal: ' : 'proposals: '),
-        el('span', { class: 'grow syn' }, q.synopsis),
-        el('span', { class: 'm dt' }, entryStamp(q.id, today)));
-      rows.set(q.id, r);
-      list.appendChild(r);
-    }
-    box.append(list, slot);
-    select(selectedId);
-    review = { has: (id) => rows.has(id), select };
-    return box;
+  // -- the one review line: an amber square, "7 entries to review", REVIEW ---------------------
+  function reviewLine(n) {
+    reviewBtn = button('Review', { size: 40, onclick: () => rv.open() });
+    reviewBtn.dataset.k = 'review';
+    reviewBtn.setAttribute('aria-haspopup', 'dialog');
+    return el('div', { class: 'row rv-line' },
+      el('span', { class: 'sq' }),
+      el('span', { class: 'grow' }, el('span', { class: 'm n' }, String(n)), ' ', reviewNoun(n)),
+      reviewBtn);
   }
 
   // -- item sections ------------------------------------------------------------------------
   function section(title, rows, build = (it) => itemRow(it)) {
     const list = rows || [];
-    return el('section', { class: 'sec', 'aria-label': title }, sectionHead(title, list.length),
-      list.length ? list.map(build) : emptyRow('None'));
+    return el('section', { class: 'sec', 'aria-label': title }, sectionHead(title, list.length), list.map(build));
   }
 
   function nextTimeSection(groups) {
     const keys = Object.keys(groups);
     const total = keys.reduce((n, k) => n + groups[k].length, 0);
     const box = el('section', { class: 'sec', 'aria-label': 'Next time' }, sectionHead('Next time', total));
-    if (!keys.length) box.appendChild(emptyRow('None'));
     for (const key of keys) {
       const name = groupName(names, key);
       const link = !linkable || linkable.has(key);
@@ -312,13 +250,15 @@ export async function render(container, _params, query) {
       pick);
   }
 
-  // -- the tray's REVIEW, while Today is the current view ------------------------------------
-  // An entry in the queue is selected here (its card gets the keyboard) instead of opening a second
-  // full card in the tray; the tray's card rests compact while this one is open.
+  // -- the tray's REVIEW and the top bar's REVIEW n, while Today is the current view -----------
+  // The tray's REVIEW (an entry id) opens the pop-up on that entry, its first ✓ taking the keyboard,
+  // instead of a second full card in the tray; an entry not in the queue (still filing) stays the
+  // tray's. The top bar's REVIEW n (null) opens it as it was.
   subs.push(setReviewHandler((id) => {
-    if (dead || !review || !review.has(id)) return false;
-    review.select(id, { reveal: true });
-    if (card) card.focusFirst();
+    if (dead) return false;
+    if (id === null) { rv.open(); return true; }
+    if (!rv.has(id)) return false;
+    rv.open({ id, focusCard: true });
     return true;
   }));
 
@@ -326,6 +266,16 @@ export async function render(container, _params, query) {
   for (const type of ['items.changed', 'filing.started', 'filing.done', 'filing.failed', 'ws.open']) {
     subs.push(api.onEvent(type, () => refresh()));
   }
+  loadSeen();
   await refresh();
-  return () => { dead = true; dropCard(); for (const d of subs.splice(0)) d(); };
+  if (target && !dead) {
+    // Asked for by the route (#/today?review=…): open it, and drop the ask from the address so a
+    // reload doesn't ask again (no hashchange, so the view stays).
+    const q = new URLSearchParams(query);
+    q.delete('review');
+    const rest = q.toString();
+    history.replaceState(history.state, '', `#/today${rest ? `?${rest}` : ''}`);
+    rv.open({ id: target.id, focusCard: !!target.id });
+  }
+  return () => { dead = true; rv.destroy(); for (const d of subs.splice(0)) d(); };
 }

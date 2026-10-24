@@ -1,6 +1,6 @@
 // The top bar (phase 4.5 design §3): the six tabs and SETTINGS (selected from the route), the SETUP
 // label, and the status cluster from status-model.statusFrom(): amber chips, REVIEW n (entries to
-// review, as Today's TO REVIEW counts them; the proposals are in its title), 5H n%, the agents dot and
+// review, as Today's pop-up counts them; the proposals are in its title; it opens that pop-up), 5H n%, the agents dot and
 // the VOICE switch. The static parts (brand, #nav, #mode, #status, #settings-tab) are in
 // index.html. Text enters only through el() and textContent (rule 6).
 import * as api from '../api.js';
@@ -10,6 +10,7 @@ import { statusFrom, reviewCounts } from '../status-model.js';
 import { widgetVoice } from '../views/voice-model.js';
 import { readonlyReason } from '../drive.js';
 import { chip, dot, switchEl } from './ui.js';
+import { requestReview } from './confirm-card.js';
 
 // What can change the cluster's numbers: the widget's own list, plus tablet requests.
 const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.started', 'filing.done',
@@ -34,7 +35,9 @@ export function mountTopbar({ shell }) {
   const chips = el('span', { class: 'chips' });
   const reviewV = el('span', { class: 'v' }, '–');
   // At narrow widths the label shortens to REV (a bare amber number would say nothing).
-  const review = el('a', { class: 'sl ro rv', href: '#/today', 'data-press': true },
+  // It opens Today's review pop-up: at once on Today (requestReview), else through the route.
+  const review = el('a', { class: 'sl ro rv', href: '#/today?review=1', 'data-press': true, 'aria-haspopup': 'dialog',
+    onclick: (ev) => { if (requestReview(null)) ev.preventDefault(); } },
     el('span', { class: 'l long' }, 'REVIEW'), el('span', { class: 'l short' }, 'REV'), reviewV);
   const usageL = el('span', { class: 'u' }, '5H');
   const usageV = el('span', { class: 'v' }, '–');

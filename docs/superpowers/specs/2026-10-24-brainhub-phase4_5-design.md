@@ -120,18 +120,20 @@ It is always visible, reduced mode included.
 - An empty state is one faint row.
 - Reading text (`.read`) is 16px/1.6, at most 72ch.
 
-**Today.**
+**Today.** (Amended after the owner's test drive, 2026-10-24: the review moved into a pop-up; decisions T-P1…T-P12.)
 - Two columns at 1100px and wider.
-- **Left column:**
-  - **TO REVIEW** works as master and detail. The queue rows carry an amber square for a failed filing, a count, the synopsis and a date.
-  - The selected row is inverted, and only that entry's confirm card is open. ↑ and ↓ move through the queue.
-  - When the queue is empty: a green dot and "Nothing to review".
-  - Then OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER.
-- **Right column:** NEXT TIME (by project), WAITING and TO READ.
+- **Left column:** OVERDUE, DUE TODAY, UPCOMING, OPEN TASKS and OTHER. An empty section is left out; when all of them are, one faint row says "Nothing due, nothing open." Sections are 24px apart, each a ruled 40px head over its rows.
+- **Right column:** NEXT TIME (by project), WAITING and TO READ, left out the same way ("Nothing waiting, nothing to read.").
+- **What waits for confirmation is not on the page.** While there is any, the left column starts with one line: the amber square, "7 entries to review" (mono count) and `REVIEW`. With none, there is no line.
+- **The review pop-up** (a modal `<dialog>`, Esc or × closes it, the focus stays inside):
+  - an opaque ground over the whole window, so only the review shows; a hairline panel, 4px radius, `min(1120px, 100vw − 48px)` × `min(780px, 100vh − 48px)`;
+  - a header `TO REVIEW n` with ×; the queue as a rail on the left (two-line rows: the synopsis, then `6 TO CONFIRM` or an amber `FAILED`, and the date; the selected row is inverted; ↑ and ↓ move); the selected entry's confirm card as the main area, its action bar (TELL IT WHAT'S WRONG, CONFIRM ALL) at the foot;
+  - it opens by itself on Today when the queue holds an entry this viewer hasn't been shown in it yet (on arrival or on a live update), never while the owner is typing anywhere in the app, never on other views, and not on a read-only root; it never opens again for the same entries, also after a reload;
+  - it also opens from the line's REVIEW, the top bar's `REVIEW n` (from anywhere: `#/today?review=1`) and the tray's REVIEW on Today (on that entry); it closes by itself once the last entry is handled.
 - **Item rows:**
   - A hollow ring is the done button.
   - The meta line is mono, and overdue dates are amber.
-  - `SNOOZE` opens an inline segmented control: 1 D, 3 D, 1 W.
+  - `SNOOZE` opens an inline segmented control: 1 D, 3 D, 1 W. With a mouse it shows only on the row's hover or keyboard focus (it keeps its place, so the text never re-wraps).
   - "NUDGE?" is amber.
 
 **Confirm card.** It does everything it did before, laid out differently:

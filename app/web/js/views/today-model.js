@@ -158,3 +158,46 @@ export function revealCard(cardTop, cardBottom, rowTop, viewTop, viewBottom, wan
   if (d < 0) return Math.min(d, rowTop - viewTop);
   return 0;
 }
+
+// -- the review pop-up (owner feedback 2026-10-24, T-P lines) --------------------------------
+// The pop-up opens by itself on Today when the queue holds an entry this viewer hasn't been shown in
+// it yet. The shown ids live in memory and in localStorage (key REVIEW_SEEN_KEY), pruned to the ids
+// still in the queue.
+export const REVIEW_SEEN_KEY = 'brainhub.review.seen';
+
+// The stored value (a JSON array of ids, or junk from storage) as a list of distinct non-empty ids.
+export function parseSeen(raw) {
+  let v;
+  try { v = JSON.parse(String(raw)); } catch (_) { return []; }
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((x) => typeof x === 'string' && x))];
+}
+
+// The ids of `ids` not in `seen` (a Set or an array), in the order of `ids`.
+export function unseenIds(ids, seen) {
+  const s = seen instanceof Set ? seen : new Set(seen || []);
+  return (ids || []).filter((id) => !s.has(id));
+}
+
+// `seen` kept only for the ids still in the queue (so the stored list never grows without end).
+export function pruneSeen(seen, ids) {
+  const keep = new Set(ids || []);
+  return [...(seen || [])].filter((id) => keep.has(id));
+}
+
+// Whether the pop-up may open by itself now: something new, it isn't open already, the owner isn't
+// typing anywhere (the capture box counts), and the root can be written (read-only: the line only).
+export function shouldAutoOpen({ open, typing, readonly, unseen }) {
+  return !open && !typing && !readonly && unseen > 0;
+}
+
+// "#/today?review=1" (the top bar's REVIEW n) or "?review=<entry id>" (one entry selected): null when
+// the query asks for no review, else {id} (null: keep the current selection).
+export function reviewTarget(query) {
+  const v = query && typeof query.get === 'function' ? query.get('review') : null;
+  if (v === null || v === undefined) return null;
+  return { id: /^e-[\w-]+$/.test(v) ? v : null };
+}
+
+// The Today line's words after its mono count: "1 entry to review", "7 entries to review".
+export const reviewNoun = (n) => (n === 1 ? 'entry to review' : 'entries to review');
