@@ -6,7 +6,7 @@ import { TILE_LABEL, tileSummary, popupRows, synopsisText, loadDraft, saveDraft,
 import { widgetVoice } from './views/voice-model.js';
 
 const WIDTH = 520;
-const OFFLINE = 'BrainHub offline · retrying';
+const OFFLINE = 'ATLAS offline · retrying';
 const SVG = 'http://www.w3.org/2000/svg';
 const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.done', 'filing.failed', 'map.changed'];
 
@@ -166,7 +166,7 @@ function renderPopup() {
   if (popupError) popup.appendChild(el('div', { class: 'wpop-err err', role: 'alert' }, popupError));
   popup.appendChild(el('div', { class: 'wpop-f' },
     el('button', { class: 'b h40', type: 'button', 'data-focus': 'footer', onclick: () => openInApp(name) },
-      name === 'arm' ? 'OPEN ROBOT ARM ›' : 'OPEN IN BRAINHUB ›')));
+      name === 'arm' ? 'OPEN ROBOT ARM ›' : 'OPEN IN ATLAS ›')));
 }
 
 function focusKey() {

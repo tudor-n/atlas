@@ -1,5 +1,5 @@
 // Pure model for the top bar's status cluster (phase 4.5 design §3): the amber chips, REVIEW n, 5H n%,
-// the agents dot and the voice switch, from GET /api/widget (brainhub/widget.py build_widget, plus
+// the agents dot and the voice switch, from GET /api/widget (atlas/widget.py build_widget, plus
 // `drive`) and GET /api/voice. No DOM. The reduced app's /api/widget has only synopsis, attention,
 // tiles, drive and warnings, so every other field is optional here.
 import { driveText, readonlyReason } from './drive.js';

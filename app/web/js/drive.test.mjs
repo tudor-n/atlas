@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { heldText, driveText, readonlyReason } from './drive.js';
 
-const MSG = "BrainHub's drive isn't available.";
+const MSG = "ATLAS's drive isn't available.";
 
 test('held count', () => {
   assert.equal(heldText(0), '');

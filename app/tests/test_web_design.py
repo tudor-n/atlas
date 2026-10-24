@@ -461,8 +461,8 @@ JS_URL_ALLOW = {
     ("js/widget.js", "http://www.w3.org/2000/svg"): "SVG namespace for createElementNS",
     ("js/views/tablet-model.js", "http://${s.listening}:${s.port}/tablet"):
         "status text telling the owner the tablet's LAN address; shown, never fetched",
-    ("js/views/setup.js", "https://github.com/you/brainhub-backup.git"): "placeholder hint in the backup-remote field",
-    ("js/views/settings-sections.js", "https://github.com/you/brainhub-backup.git"):
+    ("js/views/setup.js", "https://github.com/you/atlas-backup.git"): "placeholder hint in the backup-remote field",
+    ("js/views/settings-sections.js", "https://github.com/you/atlas-backup.git"):
         "placeholder hint in the backup-remote field",
 }
 JS_URL = re.compile(r"""(?:https?|wss?|ftp)://[^\s'"`]*|(?<=['"`])//[\w$.-]+[^\s'"`]*""", re.I)
@@ -501,7 +501,7 @@ def test_guard_catches_external_loads():
         assert not _html_external(html), html
     for src in ("fetch('https://x/y')", "import('https://esm.sh/x')", "import x from 'https://x/y.js';",
                 "new WebSocket('wss://x')", "fetch('//x.y/z')", "img.src = `http://${h}/a.png`",
-                "const u = 'https://example.com';", "fetch('https://github.com/you/brainhub-backup.git')"):
+                "const u = 'https://example.com';", "fetch('https://github.com/you/atlas-backup.git')"):
         assert _js_urls("js/x.js", src), src
     # an allow-listed URL is still caught when the line loads it, and in any other file
     assert _js_urls("js/widget.js", "fetch('http://www.w3.org/2000/svg')")

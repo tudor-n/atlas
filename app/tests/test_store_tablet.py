@@ -5,9 +5,9 @@ from datetime import datetime
 
 import pytest
 
-from brainhub import store as store_mod
-from brainhub.models import Entry
-from brainhub.store import Store
+from atlas import store as store_mod
+from atlas.models import Entry
+from atlas.store import Store
 
 
 def test_schema_3_adds_the_tablet_tables_to_a_version_2_db(paths):

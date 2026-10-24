@@ -1,6 +1,6 @@
 import asyncio
 
-from brainhub.backup import BackupPusher
+from atlas.backup import BackupPusher
 from tests.fakes import Clock, FakeRepo
 
 
@@ -95,7 +95,7 @@ async def test_run_forever_survives_errors_and_cancels(monkeypatch):
 
     b.tick = boom
     real_sleep = asyncio.sleep
-    monkeypatch.setattr("brainhub.backup.asyncio.sleep", lambda s: real_sleep(0))
+    monkeypatch.setattr("atlas.backup.asyncio.sleep", lambda s: real_sleep(0))
     task = asyncio.create_task(b.run_forever())
     for _ in range(20):
         await real_sleep(0)

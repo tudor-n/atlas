@@ -4,14 +4,14 @@ import assert from 'node:assert/strict';
 import { railPlaces, findPlace, browsePath, localDay, dateCell } from './browse-model.js';
 
 const MAP = {
-  projects: [{ slug: 'robotarm', name: 'Robot arm' }, { slug: 'brainhub', name: 'BrainHub' }, { name: 'no slug' }],
+  projects: [{ slug: 'robotarm', name: 'Robot arm' }, { slug: 'atlas', name: 'ATLAS' }, { name: 'no slug' }],
   courses: [{ slug: 'thesis', name: 'Bachelor thesis' }],
 };
 
 test('railPlaces: projects, then courses, as route paths', () => {
   assert.deepEqual(railPlaces(MAP).map((p) => [p.path, p.name, p.kind]), [
     ['project/robotarm', 'Robot arm', 'project'],
-    ['project/brainhub', 'BrainHub', 'project'],
+    ['project/atlas', 'ATLAS', 'project'],
     ['project/thesis', 'Bachelor thesis', 'course'],
   ]);
   assert.deepEqual(railPlaces(null), []);

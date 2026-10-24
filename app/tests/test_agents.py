@@ -4,11 +4,11 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from brainhub import osdirs
-from brainhub.agents import (AgentTracker, find_git_dir, read_branch, resolve_project,
+from atlas import osdirs
+from atlas.agents import (AgentTracker, find_git_dir, read_branch, resolve_project,
                              simplify_branch, suggest_link)
-from brainhub.brainmap import BrainMap, save_map
-from brainhub.store import SCHEMA_VERSION, Store
+from atlas.brainmap import BrainMap, save_map
+from atlas.store import SCHEMA_VERSION, Store
 
 T0 = datetime(2026, 10, 21, 12, 0, 0)
 

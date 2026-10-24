@@ -1,6 +1,6 @@
 import pytest
 
-from brainhub.config import Paths
+from atlas.config import Paths
 
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def paths(tmp_path):
 
 @pytest.fixture
 def store(paths):
-    from brainhub.store import Store
+    from atlas.store import Store
     s = Store(paths.db)
     s.init_schema()
     return s
@@ -26,8 +26,8 @@ def _isolate_claude_dirs(tmp_path, monkeypatch):
     (desktop-entry's launcher files; its tests also pass --data-home)."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
-    monkeypatch.setenv("BRAINHUB_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("BRAINHUB_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("BRAINHUB_SHARED_DIR", str(tmp_path / "claude-shared"))
-    monkeypatch.setenv("BRAINHUB_BIN_DIR", str(tmp_path / "bin"))  # brainhub-request (phase 3)
+    monkeypatch.setenv("ATLAS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("ATLAS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("ATLAS_SHARED_DIR", str(tmp_path / "claude-shared"))
+    monkeypatch.setenv("ATLAS_BIN_DIR", str(tmp_path / "bin"))  # atlas-request (phase 3)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))  # desktop-entry (phase 4.5)

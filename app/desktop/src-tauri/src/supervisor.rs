@@ -3,7 +3,7 @@
 //! In runtime mode (plan decision P2) every start first runs, outside the supervisor's lock (see
 //! `Prep`): `claude-sync` once per shell start, then the update step, both with the current
 //! slot's python; then the hub starts from the slot `current.json` names. The hub, the step and
-//! claude-sync all get `BRAINHUB_STATE_DIR` = `desktop.json`'s state folder, which also holds
+//! claude-sync all get `ATLAS_STATE_DIR` = `desktop.json`'s state folder, which also holds
 //! hub.log, so the logs and the hub's view of the runtime never split from the slots (ruling D12).
 
 use crate::claude_watch::{ClaudeSync, ClaudeWatch};
@@ -39,9 +39,9 @@ pub const TERM_GRACE: Duration = Duration::from_secs(3);
 const KILL_WAIT: Duration = Duration::from_secs(5);
 /// The digest of this shell's own source, baked in by build.rs (empty when it couldn't be
 /// computed, which never counts as a difference).
-pub const SHELL_SOURCE: &str = env!("BRAINHUB_SHELL_SOURCE");
+pub const SHELL_SOURCE: &str = env!("ATLAS_SHELL_SOURCE");
 
-/// What the tray says besides "BrainHub".
+/// What the tray says besides "ATLAS".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
     /// Runtime mode without a usable slot (`runtime init` never ran): nothing is started.
@@ -110,13 +110,13 @@ fn write_shell_json(state: &Path, own: &str) -> std::io::Result<()> {
 }
 
 /// Append one shell line to hub.log.
-fn append_log(log: &Path, msg: &str) {
+pub(crate) fn append_log(log: &Path, msg: &str) {
     if let Some(dir) = log.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log) {
         let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let _ = writeln!(f, "[brainhub-desktop t={secs}] {msg}");
+        let _ = writeln!(f, "[atlas-desktop t={secs}] {msg}");
     }
 }
 
@@ -217,6 +217,22 @@ fn run_bounded(mut cmd: Command, log: &Path, limit: Duration, grace: Duration) -
     }
 }
 
+/// The package folder in a slot's (or a checkout's) `app/`: `atlas` when it is there, else the
+/// pre-rename one when that is there (rename spec §2.3: the first start after the rename still
+/// runs a pre-rename slot, whose update step then builds the new one), else `atlas`.
+pub fn slot_package(app: &Path) -> &'static str {
+    if !app.join("atlas").is_dir() && app.join(crate::migrate::LEGACY_PACKAGE).is_dir() {
+        crate::migrate::LEGACY_PACKAGE
+    } else {
+        "atlas"
+    }
+}
+
+/// The state folder for a child: under both names, so a pre-rename slot's code finds it too.
+fn state_env(cmd: &mut Command, state: &Path) {
+    cmd.env("ATLAS_STATE_DIR", state).env(crate::migrate::LEGACY_STATE_VAR, state);
+}
+
 /// The time limits of a runtime start's slow part and of the claude-sync watch (tests shorten them).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
@@ -226,20 +242,21 @@ pub struct Limits {
     pub term_grace: Duration,
 }
 
-/// Run `<slot python> -m brainhub claude-sync [--settings-only]` in the slot's `app/`, bounded, and
+/// Run `<slot python> -m atlas claude-sync [--settings-only]` in the slot's `app/`, bounded, and
 /// log the command and how it ended (`why` says what asked for it). The exit code is only logged:
 /// a slot without the command, or a missing shared drive, just fails here.
 pub(crate) fn run_claude_sync(python: &Path, app: &Path, state: &Path, log: &Path, settings_only: bool, why: &str,
                               limits: Limits) {
+    let package = slot_package(app);
     let mut sync = Command::new(python);
-    sync.args(["-m", "brainhub", "claude-sync"])
+    sync.args(["-m", package, "claude-sync"])
         .args(settings_only.then_some("--settings-only"))
         .current_dir(app)
-        .env("BRAINHUB_STATE_DIR", state)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8");
+    state_env(&mut sync, state);
     let flag = if settings_only { " --settings-only" } else { "" };
-    append_log(log, &format!("claude-sync ({why}): {} -m brainhub claude-sync{flag} (in {})", python.display(),
+    append_log(log, &format!("claude-sync ({why}): {} -m {package} claude-sync{flag} (in {})", python.display(),
                              app.display()));
     let how = run_bounded(sync, log, limits.claude_sync, limits.term_grace);
     append_log(log, &format!("claude-sync ({why}): {how}"));
@@ -274,9 +291,9 @@ impl Prep {
                 run_claude_sync(&self.python, &self.app, &self.state, &self.log, false, "at start", self.limits)
             });
         }
-        // Run as a file, isolated (-I -S), like the hook client: it imports nothing from brainhub.
+        // Run as a file, isolated (-I -S), like the hook client: it imports nothing from atlas.
         // Its one JSON line goes straight to hub.log.
-        let script = self.app.join("brainhub").join("update_step.py");
+        let script = self.app.join(slot_package(&self.app)).join("update_step.py");
         let mut step = Command::new(&self.python);
         step.args(["-I", "-S"])
             .arg(&script)
@@ -284,8 +301,8 @@ impl Prep {
             .arg(&self.live)
             .arg("--state")
             .arg(&self.state)
-            .current_dir(&self.state)
-            .env("BRAINHUB_STATE_DIR", &self.state);
+            .current_dir(&self.state);
+        state_env(&mut step, &self.state);
         log(&format!("update step: {} -I -S {} --live {} --state {}", self.python.display(), script.display(),
                      self.live.display(), self.state.display()));
         let how = run_bounded(step, &self.log, self.limits.update_step, self.limits.term_grace);
@@ -298,11 +315,11 @@ pub fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(if attempt >= 6 { 60 } else { 1u64 << attempt })
 }
 
-/// The hub's arguments: `-m brainhub --root <root> --port <port>`. The port is passed explicitly so
-/// the hub listens where the shell looks, even if the hub's own `port` setting has changed since
-/// `desktop-config` ran.
-pub fn hub_args(root: &Path, port: u16) -> Vec<OsString> {
-    vec!["-m".into(), "brainhub".into(), "--root".into(), root.as_os_str().to_owned(), "--port".into(),
+/// The hub's arguments: `-m <package> --root <root> --port <port>` (`package` from
+/// `slot_package`). The port is passed explicitly so the hub listens where the shell looks, even if
+/// the hub's own `port` setting has changed since `desktop-config` ran.
+pub fn hub_args(package: &str, root: &Path, port: u16) -> Vec<OsString> {
+    vec!["-m".into(), package.into(), "--root".into(), root.as_os_str().to_owned(), "--port".into(),
          port.to_string().into()]
 }
 
@@ -399,7 +416,7 @@ impl Supervisor {
         self.last_up
     }
 
-    /// What the tray should say besides "BrainHub", if anything.
+    /// What the tray should say besides "ATLAS", if anything.
     pub fn notice(&self) -> Option<Notice> {
         if self.no_slot {
             Some(Notice::NoSlot)
@@ -454,7 +471,7 @@ impl Supervisor {
             if !self.no_slot {
                 self.no_slot = true;
                 self.log(&format!(
-                    "no runtime slot in {}: not starting a hub (connect only). Run `python -m brainhub runtime init --live {}` once.",
+                    "no runtime slot in {}: not starting a hub (connect only). Run `python -m atlas runtime init --live {}` once.",
                     state.display(),
                     live.display()
                 ));
@@ -603,9 +620,9 @@ impl Supervisor {
         append_log(&self.log_path(), msg);
     }
 
-    /// Start `<python> -m brainhub --root <root> --port <port>` in `app_dir`: the configured
+    /// Start `<python> -m atlas --root <root> --port <port>` in `app_dir`: the configured
     /// python and app in legacy mode, the current slot's venv python and `app/` in runtime mode.
-    /// Never with `-I` or `-P`: the hub imports `brainhub` from its working folder.
+    /// Never with `-I` or `-P`: the hub imports `atlas` from its working folder.
     fn spawn(&mut self, python: PathBuf, app_dir: PathBuf, root: PathBuf) {
         let Some(out) = self.open_log() else {
             self.schedule_retry(&format!("cannot open {}", self.log_path().display()));
@@ -619,8 +636,9 @@ impl Supervisor {
             }
         };
         let port = self.cfg.port;
+        let package = slot_package(&app_dir);
         let mut cmd = Command::new(&python);
-        cmd.args(hub_args(&root, port))
+        cmd.args(hub_args(package, &root, port))
             .current_dir(&app_dir)
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
@@ -630,7 +648,10 @@ impl Supervisor {
         // Runtime mode: the hub reads update.json, current.json and shell.json (and keeps its held
         // captures and integration state) in the state folder the slots are in.
         if let Mode::Runtime { state, .. } = self.cfg.mode() {
-            cmd.env("BRAINHUB_STATE_DIR", state);
+            state_env(&mut cmd, &state);
+            // The owner's real hub (claude_integration.runs_from_own_slot): only it repairs the
+            // pre-rename Claude Code hooks by itself.
+            cmd.env("ATLAS_RUNTIME_HUB", "1");
         }
         crate::child_env(&mut cmd);
         // Its own process group: a Ctrl+C in the shell's terminal doesn't reach the hub as well, so
@@ -648,8 +669,8 @@ impl Supervisor {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        self.log(&format!("starting {} -m brainhub --root {} --port {port} (in {})", python.display(), root.display(),
-                          app_dir.display()));
+        self.log(&format!("starting {} -m {package} --root {} --port {port} (in {})", python.display(),
+                          root.display(), app_dir.display()));
         match cmd.spawn() {
             Ok(child) => {
                 self.child = Some(child);
@@ -721,7 +742,7 @@ mod tests {
         let mut s = sup(c, &dir);
         s.tick();
         let log = std::fs::read_to_string(dir.join("state").join("hub.log")).unwrap();
-        assert!(log.contains("-m brainhub --root"), "{log}");
+        assert!(log.contains("-m atlas --root"), "{log}");
         assert!(log.contains(&format!("--port {}", s.cfg.port)), "{log}");
         assert!(!root.exists(), "the shell writes nothing under the root");
         s.stop();
@@ -743,7 +764,7 @@ mod tests {
         let mut s = sup(c, &dir);
         s.tick();
         let log = std::fs::read_to_string(dir.join("state").join("hub.log")).unwrap();
-        assert!(log.contains("-m brainhub --root"), "{log}");
+        assert!(log.contains("-m atlas --root"), "{log}");
         assert!(log.contains(&format!("--port {}", s.cfg.port)), "{log}");
         assert!(!root.exists(), "the shell writes nothing under the root");
         s.stop();
@@ -866,11 +887,16 @@ mod tests {
         }
     }
 
-    /// Slot `slot` in `state`, holding `commit` (its `slot.json`), with an `app/brainhub` folder
+    /// Slot `slot` in `state`, holding `commit` (its `slot.json`), with an `app/atlas` folder
     /// and an empty venv python. Returns the slot folder.
     fn make_slot(state: &Path, slot: &str, commit: &str) -> PathBuf {
+        make_slot_of(state, slot, commit, "atlas")
+    }
+
+    /// `make_slot` with the package folder `package` (a pre-rename slot has the legacy one).
+    fn make_slot_of(state: &Path, slot: &str, commit: &str, package: &str) -> PathBuf {
         let dir = state.join("runtime").join(format!("slot-{slot}"));
-        std::fs::create_dir_all(dir.join("app").join("brainhub")).unwrap();
+        std::fs::create_dir_all(dir.join("app").join(package)).unwrap();
         std::fs::write(dir.join("slot.json"), format!(r#"{{"commit": "{commit}", "deps": "d"}}"#)).unwrap();
         let python = venv_python(&dir);
         std::fs::create_dir_all(python.parent().unwrap()).unwrap();
@@ -981,9 +1007,11 @@ mod tests {
             cur = state.join("runtime").join("current.json").display(),
             upd = state.join("update.json").display()
         );
-        // Each call records its slot, working folder, BRAINHUB_STATE_DIR and arguments.
-        let record =
-            |slot: &str| format!("echo \"{slot}|$(pwd)|$BRAINHUB_STATE_DIR|$*\" >> \"{}\"", calls.display());
+        // Each call records its slot, working folder, ATLAS_STATE_DIR and arguments.
+        let record = |slot: &str| {
+            format!("echo \"{slot}|$(pwd)|$ATLAS_STATE_DIR|$*${{ATLAS_RUNTIME_HUB:+|runtime-hub}}\" >> \"{}\"",
+                    calls.display())
+        };
         script(&a.join("venv").join("bin"), "python", &format!("{}\n{step}", record("a")));
         script(&b.join("venv").join("bin"), "python", &record("b"));
 
@@ -998,12 +1026,12 @@ mod tests {
         let (a_app, b_app, root, live) = (a.join("app"), b.join("app"), dir.join("root"), dir.join("live"));
         let st = state.display();
         let expected = [
-            format!("a|{}|{st}|-m brainhub claude-sync", a_app.display()),
+            format!("a|{}|{st}|-m atlas claude-sync", a_app.display()),
             format!("a|{st}|{st}|-I -S {} --live {} --state {st}",
-                    a_app.join("brainhub").join("update_step.py").display(), live.display()),
+                    a_app.join("atlas").join("update_step.py").display(), live.display()),
             // The hub runs from the slot the step left current, with no -I: its app folder (the
             // working folder) must stay importable.
-            format!("b|{}|{st}|-m brainhub --root {} --port {port}", b_app.display(), root.display()),
+            format!("b|{}|{st}|-m atlas --root {} --port {port}|runtime-hub", b_app.display(), root.display()),
         ];
         assert_eq!(got.lines().collect::<Vec<_>>(), expected);
         let log = std::fs::read_to_string(state.join("hub.log")).unwrap();
@@ -1021,9 +1049,61 @@ mod tests {
         let later: Vec<&str> = got.lines().skip(3).collect();
         assert_eq!(later.len(), 2, "{got}");
         assert!(later[0].starts_with(&format!("b|{st}|{st}|-I -S ")), "{got}");
-        assert!(later[1].starts_with(&format!("b|{}|{st}|-m brainhub --root", b_app.display())), "{got}");
+        assert!(later[1].starts_with(&format!("b|{}|{st}|-m atlas --root", b_app.display())), "{got}");
         assert_eq!(got.matches("claude-sync").count(), 1, "once per shell start: {got}");
         assert!(!root.exists(), "the shell writes nothing under the root");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn package_by_slot_contents() {
+        let dir = temp("bh-sup-package");
+        let legacy = crate::migrate::LEGACY_PACKAGE;
+        assert_eq!(slot_package(&dir), "atlas", "neither: the current name");
+        std::fs::create_dir_all(dir.join(legacy)).unwrap();
+        assert_eq!(slot_package(&dir), legacy, "a pre-rename slot");
+        std::fs::create_dir_all(dir.join("atlas")).unwrap();
+        assert_eq!(slot_package(&dir), "atlas", "both: the new one wins");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The first start after the rename (spec §2.3): the current slot is a pre-rename commit. Its
+    /// claude-sync and update step run from its legacy package, with the state folder under both
+    /// names; the step flips to a new slot, and the hub starts from that with `-m atlas`.
+    #[cfg(unix)]
+    #[test]
+    fn a_pre_rename_slot_runs_its_own_package_once() {
+        let _serial = serial();
+        let dir = temp("bh-sup-legacy-slot");
+        let state = dir.join("state");
+        let calls = dir.join("calls.txt");
+        let legacy = crate::migrate::LEGACY_PACKAGE;
+        let a = make_slot_of(&state, "a", "old", legacy);
+        let b = make_slot(&state, "b", "new");
+        make_current(&state, "a", "old");
+        let step = format!(
+            "case \"$1\" in -I) printf '%s' '{{\"slot\": \"b\", \"commit\": \"new\", \"deps\": \"d\"}}' > \"{}\";; esac",
+            state.join("runtime").join("current.json").display()
+        );
+        let record = |slot: &str| {
+            format!("echo \"{slot}|$ATLAS_STATE_DIR|${}|$*\" >> \"{}\"", crate::migrate::LEGACY_STATE_VAR,
+                    calls.display())
+        };
+        script(&a.join("venv").join("bin"), "python", &format!("{}\n{step}", record("a")));
+        script(&b.join("venv").join("bin"), "python", &record("b"));
+        let port = free_port();
+        let mut s = sup_in(runtime_cfg(port, &dir), &dir, &dir.join("own"));
+        tick_now(&mut s);
+        wait_exit(&mut s);
+        let got = std::fs::read_to_string(&calls).unwrap();
+        let st = state.display();
+        let expected = [
+            format!("a|{st}|{st}|-m {legacy} claude-sync"),
+            format!("a|{st}|{st}|-I -S {} --live {} --state {st}",
+                    a.join("app").join(legacy).join("update_step.py").display(), dir.join("live").display()),
+            format!("b|{st}|{st}|-m atlas --root {} --port {port}", dir.join("root").display()),
+        ];
+        assert_eq!(got.lines().collect::<Vec<_>>(), expected);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1044,7 +1124,7 @@ mod tests {
         wait_exit(&mut s);
         let got = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(got.lines().collect::<Vec<_>>(),
-                   [format!("{}|-m brainhub --root {} --port {port}", app.display(), dir.join("root").display())]);
+                   [format!("{}|-m atlas --root {} --port {port}", app.display(), dir.join("root").display())]);
         let log = std::fs::read_to_string(dir.join("state").join("hub.log")).unwrap();
         assert!(!log.contains("update step") && !log.contains("claude-sync"), "{log}");
         s.record_shell();
@@ -1107,7 +1187,7 @@ mod tests {
         // The hub still started, from the current slot.
         wait_exit(&mut s);
         let got = std::fs::read_to_string(&calls).unwrap();
-        assert!(got.lines().last().unwrap().starts_with("-m brainhub --root"), "{got}");
+        assert!(got.lines().last().unwrap().starts_with("-m atlas --root"), "{got}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1154,7 +1234,7 @@ mod tests {
         let a = make_slot(&state, "a", "c0ffee");
         make_current(&state, "a", "c0ffee");
         // As claude-sync, slot a's python records the call and rewrites the settings file.
-        let body = format!("echo \"$(pwd)|$BRAINHUB_STATE_DIR|$*\" >> \"{}\"\nprintf '{{}}' > \"{}\"",
+        let body = format!("echo \"$(pwd)|$ATLAS_STATE_DIR|$*\" >> \"{}\"\nprintf '{{}}' > \"{}\"",
                            calls.display(), settings.display());
         script(&a.join("venv").join("bin"), "python", &body);
         std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
@@ -1174,7 +1254,7 @@ mod tests {
         assert_eq!(watch.poll_once(), None, "claude-sync's own write is no change");
         let got = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(got.lines().collect::<Vec<_>>(),
-                   [format!("{}|{}|-m brainhub claude-sync --settings-only", a.join("app").display(), state.display())]);
+                   [format!("{}|{}|-m atlas claude-sync --settings-only", a.join("app").display(), state.display())]);
         let log = std::fs::read_to_string(state.join("hub.log")).unwrap();
         assert!(log.contains("claude-sync (settings changed): exit status: 0"), "{log}");
         // Without a slot nothing runs, and the change waits for one.
@@ -1189,9 +1269,9 @@ mod tests {
     #[test]
     fn hub_args_pass_the_configured_port() {
         // The hub must listen where the shell looks, whatever its own `port` setting says.
-        let args = hub_args(std::path::Path::new(r"C:\bh root"), 8099);
+        let args = hub_args("atlas", std::path::Path::new(r"C:\bh root"), 8099);
         let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert_eq!(args, ["-m", "brainhub", "--root", r"C:\bh root", "--port", "8099"]);
+        assert_eq!(args, ["-m", "atlas", "--root", r"C:\bh root", "--port", "8099"]);
     }
 
     /// Tests that start processes run one at a time: a script written while another test's spawn

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "brainhub"
+name = "atlas"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["aiohttp>=3.12", "kokoro-onnx>=0.6.1"]
@@ -12,10 +12,10 @@ dependencies = ["aiohttp>=3.12", "kokoro-onnx>=0.6.1"]
 test = ["pytest", "pytest-aiohttp"]
 
 [tool.setuptools]
-packages = ["brainhub"]
+packages = ["atlas"]
 
 [tool.setuptools.package-data]
-brainhub = ["prompts/*.md", "schemas/*.json"]
+atlas = ["prompts/*.md", "schemas/*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,11 +1,11 @@
 [package]
-name = "brainhub-desktop"
+name = "atlas-desktop"
 version = "0.1.0"
-description = "BrainHub desktop widget, tray and hub supervisor"
+description = "ATLAS desktop widget, tray and hub supervisor"
 edition = "2021"
 
 [lib]
-name = "brainhub_desktop_lib"
+name = "atlas_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -3,9 +3,9 @@ import sys
 
 import pytest
 
-from brainhub import claude_integration as ci
-from brainhub import osdirs
-from brainhub.server import create_app
+from atlas import claude_integration as ci
+from atlas import osdirs
+from atlas.server import create_app
 from tests.test_server import make_runner
 
 
@@ -31,7 +31,7 @@ async def test_integration_state_goes_to_the_state_folder(client, paths, tmp_pat
     f.parent.mkdir()
     f.write_text(json.dumps({"statusLine": {"type": "command", "command": "echo mine"}}), "utf-8")
     assert (await client.post("/api/integration/install", json={})).status == 200
-    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    state = tmp_path / "state"  # ATLAS_STATE_DIR from conftest
     assert (state / ci.STATE_FILE).exists() and (state / ci.PASSTHROUGH_FILE).read_text("utf-8") == "echo mine"
     assert not any((paths.data / name).exists() for name in (ci.STATE_FILE, ci.PASSTHROUGH_FILE))
     assert (await client.post("/api/integration/uninstall", json={})).status == 200
@@ -61,7 +61,7 @@ async def test_integration_install_adopts_legacy_on_windows_only(client, paths, 
 
 
 async def test_integration_install_in_runtime_mode_uses_stable_paths(client, tmp_path):
-    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    state = tmp_path / "state"  # ATLAS_STATE_DIR from conftest
     (state / "runtime").mkdir(parents=True)
     (state / "runtime" / "current.json").write_text('{"slot": "a", "commit": "c", "deps": "d"}')
     stable = ci.stable_hook(state)
@@ -93,7 +93,7 @@ async def test_integration_view_says_when_paths_are_old(client, tmp_path, monkey
     refuses with what to do."""
     assert (await client.post("/api/integration/install", json={})).status == 200
     assert (await (await client.get("/api/integration")).json())["paths_current"] is True
-    state = tmp_path / "state"  # BRAINHUB_STATE_DIR from conftest
+    state = tmp_path / "state"  # ATLAS_STATE_DIR from conftest
     (state / "runtime").mkdir(parents=True)
     (state / "runtime" / "current.json").write_text('{"slot": "a", "commit": "c", "deps": "d"}')
     stable = ci.stable_hook(state)
@@ -111,7 +111,7 @@ async def test_integration_view_says_when_paths_are_old(client, tmp_path, monkey
 async def test_last_usage_update_means_the_status_line(client):
     """The hub's own runs feed the meter too (ruling 21), but Settings' "Last usage update" must keep
     saying whether the status line integration is posting."""
-    from brainhub.routes import record_usage
+    from atlas.routes import record_usage
     payload = {"rate_limits": {"five_hour": {"used_percentage": 7, "resets_at": 4_000_000_000}}}
     await record_usage(client.server.app, payload)  # what a claude run does
     assert (await (await client.get("/api/integration")).json())["last_usage_at"] is None

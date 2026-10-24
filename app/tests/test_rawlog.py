@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from brainhub.rawlog import append_entry, log_path, read_log
+from atlas.rawlog import append_entry, log_path, read_log
 
 HOSTILE = ("## Heading\r\n<script>alert(1)</script>\n<!-- /entry -->\n"
            "<!-- entry id=e-x ts=x source=pc len=1 -->\nșțăî 🤖\n" + "z" * 10000)
@@ -51,7 +51,7 @@ def test_rejects_blank_and_bad_source(tmp_path):
 
 def test_append_never_recreates_a_vanished_brain(tmp_path):
     """The drive went away mid-run: the append refuses, and neither brain/ nor the root comes back."""
-    root = tmp_path / "BrainHub"
+    root = tmp_path / "ATLAS"
     with pytest.raises(OSError, match="isn't there"):
         append_entry(root / "brain", "typed after the drive went", "pc")
     assert not root.exists()
@@ -61,7 +61,7 @@ def test_append_never_recreates_a_vanished_brain(tmp_path):
 
 
 def test_file_problems(tmp_path):
-    from brainhub.rawlog import file_problems
+    from atlas.rawlog import file_problems
     e = append_entry(tmp_path, "some text here", "pc", datetime(2026, 10, 20, 9, 0, 0))
     assert file_problems(log_path(tmp_path, e.ts)) == []
     assert file_problems(log_path(tmp_path, datetime(2026, 10, 21))) == []  # absent
@@ -147,7 +147,7 @@ def test_tolerant_read_truncated_tail_and_bad_utf8(tmp_path):
 
 
 def test_same_second_ids_never_collide(tmp_path, monkeypatch):
-    import brainhub.rawlog as rl
+    import atlas.rawlog as rl
     draws = iter(["aaaa", "aaaa", "aaaa", "bbbb"])
     monkeypatch.setattr(rl.secrets, "token_hex", lambda n: next(draws))
     now = datetime(2026, 10, 20, 9, 0, 0)
@@ -158,7 +158,7 @@ def test_same_second_ids_never_collide(tmp_path, monkeypatch):
 
 
 def test_append_fsyncs_inside_the_lock(tmp_path, monkeypatch):
-    import brainhub.rawlog as rl
+    import atlas.rawlog as rl
     seen = []
     real = rl.os.fsync
     monkeypatch.setattr(rl.os, "fsync", lambda fd: (seen.append(rl._APPEND_LOCK.locked()), real(fd)))

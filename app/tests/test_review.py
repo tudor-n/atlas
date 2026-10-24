@@ -1,8 +1,8 @@
 import pytest
 
-from brainhub.brainmap import add_node, default_map, ensure_folders, load_map, save_map
-from brainhub.gitrepo import BrainRepo
-from brainhub.review import Reviewer
+from atlas.brainmap import add_node, default_map, ensure_folders, load_map, save_map
+from atlas.gitrepo import BrainRepo
+from atlas.review import Reviewer
 
 
 @pytest.fixture

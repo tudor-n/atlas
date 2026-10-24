@@ -1,6 +1,6 @@
 import pytest
 
-from brainhub.config import load_settings, save_settings
+from atlas.config import load_settings, save_settings
 
 
 def test_defaults_when_no_file(paths):
@@ -77,7 +77,7 @@ def test_bad_stored_value_falls_back_for_that_key_only(paths):
 
 
 def test_save_is_atomic(paths, monkeypatch):
-    import brainhub.config as cfg
+    import atlas.config as cfg
     save_settings(paths, {"nudge_days": 5})
     before = paths.settings_file.read_text(encoding="utf-8")
 

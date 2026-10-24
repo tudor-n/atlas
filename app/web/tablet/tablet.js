@@ -1,4 +1,4 @@
-// BrainHub on the workbench tablet (phase 3 design §6): pairing, a home screen with ROBOT and
+// ATLAS on the workbench tablet (phase 3 design §6): pairing, a home screen with ROBOT and
 // JOURNAL, and JOURNAL's TODAY · NOTES · AGENTS, with an in-page keyboard for all typing.
 // Plain ES5 for the SM-T110's Android 4.2 WebKit: no modules, no fetch, no WebSocket (the hub is
 // long-polled), and text only ever enters the page as text nodes (rule 6).
@@ -123,7 +123,7 @@
   (function () {
     var e = screen('pair');
     e.appendChild(at(h('div', 'abs label', 'Pair this tablet'), 40, 40));
-    e.appendChild(at(h('div', 'abs', 'Type the code from BrainHub on the PC'), 40, 72)).style.fontSize = '26px';
+    e.appendChild(at(h('div', 'abs', 'Type the code from ATLAS on the PC'), 40, 72)).style.fontSize = '26px';
     e.appendChild(at(h('div', 'abs dim', 'On the PC: Settings → Tablet → Pair a device.'), 40, 118)).style.fontSize = '17px';
     pair.boxes = [];
     for (var i = 0; i < 6; i++) { var b = at(h('div', 'codebox mono'), 40 + i * 76, 210); e.appendChild(b); pair.boxes.push(b); }
@@ -149,7 +149,7 @@
     api('POST', '/api/tablet/pair', { code: pair.code, name: DEVICE_NAME }, function (st, data) {
       if (st === 200) { pair.code = ''; txt(pair.msg, ''); startLoop(); return; }
       pair.code = '';
-      txt(pair.msg, st === 0 ? 'Can’t reach BrainHub.' : (data && data.error) || ('Pairing failed (' + st + ')'));
+      txt(pair.msg, st === 0 ? 'Can’t reach ATLAS.' : (data && data.error) || ('Pairing failed (' + st + ')'));
       render();
     });
   }
@@ -158,7 +158,7 @@
   var boot = {};
   (function () {
     var e = screen('boot');
-    e.appendChild(at(h('div', 'abs label', 'BrainHub'), 40, 40));
+    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 40));
     boot.msg = at(h('div', 'abs dim'), 40, 72, 900); boot.msg.style.fontSize = '26px'; e.appendChild(boot.msg);
     txt(boot.msg, 'Connecting…');
   })();
@@ -166,15 +166,15 @@
   // waiting for the PC's setup wizard
   (function () {
     var e = screen('setup');
-    e.appendChild(at(h('div', 'abs label', 'BrainHub'), 40, 40));
-    var t = at(h('div', 'abs', 'Set up BrainHub on the PC first.'), 40, 72); t.style.fontSize = '26px'; e.appendChild(t);
+    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 40));
+    var t = at(h('div', 'abs', 'Set up ATLAS on the PC first.'), 40, 72); t.style.fontSize = '26px'; e.appendChild(t);
   })();
 
   // home: ROBOT and JOURNAL (spec §3.3)
   var home = {};
   (function () {
     var e = screen('home');
-    e.appendChild(at(h('div', 'abs label', 'BrainHub'), 40, 34));
+    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 34));
     home.clock = at(h('div', 'abs mono'), 880, 28, 104); home.clock.style.textAlign = 'right'; home.clock.style.fontSize = '16px';
     e.appendChild(home.clock);
     function block(x, name, sub) {
@@ -281,7 +281,7 @@
       api('POST', '/api/tablet/ignore', { kind: kind, id: id }, function (st, data) {
         if (st === 204) { if (kind === 'request') dropDraftsWith('req:' + id + ':'); refresh(); return; }
         cls(b, 'armed', false); txt(b, 'IGNORE');
-        say(J.msg, st === 0 ? 'Can’t reach BrainHub.' : 'Not ignored: ' + ((data && data.error) || st));
+        say(J.msg, st === 0 ? 'Can’t reach ATLAS.' : 'Not ignored: ' + ((data && data.error) || st));
       });
     });
     return b;
@@ -488,7 +488,7 @@
     var failing = !ok && backoff.failing();
     cls(J.link, 'ok', !failing); cls(J.link, 'warn', failing);
     txt(J.linkText, failing ? 'retrying' : 'live');
-    var gone = 'Can’t reach BrainHub. Retrying…';
+    var gone = 'Can’t reach ATLAS. Retrying…';
     for (var p in J.panes) if (J.panes.hasOwnProperty(p)) cls(J.panes[p], 'stale', failing);
     if (failing) {
       txt(home.msg, gone); txt(boot.msg, gone);

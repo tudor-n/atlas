@@ -2,9 +2,9 @@ import subprocess
 
 import pytest
 
-from brainhub import osdirs
-from brainhub.brainmap import load_map
-from brainhub.server import create_app
+from atlas import osdirs
+from atlas.brainmap import load_map
+from atlas.server import create_app
 from tests.test_agents import make_repo, other_os_folder
 from tests.test_server import MAP, make_runner
 

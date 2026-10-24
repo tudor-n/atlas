@@ -2,7 +2,7 @@
 
 Every test uses a temp claude dir, a temp shared store, a temp state dir, a temp home and a temp
 projects root, passed explicitly; HOME/USERPROFILE point at a temp folder too (autouse fixture
-below), and conftest points CLAUDE_CONFIG_DIR, BRAINHUB_STATE_DIR and BRAINHUB_SHARED_DIR at temp
+below), and conftest points CLAUDE_CONFIG_DIR, ATLAS_STATE_DIR and ATLAS_SHARED_DIR at temp
 folders. Nothing here reads or writes the real ~/.claude, ~/dev or /mnt/data. Windows-only cases
 (junctions, drive-letter keys, default folders) are skipped on Linux and run in CI on Windows.
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from brainhub import claude_sync as cs
+from atlas import claude_sync as cs
 
 WIN = sys.platform == "win32"
 OS = "windows" if WIN else "linux"
@@ -242,7 +242,7 @@ def test_live_copy_and_shared_drive_never_pointed(a, shared):
     """Design §5.1: the live copy is never a workspace, and sessions on both OSes would read the one
     settings.local.json of a folder on the shared drive. Such folders are never pointed (nor their
     git exclude touched); their old notes still merge."""
-    live = a.project("BrainHub")  # a BrainHub root in the projects root, as D:\BrainHub is on Windows
+    live = a.project("ATLAS")  # an ATLAS root in the projects root, as D:\ATLAS is on Windows
     (live / "data").mkdir()
     (live / "data" / "root.json").write_text("{}", "utf-8")
     git(live, "init", "-q")
@@ -253,17 +253,17 @@ def test_live_copy_and_shared_drive_never_pointed(a, shared):
     on_drive = shared.parent / "Robot"  # beside the store, outside this OS's projects root
     on_drive.mkdir()
     (shared / cs.PAIRS_FILE).write_text(json.dumps({"Robot": {a.os: str(on_drive)}}), "utf-8")
-    folders = {"BrainHub": live, "OldHub": legacy, "Robot": on_drive}
+    folders = {"ATLAS": live, "OldHub": legacy, "Robot": on_drive}
     for name, folder in folders.items():
         a.memory(folder, {f"{name}.md": f"note of {name}"})
     s = a.sync()
-    assert s["memory"]["pairs"] == ["BrainHub", "OldHub", "Robot"] and s["memory"]["pointed"] == []
+    assert s["memory"]["pairs"] == ["ATLAS", "OldHub", "Robot"] and s["memory"]["pointed"] == []
     for name, folder in folders.items():
         assert not (folder / ".claude").exists()
         assert (shared / "memory" / "projects" / name / f"{name}.md").read_text("utf-8") == f"note of {name}"
     assert (live / ".git" / "info" / "exclude").read_bytes() == exclude_before
     log = (a.state / cs.LOG_FILE).read_text("utf-8")
-    assert "holds a BrainHub root (data/root.json)" in log and "holds a BrainHub root (brain/map.json)" in log
+    assert "holds an ATLAS root (data/root.json)" in log and "holds an ATLAS root (brain/map.json)" in log
     assert f"is on the shared drive ({shared.parent})" in log
     assert not s["problems"]
 
@@ -319,31 +319,31 @@ def test_pairs_json_folder_never_flips(a, shared, tmp_path):
 def test_hub_filing_worktree_keys_never_paired(a, shared):
     """Ruling D11: the hub's own claude -p filing runs left keys for data/worktrees/<entry id>.
     They are never paired, merged or pointed, whatever their notes."""
-    brainhub = a.project("BrainHub")
-    worktree = brainhub / "data" / "worktrees" / ENTRY_ID
+    atlas = a.project("ATLAS")
+    worktree = atlas / "data" / "worktrees" / ENTRY_ID
     worktree.mkdir(parents=True)
     a.memory(worktree, {"junk.md": "agent note"})
-    for key in (f"-mnt-data-BrainHub-data-worktrees-{ENTRY_ID}", f"D--BrainHub-data-worktrees-{ENTRY_ID}",
-                f"d--BrainHub-data-worktrees-{ENTRY_ID}"):
+    for key in (f"-mnt-data-ATLAS-data-worktrees-{ENTRY_ID}", f"D--ATLAS-data-worktrees-{ENTRY_ID}",
+                f"d--ATLAS-data-worktrees-{ENTRY_ID}"):
         d = a.claude / "projects" / key / "memory"
         d.mkdir(parents=True, exist_ok=True)
         (d / "junk.md").write_text("agent note", "utf-8")
     (shared / cs.PAIRS_FILE).write_text(json.dumps({"Filing": {a.os: str(worktree)}}), "utf-8")
-    a.memory(brainhub, {"real.md": "the real project note"})
+    a.memory(atlas, {"real.md": "the real project note"})
 
     s = a.sync()
 
-    assert s["memory"]["pairs"] == ["BrainHub"]  # the project itself still pairs
+    assert s["memory"]["pairs"] == ["ATLAS"]  # the project itself still pairs
     assert sorted(p.name for p in (shared / "memory" / "projects").iterdir() if not p.name.startswith(".")) \
-        == ["BrainHub"]
+        == ["ATLAS"]
     assert not (worktree / ".claude").exists()
     assert not list((shared / "memory").rglob("junk.md"))
     assert s["memory"]["unpaired"] == 0  # skipped outright, not even counted
-    assert cs.is_hub_internal(f"-mnt-data-BrainHub-data-worktrees-{ENTRY_ID}")
+    assert cs.is_hub_internal(f"-mnt-data-ATLAS-data-worktrees-{ENTRY_ID}")
     assert cs.is_hub_internal(worktree)
-    assert cs.is_hub_internal(r"D:\BrainHub\data\worktrees\e-20261020-101500-ab12")
-    assert not cs.is_hub_internal("-home-tudor-dev-BrainHub")
-    assert not cs.is_hub_internal(brainhub)
+    assert cs.is_hub_internal(r"D:\ATLAS\data\worktrees\e-20261020-101500-ab12")
+    assert not cs.is_hub_internal("-home-tudor-dev-ATLAS")
+    assert not cs.is_hub_internal(atlas)
 
 
 # -- merging -------------------------------------------------------------------------------------
@@ -664,7 +664,7 @@ def test_per_os_keys_never_shared(a, b, shared, tmp_path):
 
 
 def test_abs_path_detection():
-    for value in ("/home/tudor/x", "python3 /usr/bin/x", "C:\\Tools\\x.exe", "D:/BrainHub", "\\\\server\\share",
+    for value in ("/home/tudor/x", "python3 /usr/bin/x", "C:\\Tools\\x.exe", "D:/ATLAS", "\\\\server\\share",
                   {"cmd": ["run", "--file=/etc/x"]}, {"/abs/key": True}, '"C:\\x"'):
         assert cs.holds_abs_path(value), value
     for value in ("opus", "https://github.com/a/b", "anthropics/claude-plugins", "a/b", "git@github.com:a/b.git",
@@ -677,8 +677,8 @@ def test_abs_path_detection():
     "file:///home/tudor/notes.md", "FILE://server/share/x", "see file:/C:/x",  # file URLs
     "/usr/bin:/bin", "node_modules/.bin:/usr/local/bin", ".:/opt/tools",  # PATH-style lists
     "C:\\x;D:\\y", ".;D:\\tools", "%PATH%;C:\\bin",
-    "$HOME/bin/tool", "${HOME}/x", "run $XDG_DATA_HOME/brainhub", "~/notes", "~\\notes", "cd ~/dev && x",
-    "%USERPROFILE%\\x", "%LOCALAPPDATA%/BrainHub", "%ProgramFiles(x86)%\\Tool",
+    "$HOME/bin/tool", "${HOME}/x", "run $XDG_DATA_HOME/atlas", "~/notes", "~\\notes", "cd ~/dev && x",
+    "%USERPROFILE%\\x", "%LOCALAPPDATA%/ATLAS", "%ProgramFiles(x86)%\\Tool",
     {"a": [{"b": {"c": ["fine", "~/deep"]}}]}, [[["opus", {"k": ["file:///x"]}]]],  # at any depth
     {"outer": {"/etc/key": 1}},
 ])
@@ -927,7 +927,7 @@ def test_defaults_point_at_temp_folders_in_tests(tmp_path):
 
 @posix_only
 def test_default_folders_on_linux(monkeypatch, _temp_home):
-    monkeypatch.delenv("BRAINHUB_SHARED_DIR")
+    monkeypatch.delenv("ATLAS_SHARED_DIR")
     assert cs.default_shared_dir() == Path("/mnt/data/ClaudeShared")
     assert cs.default_projects_root() == _temp_home / "dev"
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
@@ -936,7 +936,7 @@ def test_default_folders_on_linux(monkeypatch, _temp_home):
 
 @windows_only
 def test_default_folders_on_windows(monkeypatch, _temp_home):
-    monkeypatch.delenv("BRAINHUB_SHARED_DIR")
+    monkeypatch.delenv("ATLAS_SHARED_DIR")
     assert cs.default_shared_dir() == Path("D:\\ClaudeShared")
     assert cs.default_projects_root() == Path("D:\\")
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
@@ -944,9 +944,9 @@ def test_default_folders_on_windows(monkeypatch, _temp_home):
 
 
 def test_cli_runs_and_init(tmp_path):
-    env = {**os.environ, "BRAINHUB_STATE_DIR": str(tmp_path / "cli-state")}
+    env = {**os.environ, "ATLAS_STATE_DIR": str(tmp_path / "cli-state")}
     shared = tmp_path / "cli-shared"
-    base = [sys.executable, "-m", "brainhub", "claude-sync"]
+    base = [sys.executable, "-m", "atlas", "claude-sync"]
     r = subprocess.run([*base, "--shared", str(shared), "--claude-dir", str(tmp_path / "c")], cwd=APP, env=env,
                        capture_output=True, text=True)
     assert r.returncode == 0 and "nothing changed" in r.stdout and not shared.exists()
@@ -962,9 +962,9 @@ def test_cli_runs_and_init(tmp_path):
 
 
 def test_module_is_stdlib_only():
-    code = ("import sys; sys.path.insert(0, sys.argv[1]); import brainhub.claude_sync; "
-            "mine = sorted(m for m in sys.modules if m.split('.')[0] == 'brainhub'); "
-            "assert mine == ['brainhub', 'brainhub.claude_sync', 'brainhub.osdirs'], mine; "
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import atlas.claude_sync; "
+            "mine = sorted(m for m in sys.modules if m.split('.')[0] == 'atlas'); "
+            "assert mine == ['atlas', 'atlas.claude_sync', 'atlas.osdirs'], mine; "
             "assert 'aiohttp' not in sys.modules")
     r = subprocess.run([sys.executable, "-I", "-c", code, str(APP)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr

@@ -4,9 +4,9 @@ from datetime import datetime
 
 import pytest
 
-from brainhub.brainmap import default_map, save_map
-from brainhub.rawlog import read_log
-from brainhub.server import DEFAULT_HOST, create_app
+from atlas.brainmap import default_map, save_map
+from atlas.rawlog import read_log
+from atlas.server import DEFAULT_HOST, create_app
 from tests.fakes import FakeRepo, FakeRunner
 from tests.test_filing import GOOD_RESULT
 
@@ -100,7 +100,7 @@ async def test_ask_no_match_says_nothing(ready_client):
 
 
 async def test_ask_error_event(aiohttp_client, app_paths):
-    from brainhub.claude_runner import ClaudeError
+    from atlas.claude_runner import ClaudeError
     app = create_app(app_paths, runner=FakeRunner(raise_error=ClaudeError("boom")), start_workers=False)
     c = await aiohttp_client(app)
     await c.post("/api/setup", json={"map": MAP})
@@ -139,7 +139,7 @@ async def test_damaged_log_does_not_crash_startup(aiohttp_client, app_paths):
 
 
 async def test_startup_backfills_missing_entries(aiohttp_client, app_paths):
-    from brainhub.rawlog import append_entry
+    from atlas.rawlog import append_entry
     save_map(app_paths.brain, default_map())
     e = append_entry(app_paths.brain, "orphan entry about servos", "pc")
     app = create_app(app_paths, runner=make_runner(), start_workers=False)
@@ -209,7 +209,7 @@ async def test_items_empty_filter_means_none(ready_client, app):
 
 
 async def test_startup_backfills_entry_missing_from_store_and_fts(aiohttp_client, app_paths):
-    from brainhub.rawlog import append_entry
+    from atlas.rawlog import append_entry
     save_map(app_paths.brain, default_map())
     first = append_entry(app_paths.brain, "first entry about gears", "pc")
     app1 = create_app(app_paths, runner=make_runner(), start_workers=False)
@@ -262,8 +262,8 @@ async def test_backup_push_now_ignores_debounce(ready_client, app):
 
 
 async def test_code_paths_come_from_the_package_not_the_data_root(aiohttp_client, app_paths):
-    import brainhub
-    pkg = __import__("pathlib").Path(brainhub.__file__).resolve().parent
+    import atlas
+    pkg = __import__("pathlib").Path(atlas.__file__).resolve().parent
     assert not (app_paths.root / "app").exists()
     c = await aiohttp_client(create_app(app_paths, runner=make_runner(), start_workers=False))
     page = await (await c.get("/")).text()
@@ -281,7 +281,7 @@ async def _started(aiohttp_client, app_paths):
 
 
 def _setup_brain(app_paths):
-    from brainhub.gitrepo import BrainRepo
+    from atlas.gitrepo import BrainRepo
     save_map(app_paths.brain, default_map())
     repo = BrainRepo(app_paths.brain)
     repo.init()
@@ -317,8 +317,8 @@ async def test_stale_ref_lock_is_removed_at_startup(aiohttp_client, app_paths):
 async def test_ghost_rows_ended_at_start(aiohttp_client, app_paths):
     """Sessions seen before this boot (of either OS) can't be running now: they are marked ended
     at startup instead of lingering as ghost "running" rows (dual-boot design §6.6)."""
-    from brainhub import osdirs
-    from brainhub.store import Store
+    from atlas import osdirs
+    from atlas.store import Store
     _setup_brain(app_paths)
     stamp = datetime.now().replace(microsecond=0).isoformat()
     row = {"cwd": "/w", "project": "w", "project_name": "w", "mapped": False, "branch": None,
@@ -361,7 +361,7 @@ async def test_corrupt_items_json_reports_and_keeps_serving(aiohttp_client, app_
 
 
 async def test_damaged_index_db_is_moved_aside_and_rebuilt(aiohttp_client, app_paths):
-    from brainhub.rawlog import append_entry
+    from atlas.rawlog import append_entry
     _setup_brain(app_paths)
     e = append_entry(app_paths.brain, "the gearbox whines", "pc")
     app_paths.db.write_bytes(b"this is not a sqlite database" * 100)
@@ -374,7 +374,7 @@ async def test_damaged_index_db_is_moved_aside_and_rebuilt(aiohttp_client, app_p
 
 
 async def test_truncated_log_file_keeps_the_good_entries(aiohttp_client, app_paths):
-    from brainhub.rawlog import append_entry, log_path
+    from atlas.rawlog import append_entry, log_path
     _setup_brain(app_paths)
     good = append_entry(app_paths.brain, "the good file mentions sprockets", "pc", datetime(2026, 10, 19, 9, 0, 0))
     bad = append_entry(app_paths.brain, "this one gets cut short", "pc", datetime(2026, 10, 20, 9, 0, 0))
@@ -391,7 +391,7 @@ async def test_truncated_log_file_keeps_the_good_entries(aiohttp_client, app_pat
 
 async def test_brain_clone_with_autocrlf_keeps_the_raw_log_readable(ready_client, app_paths, tmp_path):
     import subprocess
-    from brainhub.rawlog import append_entry
+    from atlas.rawlog import append_entry
     assert (app_paths.brain / ".gitattributes").read_text(encoding="utf-8") == "* -text\n"
     texts = ["line one\nline two\n", "trailing\n\n", "single"]
     for x in texts:
@@ -486,8 +486,8 @@ async def test_rebuilt_index_marks_filed_entries_done_and_keeps_pending_proposal
 
 
 async def test_many_unfiled_entries_wait_for_retry_few_are_queued(aiohttp_client, app_paths, tmp_path):
-    from brainhub.filing import UNFILED_AT_STARTUP
-    from brainhub.rawlog import append_entry
+    from atlas.filing import UNFILED_AT_STARTUP
+    from atlas.rawlog import append_entry
     _setup_brain(app_paths)
     ids = [append_entry(app_paths.brain, f"backlog {i}", "pc").id for i in range(11)]
     app, c, _ = await _started(aiohttp_client, app_paths)
@@ -499,7 +499,7 @@ async def test_many_unfiled_entries_wait_for_retry_few_are_queued(aiohttp_client
 
 
 async def test_ten_unfiled_entries_are_queued(aiohttp_client, app_paths):
-    from brainhub.rawlog import append_entry
+    from atlas.rawlog import append_entry
     _setup_brain(app_paths)
     for i in range(10):
         append_entry(app_paths.brain, f"backlog {i}", "pc")
@@ -560,7 +560,7 @@ async def test_setup_with_a_bad_map_writes_nothing(client, app_paths):
 
 
 async def test_failed_filings_endpoint_lists_every_failure(ready_client, app):
-    from brainhub.models import Filing
+    from atlas.models import Filing
     ids = []
     for i in range(3):
         r = await ready_client.post("/api/entries", json={"text": f"entry {i}", "source": "pc"})

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from brainhub.claude_runner import ClaudeError, ClaudeRunner, build_args, child_env
+from atlas.claude_runner import ClaudeError, ClaudeRunner, build_args, child_env
 
 from tests.fakes import fake_cli, kill_pid_file, pid_gone
 
@@ -142,7 +142,7 @@ async def test_stream_text_ignores_malformed_lines(tmp_path):
 
 
 async def test_stream_text_line_too_long(tmp_path, monkeypatch):
-    import brainhub.claude_runner as cr
+    import atlas.claude_runner as cr
     monkeypatch.setattr(cr, "_STREAM_LIMIT", 1024)
     r = ClaudeRunner(_fake_cli(tmp_path, "import sys,time\nsys.stdin.read()\nprint('x'*5000,flush=True)\ntime.sleep(30)\n"))
     with pytest.raises(ClaudeError, match="too long"):

@@ -1,6 +1,6 @@
 import pytest
 
-from brainhub.brainmap import (add_node, default_map, ensure_folders, folders_for, hierarchy,
+from atlas.brainmap import (add_node, default_map, ensure_folders, folders_for, hierarchy,
                                load_map, path_os, save_map, slugify, validate_map)
 
 

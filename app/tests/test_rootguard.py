@@ -11,12 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-import brainhub.__main__ as main_mod
-from brainhub import osdirs, rootguard
-from brainhub.brainmap import default_map, save_map
-from brainhub.config import Paths
-from brainhub.server import RootUnavailable, create_app
-from brainhub.store import SCHEMA_VERSION, SchemaTooNew, Store
+import atlas.__main__ as main_mod
+from atlas import osdirs, rootguard
+from atlas.brainmap import default_map, save_map
+from atlas.config import Paths
+from atlas.server import RootUnavailable, create_app
+from atlas.store import SCHEMA_VERSION, SchemaTooNew, Store
 from tests.test_server import MAP, make_runner
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process and mount rules")
@@ -43,7 +43,7 @@ def _listing(root):
 
 # -- missing and the mount guard ---------------------------------------------
 def test_missing_root_is_never_created(tmp_path):
-    root = tmp_path / "drive" / "BrainHub"
+    root = tmp_path / "drive" / "ATLAS"
     paths = Paths(root)
     assert rootguard.check_root(paths).state == "missing"
     with pytest.raises(RootUnavailable) as e:
@@ -54,7 +54,7 @@ def test_missing_root_is_never_created(tmp_path):
 
 def test_unmounted_fstab_mount_point_is_missing(tmp_path):
     mnt = tmp_path / "mnt"
-    root = mnt / "BrainHub"
+    root = mnt / "ATLAS"
     root.mkdir(parents=True)  # the folder exists and is empty, as an unmounted mount point is
     fstab = tmp_path / "fstab"
     fstab.write_text(f"UUID=abc / btrfs defaults 0 0\n/dev/sdb1 {_fstab_path(mnt)} ntfs3 nofail 0 0\n",
@@ -92,13 +92,13 @@ def test_fstab_parsing_is_robust(tmp_path):
         tmp_path / "mnt", tmp_path / "my drive", tmp_path / "mnt" / "deeper"]
     assert rootguard.fstab_mount_points(tmp_path / "no-such-fstab") == []
     # The longest mount point holding the root decides.
-    deep = tmp_path / "mnt" / "deeper" / "BrainHub"
+    deep = tmp_path / "mnt" / "deeper" / "ATLAS"
     deep.mkdir(parents=True)
     only_outer = lambda p: p == tmp_path / "mnt"
     only_inner = lambda p: p == tmp_path / "mnt" / "deeper"
     assert rootguard.check_root(Paths(deep), fstab=fstab, ismount=only_outer).state == "missing"
     assert rootguard.check_root(Paths(deep), fstab=fstab, ismount=only_inner).state == "fresh"
-    spaced = tmp_path / "my drive" / "BrainHub"
+    spaced = tmp_path / "my drive" / "ATLAS"
     spaced.mkdir(parents=True)
     assert rootguard.check_root(Paths(spaced), fstab=fstab, ismount=lambda p: False).state == "missing"
     elsewhere = tmp_path / "elsewhere"  # inside `/` only: no guard
@@ -108,7 +108,7 @@ def test_fstab_parsing_is_robust(tmp_path):
 
 # -- fresh, setup and the marker ---------------------------------------------
 async def test_fresh_root_allows_setup_and_writes_marker(aiohttp_client, tmp_path):
-    root = tmp_path / "BrainHub"
+    root = tmp_path / "ATLAS"
     (root / "app").mkdir(parents=True)  # the live copy's code sits next to the data
     (root / "app" / "README.md").write_text("code", encoding="utf-8")
     (root / "brain").mkdir()
@@ -135,7 +135,7 @@ async def test_setup_refused_on_non_fresh_root(aiohttp_client, paths, tmp_path):
     c = await aiohttp_client(_app(paths))
     (paths.brain / "notes.md").write_text("someone else's notes", encoding="utf-8")  # foreign now
     r = await c.post("/api/setup", json={"map": MAP})
-    assert r.status == 409 and "doesn't look like a BrainHub brain" in (await r.json())["error"]
+    assert r.status == 409 and "doesn't look like an ATLAS brain" in (await r.json())["error"]
     assert not (paths.brain / "map.json").exists() and not (paths.data / rootguard.MARKER_NAME).exists()
     # A marked root without map.json is a brain that went missing, never a fresh folder: no app
     # (Task 6 serves the banner and holds captures), no setup, and the marker is never replaced.
@@ -164,7 +164,7 @@ def test_unreadable_root_is_missing_never_fresh(paths):
 
 
 def test_foreign_root(paths):
-    (paths.brain / "notes.md").write_text("not a BrainHub brain", encoding="utf-8")
+    (paths.brain / "notes.md").write_text("not an ATLAS brain", encoding="utf-8")
     status = rootguard.check_root(paths)
     assert status.state == "foreign" and str(paths.brain) in status.message
     with pytest.raises(RootUnavailable) as e:
@@ -196,7 +196,7 @@ def test_newer_brain_format_refused(paths):
     marker = {"id": "f" * 32, "brain_format": rootguard.BRAIN_FORMAT + 1, "created": "2027-01-01T00:00:00"}
     (paths.data / rootguard.MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
     status = rootguard.check_root(paths)
-    assert status.state == "newer" and "newer BrainHub" in status.message
+    assert status.state == "newer" and "newer ATLAS" in status.message
     with pytest.raises(RootUnavailable) as e:
         _app(paths)
     assert e.value.status.state == "newer"
@@ -229,7 +229,7 @@ def test_schema_too_new_refused(paths):
 
 
 def test_schema_versioned_from_zero(paths):
-    from brainhub import store as store_mod
+    from atlas import store as store_mod
     s = Store(paths.data / "new.db")
     s.init_schema()
     assert s.schema_version() == SCHEMA_VERSION
@@ -450,7 +450,7 @@ def no_server(monkeypatch):
 
 
 def test_run_server_serves_reduced_app_on_missing_root(tmp_path, no_server):
-    root = tmp_path / "gone" / "BrainHub"
+    root = tmp_path / "gone" / "ATLAS"
     main_mod.run_server(["--root", str(root), "--port", "8123"])  # no exit: the reduced app is served
     [app] = no_server
     assert app["root_status"].state == "missing" and "store" not in app and app["port"] == 8123
@@ -461,7 +461,7 @@ def test_run_server_refuses_while_another_hub_holds_the_lock(paths, no_server, l
     _write_lock(paths, pid=live_child.pid, pid_start=rootguard.process_start(live_child.pid))
     with pytest.raises(SystemExit) as e:
         main_mod.run_server(["--root", str(paths.root), "--port", "8123"])
-    assert "Another BrainHub" in str(e.value.code)
+    assert "Another ATLAS" in str(e.value.code)
     assert not paths.db.exists()  # refused before any startup work
     assert _lock(paths)["started"] == "2026-10-22T09:00:00"  # the other hub's lock is untouched
 
@@ -472,6 +472,6 @@ def test_run_server_serves_reduced_app_on_newer_schema_and_releases_lock(paths, 
     before = paths.db.read_bytes()
     main_mod.run_server(["--root", str(paths.root), "--port", "8123"])
     [app] = no_server
-    assert app["root_status"].state == "newer" and "newer BrainHub" in app["root_status"].message
+    assert app["root_status"].state == "newer" and "newer ATLAS" in app["root_status"].message
     assert "store" not in app and paths.db.read_bytes() == before
     assert not (paths.data / rootguard.LOCK_NAME).exists()
