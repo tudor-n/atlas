@@ -132,7 +132,9 @@ def test_an_older_quotes_file_gets_the_workout_pool_once(tmp_path):
     brain = tmp_path / "brain"
     (brain / "_voice").mkdir(parents=True)
     f = brain / "_voice" / "quotes.md"
-    f.write_text("## reminder\nMy own line.\n", encoding="utf-8")  # the owner's edits, no workout pool yet
+    # The owner's edits, no workout pool yet. LF, as ensure_quotes seeds it: a plain write_text
+    # writes CRLF on Windows, and the \r check below is about what the append adds.
+    f.write_text("## reminder\nMy own line.\n", encoding="utf-8", newline="\n")
     assert q.ensure_workout_pool(brain) is True
     pools, problems = q.parse(f.read_text(encoding="utf-8"))
     assert problems == [] and pools["reminder"] == ["My own line."] and len(pools["workout"]) >= 30
