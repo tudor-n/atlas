@@ -1,4 +1,4 @@
-# ATLAS
+# ATLAS: the desktop shell
 
 A thin Tauri v2 shell around the hub. It shows the hub's `/widget` page in a small frameless, transparent, always-on-top window, and (phase 4.5) the full app in its own **main window**: a normal, resizable window with a taskbar entry and a launcher icon. It owns the tray icon and the "Start at login" entry, and it starts and restarts the hub for you. All the content comes from the hub; the shell only frames it. The same code builds on Windows (WebView2) and on Kubuntu/Linux (WebKitGTK).
 
@@ -103,6 +103,15 @@ It writes `${XDG_DATA_HOME:-~/.local/share}/applications/dev.atlas.desktop.deskt
 - **Logout and Ctrl+C.** SIGTERM (sent at logout) and SIGINT (Ctrl+C in a terminal) quit the shell as tray → Quit does: the window position is saved and the hub is stopped. A second signal ends it at once.
 - **Blank window?** Start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1` (a WebKitGTK problem with some GPU drivers; not needed on the iGPU).
 - The terminal shows `libayatana-appindicator is deprecated`; that warning is harmless.
+
+## The first start after the rename
+The app has a new name (was BrainHub, and the shell "BrainHub Desktop"). Before it reads `desktop.json`, the shell moves the pre-rename folders over by itself (`src-tauri/src/migrate.rs`; rename spec §2.1):
+- It runs only when no `ATLAS_CONFIG_DIR` or `ATLAS_STATE_DIR` override is set, the new `desktop.json` is missing and the old one exists (pre-rename: `~/.config/brainhub/desktop.json`, `%LOCALAPPDATA%\BrainHub\desktop.json`).
+- It renames the old state folder to the new one, then (Linux) the old config folder (pre-rename: `~/.local/share/brainhub`, `~/.config/brainhub`); each only onto a missing or empty target.
+- It rewrites `desktop.json`: `state` follows the move, and `root`, `live` and `app_dir` follow your renamed data folder (`/mnt/data/ATLAS`) when the old path is gone and the renamed one exists.
+- It records what it did in `<state>/migrated.json` and one `hub.log` line. If anything fails it logs why and runs on the old `desktop.json` where it is; the next start finishes the job.
+- An old login entry (pre-rename: `~/.config/autostart/BrainHub Desktop.desktop`, the HKCU Run value `BrainHub Desktop`) is removed, and the shell turns its own **Start at login** on instead.
+- At that first start the current runtime slot still holds a pre-rename commit: the shell runs that slot's own package for the update step and claude-sync (it picks the package by what the slot's `app/` holds), and gives every child the state folder under the old variable name too. The update step then builds a new slot, and the hub starts from it.
 
 ## Start at login
 Tick **Start at login** in the tray menu; it is off until you tick it. Untick it to remove the entry. If you move or rebuild the binary to another path, untick and tick it again.

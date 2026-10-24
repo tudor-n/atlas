@@ -1,11 +1,12 @@
 # Next session: start here
 
-A short pointer, updated 2026-10-23. It is no longer the only thing carried between the OSes: once claude-sync is rolled out, Claude Code memory is shared through `D:\ClaudeShared` = `/mnt/data/ClaudeShared`.
+A short pointer, updated 2026-10-24. It is no longer the only thing carried between the OSes: once claude-sync is rolled out, Claude Code memory is shared through `D:\ClaudeShared` = `/mnt/data/ClaudeShared`.
 
 ## The owner's to-do list
 Everything waiting on the owner lives in **`TODO.md`** at the repo root. Keep every check or step on their side there, and tick items as they land.
 
 ## Where things stand
+- **The rename to ATLAS (was BrainHub), 2026-10-24:** built on branch `atlas`, a PR on top of #7 (phase 4.5). Every name changed: the package `app/atlas/`, `python -m atlas`, `atlas-request`, the `ATLAS_*` env vars, the app id `dev.atlas.desktop`, the per-OS folders and the shared root `/mnt/data/ATLAS` = `D:\ATLAS`. The first start moves the old folders and repairs the Claude Code hooks by itself; the owner renames the data folder and rebuilds (`TODO.md` step 8). Spec: `docs/superpowers/specs/2026-10-24-atlas-rename-design.md`; decisions: `docs/superpowers/atlas-rename-decisions.md`. Until the owner's cut-over, the real folders still have their old names: the paths below are the new ones.
 - **Phases 1 and 2 and the dual-boot port** (plan Tasks 1–12, PR #3) are merged into `master` (2026-10-22). CI runs on Ubuntu and Windows.
 - **What remains:**
   1. **The owner's feedback from the Linux test drive** (below): fixed and merged into master (2026-10-23; usage meter, speed). The next test drive checks the meter against claude.ai and the filing card's live progress.
@@ -13,7 +14,7 @@ Everything waiting on the owner lives in **`TODO.md`** at the repo root. Keep ev
      - The live copy `/mnt/data/ATLAS` is on master, with its old branches deleted.
      - Runtime slot A is in `~/.local/share/atlas`.
      - The widget is built from the live copy into `~/.cache/atlas-target/release/atlas-desktop`. The owner starts it by hand: no autostart (their choice).
-     - The integration is installed for real; its backup is `~/.claude/settings.json.atlas-backup-20261023-113616`.
+     - The integration is installed for real; its backup is `~/.claude/settings.json.brainhub-backup-20261023-113616` (made before the rename, so it keeps the old name).
      - A terminal session showed Where = terminal, entrypoint `cli`. Still to check: a VS Code session (Where = IDE; `TODO.md` step 2).
      - `claude-sync` waits for Windows (the owner's choice): without the shared store, its runs change nothing.
   3. **Phase 3, the workbench tablet: merged into master (2026-10-23)**: #4, plus 6-dof-arm#3 (the arm UI's HOME button, `index.html` only). The live copy picks it up the next time the widget starts.
@@ -52,7 +53,7 @@ A throwaway test drive on Kubuntu: the hub and widget from the dev copy on a scr
    - **The "D: went missing" drill passed.** The banner showed, the folder was never created, and a capture was held. Recovery took about 7 s after the folder came back (exit 75, then a restart). The capture landed with its original timestamp.
    - A VS Code session showed **Where = IDE**, so that entrypoint value is right.
 
-**Test-drive leftovers: cleaned up 2026-10-23.** ATLAS's hooks and status line are out of the real `~/.claude/settings.json` (it is back to its four keys; backups `~/.claude/settings.json.atlas-backup-*`), and the Tauri data folders are deleted.
+**Test-drive leftovers: cleaned up 2026-10-23.** ATLAS's hooks and status line are out of the real `~/.claude/settings.json` (it is back to its four keys; backups `~/.claude/settings.json.brainhub-backup-*`), and the Tauri data folders are deleted.
 
 ## Where things live
 | What | Where |

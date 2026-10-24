@@ -1,7 +1,9 @@
 # ATLAS: the owner's to-do list
 
 Everything that's waiting on you, in order. Tick each item here as you go.
-Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold).
+Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold; the rename to ATLAS added as step 8).
+
+**About the names:** the app is now called ATLAS (was BrainHub). The steps below already use the new names (`/mnt/data/ATLAS`, `~/.cache/atlas-target`, `atlas-request`…). They only exist once you've done **step 8**, so do step 8 as soon as its PR is merged, then carry on with whatever is still open above it.
 
 ## Now
 
@@ -58,8 +60,8 @@ Tell Claude about anything that fails.
 
 ### 7. Phase 4.5: the native app and the new look (after its PR is merged)
 - [ ] Merge the phase 4.5 PR on GitHub once CI is green, then restart the widget so the update pulls it in.
-- [ ] Rebuild the desktop shell. In `/mnt/data/ATLAS/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`. Then **Quit** from the tray and start it again. Settings says "widget update available" until you do.
-- [ ] Add ATLAS to the KDE launcher: `python3 -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop`, run from `/mnt/data/ATLAS/app` with the runtime's Python. Or ask Claude to run it. If it doesn't show up in the menu, run `kbuildsycoca6`.
+- [ ] Rebuild the desktop shell. In `/mnt/data/ATLAS/app/desktop/src-tauri`, run `CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`. Then **Quit** from the tray and start it again. Settings says "widget update available" until you do. (Step 8 does this too: skip it if you've done step 8.)
+- [ ] Add ATLAS to the KDE launcher (step 8 does this too). The exact command is in step 8, item 7. If it doesn't show up in the menu, run `kbuildsycoca6`.
 - [ ] Start **ATLAS** from the launcher. A black window should say "STARTING THE HUB…", then show the app.
 - [ ] Check the taskbar: the entry has the ATLAS icon and groups with the launcher entry. If it doesn't, run `xprop WM_CLASS`, click the window, and tell Claude what it prints.
 - [ ] Alt+Tab lists the main window but not the widget.
@@ -72,6 +74,35 @@ Tell Claude about anything that fails.
   - **‹ HOME** is now top left. It shows as `‹`, not an empty box.
   - The 22px letters on the keys read well at arm's length.
   - The `2 REQUESTS` chip sits in the top bar.
+
+### 8. The rename to ATLAS
+The app is called ATLAS now. Most of the switch happens by itself the first time the new ATLAS starts: it moves its own settings folders and fixes your Claude Code hooks. You only rename the big data folder and rebuild the app. Copy each command into a terminal (Konsole) as it is.
+- [ ] **Merge the PRs on GitHub, in this order:** #6 (the Windows fix), #7 (phase 4.5), then the rename PR. Then rename the repo on GitHub: the repo's **Settings** → **General** → **Repository name** → `atlas` (or another name you like: then use it below instead of `atlas`).
+- [ ] **Quit the widget**, if it's running: tray icon → **Quit**.
+- [ ] **Rename the data folder** (it holds your brain and the live copy of the code):
+  `mv /mnt/data/BrainHub /mnt/data/ATLAS`
+- [ ] **Point the live copy at the renamed repo, then update it:**
+  `git -C /mnt/data/ATLAS remote set-url origin https://github.com/tudor-n/atlas.git`
+  `git -C /mnt/data/ATLAS pull --ff-only`
+  Then the same for your dev copy (its folder keeps its old name, that's fine):
+  `git -C ~/dev/BrainHub remote set-url origin https://github.com/tudor-n/atlas.git`
+- [ ] **Build the new app** (takes a few minutes):
+  `cd /mnt/data/ATLAS/app/desktop/src-tauri && CARGO_TARGET_DIR=~/.cache/atlas-target cargo build --release --locked`
+- [ ] **Start it once from the terminal**, so it can move its folders and build its new runtime (give it a minute or two):
+  `~/.cache/atlas-target/release/atlas-desktop`
+  Leave that terminal open; the widget appears when the hub is up. Open a new terminal tab (Ctrl+Shift+T) for the next step. If the tray menu says "connect only", tell Claude and paste the end of the log: `tail -n 30 ~/.local/share/atlas/hub.log`.
+- [ ] **Add ATLAS to the KDE launcher.** This one line finds the runtime ATLAS just built and installs the launcher entry with it. It also removes the old launcher entry and icon (was BrainHub):
+  `cd ~/.local/share/atlas/runtime/slot-$(sed -n 's/.*"slot": "\([ab]\)".*/\1/p' ~/.local/share/atlas/runtime/current.json)/app && ../venv/bin/python -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop; cd ~`
+  If ATLAS doesn't show up in the menu, run `kbuildsycoca6`.
+- [ ] **Quit it from the tray** (the first terminal gets its prompt back; close it), **and from now on start ATLAS from the launcher.** Check that:
+  - Settings → Claude Code says **installed** (not "out of date");
+  - a new Claude Code session shows up in **Agents**;
+  - `atlas-request "Test" "Width of the desk"` works (it shows on the tablet's NOTES).
+- [ ] **Optional tidy-up:**
+  - Settings → Map: if you made a "BrainHub" project in the wizard, rename it to ATLAS.
+  - Delete the old build and the old web view folders (the window positions are remembered again after one start):
+    `rm -rf ~/.cache/brainhub-target ~/.local/share/dev.brainhub.desktop ~/.config/dev.brainhub.desktop`
+- [ ] **Windows (on hold):** the same folder rename on Windows, `D:\BrainHub` → `D:\ATLAS`, then build the app there. ATLAS moves `%LOCALAPPDATA%\BrainHub` by itself on its first start.
 
 ## Later
 - [ ] **Windows (on hold):** the Windows half of the dual-boot checks, claude-sync, the Windows rollout, and the Windows half of the tablet (allow `python.exe` on private networks; update both OSes together because of schema 3).
