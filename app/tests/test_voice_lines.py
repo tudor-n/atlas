@@ -25,7 +25,9 @@ def test_duration_words(s, words):
 @pytest.mark.parametrize("name,spoken", [("TraceGreen", "Trace Green"), ("trace-green", "trace green"),
                                          ("6-dof-arm", "6 dof arm"), ("Robot arm", "Robot arm"),
                                          ("RobotArmControl", "Robot Arm Control"), ("HTTPServer", "HTTP Server"),
-                                         ("", "An agent"), (None, "An agent"), ("<script>", "script"),
+                                         ("", "An agent"), (None, "An agent"),
+                                         ("ATLAS", "Atlas"), ("ATLAS-desktop", "Atlas desktop"),
+                                         ("CNC", "CNC"), ("<script>", "script"),
                                          ("x" * 60, "x" * 40)])
 def test_spoken_project(name, spoken):
     assert v.spoken_project(name) == spoken

@@ -74,12 +74,14 @@ def duration_words(seconds: float) -> str:
 
 def spoken_project(name: str | None) -> str:
     """A project's name as spoken: split at case changes and at -/_/., trimmed, with only letters,
-    digits, spaces and apostrophes kept ("TraceGreen" -> "Trace Green", "6-dof-arm" -> "6 dof arm")."""
+    digits, spaces and apostrophes kept ("TraceGreen" -> "Trace Green", "6-dof-arm" -> "6 dof arm").
+    The app's own name is said as a word: the TTS spells an all-caps word letter by letter, so
+    "ATLAS" -> "Atlas" (rename spec §1)."""
     s = name or ""
     s = re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
     s = re.sub(r"[-_.]+", " ", s)
     s = re.sub(r"[^\w' ]+", " ", s)
-    s = " ".join(s.split())[:40].strip()
+    s = re.sub(r"\bATLAS\b", "Atlas", " ".join(s.split()))[:40].strip()
     return s or "An agent"
 
 
