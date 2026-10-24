@@ -112,11 +112,20 @@ def test_voice_folder_is_protected_from_filing_and_not_a_note():
 
 
 # -- the workout pool (owner, 2026-10-24) ------------------------------------------------------------
-def test_the_seed_has_a_workout_pool_in_all_three_styles():
+def test_the_seed_has_a_workout_pool():
     pools, problems = q.parse(q.SEED)
     assert problems == [] and len(pools["workout"]) >= 30
     assert q.WORKOUT_SECTION.startswith(q.WORKOUT_MARKER) and "## workout" in q.WORKOUT_SECTION
-    assert q.WORKOUT_SECTION.count("# The ") == 4  # the marker and the three styles
+
+
+def test_the_seed_speaks_as_the_sarcastic_friend_only():
+    """The owner retired the dry butler and the ship's computer (2026-10-24)."""
+    headings = [ln for ln in q.SEED.splitlines() if ln.startswith("# The ") and not ln.startswith(q.WORKOUT_MARKER)]
+    assert headings and set(headings) == {"# The sarcastic friend"}
+    pools, _ = q.parse(q.SEED)
+    quips = [x for v in pools.values() for x in v]
+    assert len(quips) == len(set(quips)) >= 130
+    assert not any(w in x for x in quips for w in ("sir", "Sir", "Compliance", "Biological unit", "Processing"))
 
 
 def test_an_older_quotes_file_gets_the_workout_pool_once(tmp_path):

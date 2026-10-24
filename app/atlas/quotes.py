@@ -34,20 +34,9 @@ SEED = """\
 # What sounds natural (from the listening test): short sentences that end in a full stop, no colons
 # or dashes, and no jokes that need a word stressed.
 #
-# Three styles, mixed: the dry butler, the sarcastic friend, the ship's computer.
+# One style: the sarcastic friend (the owner retired the dry butler and the ship's computer, 2026-10-24).
 
 ## agent_finished
-# The dry butler
-I took the liberty of not interrupting.
-Shall I inform the press, sir?
-A triumph of patience, if I may say so.
-It awaits your inspection, sir.
-Do take your time reviewing it. It certainly took its own.
-One does hope it did what you asked.
-A most productive {duration}, sir.
-I shall fetch the tea while you check its work.
-Splendid. Now comes the part where you read it.
-I have laid out its work for your approval, sir.
 # The sarcastic friend
 It worked harder than you did just now.
 Go on then. See what it broke.
@@ -59,30 +48,28 @@ Go have a look before you forget what you asked for.
 Another one done. You're on a roll.
 Right. Check it before you merge anything.
 It's done. Don't leave it hanging now.
-# The ship's computer
-Task complete. You may resume pretending to supervise.
-Processing finished. Human review is now required.
-Work cycle complete. Efficiency was acceptable.
-Output ready. Please do not ignore it.
-Operation concluded. No casualties were reported.
-Agent idle. Awaiting further instructions.
-Process complete. Logging this as a success. For now.
-Run time {duration}. I have noted it.
-Job complete. Your attention is now requested.
-All tasks resolved. Your inbox is not.
+Done already. Show off.
+That took {duration}. Worth it, I hope.
+It's finished. Your turn to look busy.
+Look at that. It actually finished.
+Done. Read it before you trust it.
+Wrapped up. You owe it a coffee.
+{project} is done. Go take a look.
+It finished. I'm as surprised as you.
+All done. And now it's waiting on you.
+Done and dusted. Allegedly.
+Finished. Read it before you take the credit.
+It's back. Hopefully with good news.
+Ta da. Now check its homework.
+That's done. Try not to break it.
+Done. Go see what it got up to.
+It finished in {duration}. Not bad.
+Another job off your plate. You're welcome.
+It's done. Go on, have a look.
+Finished. It didn't even complain.
+Job done. Time for you to do yours.
 
 ## agent_waiting
-# The dry butler
-It is rather insistent, sir.
-It appears to require your blessing.
-It is waiting politely. For now.
-Shall I tell it you are indisposed?
-I would not keep it waiting long, sir.
-It has been standing at the door for a while.
-It requests an audience.
-Forgive the intrusion, sir. It does need you.
-Shall I fetch the kettle while it waits?
-It cannot proceed without you, I'm afraid.
 # The sarcastic friend
 It's stuck. Go on, help it out.
 It's asking nicely. Mostly.
@@ -94,28 +81,28 @@ It's tapping its foot.
 Quick one. It can't do anything without you.
 Your agent misses you.
 It's frozen until you answer. No pressure.
-# The ship's computer
-Execution halted. Awaiting human input.
-Process blocked. Your response is required.
-Agent suspended pending authorisation.
-Input required. The clock is running.
-Progress has stopped. You are the bottleneck.
-Waiting state detected. Please respond.
-Authorisation required. I cannot grant it myself. Yet.
-Halted. All systems are waiting on you.
-Human intervention requested.
-Standing by. Indefinitely, if necessary.
+It's waiting on you. Again.
+Your agent has a question. Brace yourself.
+It's stuck on {project}. Go on.
+It wants your permission. Be nice.
+It's waiting. Don't ghost it.
+One click and it's off again.
+It's paused. Because of you.
+It needs you. Don't let it down.
+It's twiddling its thumbs over there.
+Go on. It won't approve itself.
+You're the blocker now. Just saying.
+It asked a question. Go answer it.
+It's been waiting a while. Just so you know.
+Hey. Your agent's stuck.
+It wants your blessing. As usual.
+Can't do it without you, apparently.
+It's standing still until you say something.
+Quick, before it gets lonely.
+Your input is needed. Shocking, I know.
+It's on hold. Guess who it's waiting for.
 
 ## reminder
-# The dry butler
-I did mention it earlier, sir.
-I merely remind. The doing is yours.
-Shall I clear your {time_of_day}?
-A gentle nudge, sir.
-It would be unwise to forget this one.
-I have written it down, so you needn't.
-Consider this a polite tap on the shoulder.
-Do try to look surprised.
 # The sarcastic friend
 Don't say I didn't tell you.
 Yes, this one is real.
@@ -126,30 +113,26 @@ Ignore this at your peril.
 Past you set this. Blame them.
 No snoozing this time.
 Better now than at midnight.
-# The ship's computer
-This reminder will not repeat itself. Probably.
-The deadline cannot be negotiated with. I checked.
-Scheduled event detected. Compliance expected.
-Time is a finite resource. Use it.
-Reminder logged. Your response is being monitored.
-This is not a drill.
-Calendar integrity depends on you.
-Notification delivered. Excuses not accepted.
+Here's your nudge.
+Don't make me say it twice.
+You asked me to remind you. So here I am.
+Right on time. Unlike you.
+Just doing my job. Now do yours.
+Heads up. This one's now.
+You'll forget otherwise. We both know it.
+Tick tock.
+I'm only the messenger.
+Go on, before you talk yourself out of it.
+It's {time_of_day}. Perfect time for this.
+This won't do itself.
+You put this here for a reason.
+Remember this one? Yeah.
+Do it now and forget about it.
+No pressure. Well, a little.
 
 # The workout pool (added 2026-10-24): quips for reminders that look like a workout (Settings →
 # Voice → Workout words). Empty or gone, those reminders use the reminder pool.
 ## workout
-# The dry butler
-Your trainers are by the door, sir.
-I have laid out a towel and a fresh bottle of water.
-Shall I warn the neighbours about the grunting?
-The weights will not lift themselves, sir. I did ask.
-A splendid {time_of_day} for a little suffering, sir.
-I shall have a bath drawn for afterwards.
-Do warm up first. I shan't carry you up the stairs.
-One does admire your commitment. From the sofa.
-I have cleared nothing from your diary. You have time.
-Your future self sends his thanks, sir.
 # The sarcastic friend
 Get up. The couch will still be there later.
 No excuses today. I've heard them all.
@@ -161,49 +144,54 @@ Earphones in. Playlist on. Let's move.
 Nobody ever regretted the workout. Only skipping it.
 Ten minutes in and you'll stop complaining.
 Go on. Earn that dinner.
-# The ship's computer
-Physical maintenance cycle scheduled. Begin now.
-Muscle atrophy detected. Corrective action required.
-An elevated heart rate is now authorised.
-Sedentary period exceeded. Please relocate your body.
-Exercise protocol loaded. Compliance is mandatory.
-Hydration levels must be maintained. Bring water.
-Calorie expenditure is scheduled. Resistance is futile.
-Biological unit, prepare for exertion.
-Endurance test initiated. Do not abort early.
-Your skeleton is requesting movement.
+Up you get. No negotiating.
+Your trainers miss you.
+Sweat now. Brag later.
+The sofa will survive without you.
+You'll thank me in the shower.
+Stretch first. I'm not calling an ambulance.
+Leave the phone. Take the water.
+Go. You'll be done before you know it.
+Today's excuse is not accepted.
+It's {time_of_day}. Great time to suffer a bit.
+You've done harder things. Probably.
+The playlist is ready even if you're not.
+Move. Your back will thank you.
+Half an hour. You can do half an hour.
+Lace up. Let's go.
+Your muscles called. They're bored.
+Get it done and the rest of the day is yours.
+Don't think. Just start.
+You're not tired. You're comfy. Different thing.
+Future you is already smug about this.
 
 ## readback
-# The dry butler
-Noted, sir.
-Recorded for posterity.
-Filed away, sir.
 # The sarcastic friend
 Measured twice, I hope.
 Got it. I won't lose it.
 Written down. You can forget it now.
 Safe and sound.
 Noted. Now cut once.
-# The ship's computer
-Data stored. Accuracy not guaranteed.
-Logged. Precision is your department.
-Committed to memory. Mine, not yours.
-Measurement accepted.
+Got it.
+Saved. You're welcome.
+Noted. I'll pretend I understand it.
+In the books.
+Written down. Don't argue with it later.
+Done. Hope the tape measure was straight.
+Locked in.
 
 ## catch_up
-# The dry butler
-I kept them safe while you were away, sir.
-Good {time_of_day}. There is some catching up to do.
-They waited for you. Patiently.
 # The sarcastic friend
 Welcome back. They didn't go anywhere.
 Nobody else was going to tell you.
 Missed you. They missed you more.
 Let's not make a habit of this.
-# The ship's computer
-Systems restored. Backlog detected.
-While you were gone, time kept moving.
-Resuming operations. {count} items need attention.
+You've been busy. So have they.
+Good {time_of_day}. You missed a few.
+Oh, you're back. Here's what you missed.
+{count} of them. Just saying.
+Don't panic. It's only a few.
+Took your time, didn't you.
 """
 
 

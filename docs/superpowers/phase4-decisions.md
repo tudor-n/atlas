@@ -84,5 +84,10 @@ Three subagents reviewed the branch: the backend, security and robustness, and t
 
 - **V-W1 What counts:** `voice_lines.is_workout`: any of `voice_workout_words` (Settings → Voice; 49 to start) as a whole word or phrase, any case. No bare "run", "training" or "weights" in the defaults: the owner's reminders include "run the tests", model training and YOLO weights. "Go for a run", "morning run", "running" are in.
 - **V-W2 What changes:** the info line opens "Workout time." instead of "A reminder." (the owner's text after it, verbatim, as before), and the quip comes from the new `workout` pool, else (empty or missing) the reminder pool. The line stays a `reminder` event, so the reminder switch, quiet hours, merging and the catch-up all apply unchanged; the pool rides in the line's meta (`pool`).
-- **V-W3 The quips:** 30, ten per style (the dry butler, the sarcastic friend, the ship's computer), within the listening-test rules (short sentences, full stops, no colons or dashes); one uses `{text}`, one `{time_of_day}`.
+- **V-W3 The quips:** 30 (first ten per style; all sarcastic friend since V-S1), within the listening-test rules (short sentences, full stops, no colons or dashes); one uses `{text}`, one `{time_of_day}`.
 - **V-W4 Reaching an existing file:** the seed has the pool; a file seeded before gets `WORKOUT_SECTION` appended once at startup (`ensure_workout_pool`, after the owner-edits commit), in a commit of its own, LF, never when the file has a `## workout` heading or the section's marker comment, never to an unreadable file.
+
+## Owner request: the sarcastic friend only (2026-10-24)
+
+- **V-S1** The owner retired the dry butler and the ship's computer (the phase 4 choice was a mix of three). Every quip in the seed is now the sarcastic friend: the friend's lines were kept and each pool refilled to its old size with new ones (agent_finished 30, agent_waiting 30, reminder 25, workout 30, readback 12, catch_up 10: 137, no duplicates), the same placeholders, within the listening-test rules. `test_the_seed_speaks_as_the_sarcastic_friend_only` keeps it so.
+- **V-S2** The seed only reaches a new brain (the hub never rewrites the owner's file); the owner's own `brain/_voice/quotes.md` is changed by hand (Settings → Voice → Edit quotes) or with their say-so, and the hub commits it as an owner edit at its next start.
