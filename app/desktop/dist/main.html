@@ -9,18 +9,28 @@
   html, body { height: 100%; margin: 0; background: #000; color: #fff; }
   body { overflow: hidden; }
   .bar {
-    box-sizing: border-box; height: 56px; display: flex; align-items: center; gap: 24px;
-    padding: 0 20px; border-bottom: 1px solid #262626; user-select: none;
+    box-sizing: border-box; height: 56px; display: flex; align-items: stretch;
+    border-bottom: 1px solid #262626; user-select: none;
   }
   .mono { font-family: ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", Consolas, monospace; }
-  .brand { font-size: 13px; font-weight: 600; letter-spacing: .14em; }
-  .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8a8a8a; letter-spacing: .06em; }
+  /* the brand cell as the app's top bar draws it, so nothing moves when the hub's page takes over */
+  .brand {
+    box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 10px;
+    min-width: 124px; padding: 0 20px; border-right: 1px solid #262626;
+    font-size: 13px; font-weight: 600; letter-spacing: .14em;
+  }
+  .brand .wm { margin-right: -.14em; }
+  .mk { display: block; flex: none; }
+  .mk .ks { stroke: #000; }
+  .mk .kf { fill: #000; }
+  .mk .hub { fill: #3ec7ff; }
+  .status { display: flex; align-items: center; gap: 8px; padding: 0 22px; font-size: 12px; color: #8a8a8a; letter-spacing: .06em; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #ffb020; }
 </style>
 </head>
 <body>
 <div class="bar">
-  <span class="brand mono">ATLAS</span>
+  <span class="brand mono"><svg class="mk" viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><circle cx="32" cy="32" r="21" fill="none" stroke="#fff" stroke-width="3.5"/><rect class="ks" x="26" y="5" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="ks" x="26" y="47" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="ks" x="5" y="26" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="kf" x="47" y="26" width="12" height="12" rx="1.5" stroke="#fff" stroke-width="3"/><circle class="hub" cx="32" cy="32" r="7"/></svg><span class="wm">ATLAS</span></span>
   <span class="status mono"><span class="dot"></span>STARTING THE HUB…</span>
 </div>
 </body>

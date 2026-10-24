@@ -94,7 +94,8 @@ The app is called ATLAS now. Most of the switch happens by itself the first time
   - Settings → Runtime may say **update pending: hook client copy failed** this once. That's expected (the old update step looked for the hook in the old place); it clears at the next start.
   - If the log says "Quit BrainHub first", the old app is still running somewhere: quit it from its tray icon, then start ATLAS again.
 - [ ] **Add ATLAS to the KDE launcher.** This one line finds the runtime ATLAS just built and installs the launcher entry with it. It also removes the old launcher entry and icon (was BrainHub):
-  `cd ~/.local/share/atlas/runtime/slot-$(sed -n 's/.*"slot": "\([ab]\)".*/\1/p' ~/.local/share/atlas/runtime/current.json)/app && ../venv/bin/python -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop; cd ~`
+  `cd ~/.local/share/atlas/runtime/slot-$(sed -n 's/.*"slot": "\([ab]\)".*/\1/p' ~/.local/share/atlas/runtime/current.json)/app && ../venv/bin/python -m atlas desktop-entry install --exec ~/.cache/atlas-target/release/atlas-desktop --live /mnt/data/ATLAS; cd ~`
+  With `--live`, the launcher keeps ATLAS on master by itself: each start from the menu pulls master (once CI passed) and rebuilds the app when the code changed, with an "Updating ATLAS" notification. No more `cargo build` by hand.
   If ATLAS doesn't show up in the menu, run `kbuildsycoca6`.
   If it says **No module named atlas**, the first start couldn't build the new runtime yet (no internet for the download, for example). Quit ATLAS from the tray, start it once more from the first terminal (the same `~/.cache/atlas-target/release/atlas-desktop` line), wait a minute, check the end of the log with `tail ~/.local/share/atlas/hub.log`, then run the launcher line again. Tell Claude if it still fails.
 - [ ] **Quit it from the tray** (the first terminal gets its prompt back; close it), **and from now on start ATLAS from the launcher.** Check that:

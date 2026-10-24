@@ -198,3 +198,34 @@ def test_windows_says_not_yet(tmp_path, monkeypatch, capsys):
     assert de.main(["install", "--exec", str(exe), "--data-home", str(tmp_path / "data")]) == 2
     assert "not on Windows yet" in capsys.readouterr().out
     assert not (tmp_path / "data").exists()
+
+
+@posix_only
+def test_install_with_the_live_copy_starts_its_launcher(tmp_path):
+    exe = fake_shell(tmp_path / "target dir" / "release")
+    live = tmp_path / "live copy"
+    (live / "app" / "atlas").mkdir(parents=True)
+    (live / "app" / "atlas" / "launcher.py").write_text("", encoding="utf-8")
+    home = tmp_path / "data"
+    r = cli("install", "--exec", exe, "--live", live, "--data-home", home)
+    assert r.returncode == 0, r.stderr
+    result = json.loads(r.stdout)
+    assert result["launcher"] == str(live / "app" / "atlas" / "launcher.py")
+    text = (home / "applications" / de.DESKTOP_NAME).read_text(encoding="utf-8")
+    value = next(line for line in text.splitlines() if line.startswith("Exec="))[len("Exec="):]
+    python, *args = unquote_exec(value)
+    assert os.path.isabs(python) and os.path.basename(python).startswith("python3")
+    assert args == ["-I", "-S", result["launcher"], "--exe", str(exe), "--open"]
+    assert "StartupWMClass=atlas-desktop" in text.splitlines()  # the window is still the shell's
+    r = cli("status", "--exec", exe, "--live", live, "--data-home", home)
+    assert json.loads(r.stdout)["current"] is True
+    r = cli("status", "--exec", exe, "--data-home", home)  # the plain entry is another one
+    assert json.loads(r.stdout)["current"] is False
+    # A live copy without the launcher is refused, and nothing is written.
+    r = cli("install", "--exec", exe, "--live", tmp_path / "nowhere", "--data-home", tmp_path / "data2")
+    assert r.returncode == 1 and "launcher.py is not a file" in r.stderr
+    assert not (tmp_path / "data2").exists()
+
+
+def test_the_real_launcher_exists_where_the_entry_looks():
+    assert (APP_DIR / "atlas" / "launcher.py").is_file()

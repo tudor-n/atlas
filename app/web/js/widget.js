@@ -50,7 +50,7 @@ document.addEventListener('pointerdown', (ev) => {
   window.addEventListener('pointercancel', up);
 });
 
-const grip = el('span', { class: 'wgrip', 'aria-hidden': 'true', 'data-tauri-drag-region': true }, '⋮⋮');
+const grip = el('span', { class: 'wgrip', 'aria-hidden': 'true', 'data-tauri-drag-region': true }, atlasMark(20));
 const dot = el('span', { class: 'watt', title: 'Needs your attention', hidden: true, 'data-tauri-drag-region': true });
 const synopsis = el('span', { class: 'wsyn', 'data-tauri-drag-region': true }, 'Loading…');
 const expandBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
@@ -227,6 +227,27 @@ function renderVoice() {
   voiceBtn.setAttribute('aria-label', w.title);
   voiceBtn.setAttribute('aria-pressed', String(on));
   voiceBtn.classList.toggle('on', on);
+}
+
+// The ATLAS mark (the logo handoff, 64-unit grid) at `size` px, as the top bar's brand draws it:
+// ink in currentColor, the knockout and the blue centre from components.css (.mk). The grip slot
+// holds it, so it is the handle the panel is dragged by.
+function atlasMark(size) {
+  const svg = document.createElementNS(SVG, 'svg');
+  for (const [k, v] of Object.entries({ class: 'mk', viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': 'true' })) {
+    svg.setAttribute(k, String(v));
+  }
+  const add = (tag, attrs) => {
+    const n = document.createElementNS(SVG, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    svg.appendChild(n);
+  };
+  add('circle', { cx: '32', cy: '32', r: '21', fill: 'none', stroke: 'currentColor', 'stroke-width': '3.5' });
+  const slot = { width: '12', height: '12', rx: '1.5', 'stroke-width': '3' };
+  for (const [x, y] of [['26', '5'], ['26', '47'], ['5', '26']]) add('rect', { ...slot, class: 'ks', x, y, fill: 'currentColor' });
+  add('rect', { ...slot, class: 'kf', x: '47', y: '26', stroke: 'currentColor' });  // the open task
+  add('circle', { class: 'hub', cx: '32', cy: '32', r: '7' });
+  return svg;
 }
 
 // A 16px speaker in currentColor (no emoji): with waves when on, plain in quiet hours, crossed when

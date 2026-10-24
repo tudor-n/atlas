@@ -11,12 +11,14 @@ body.widget { font: 400 13px/1.35 var(--sans); color: var(--text); overflow: hid
   background: var(--ground); border: 1px solid var(--line2); border-radius: var(--r-card);
 }
 
-/* -- the bar: grip slot | attention square, synopsis | voice, expand ------------------------- */
+/* -- the bar: grip slot (the mark) | attention square, synopsis | voice, expand ------------- */
 .wbar { display: flex; align-items: center; height: 44px; padding-right: 6px; user-select: none; -webkit-user-select: none; }
+/* the grip slot holds the ATLAS mark, in full ink: the logo is the handle */
 .wgrip {
   flex: none; display: flex; align-items: center; justify-content: center; width: 36px; height: 100%;
-  border-right: 1px solid var(--line); color: var(--dim); font-size: 17px; letter-spacing: -3px; cursor: grab;
+  border-right: 1px solid var(--line); color: var(--text); cursor: grab;
 }
+.wgrip .mk { pointer-events: none; }  /* a press on the mark is a press on the drag region */
 .watt { flex: none; width: 6px; height: 6px; margin-left: 12px; background: var(--amber); }
 .wsyn {
   flex: 1 1 auto; min-width: 0; padding: 0 10px 0 12px; font-size: 13px; line-height: 44px; color: var(--text);

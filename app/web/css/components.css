@@ -15,6 +15,14 @@
 /* the 6×6 amber attention square (warning lines, failed rows) */
 .sq { display: inline-block; flex: none; width: 6px; height: 6px; background: var(--amber); margin-right: 8px; vertical-align: middle; position: relative; top: -1px; }
 
+/* the ATLAS mark (the logo handoff): ink is the text colour (currentColor), the knockout (.ks
+   stroke, .kf fill) is --mk-ground, the colour the mark sits on, and the centre node (.hub) is
+   ATLAS blue whatever the variant */
+.mk { display: block; flex: none; }
+.mk .ks { stroke: var(--mk-ground); }
+.mk .kf { fill: var(--mk-ground); }
+.mk .hub { fill: var(--atlas); }
+
 /* hairline rules */
 .bl { border-left: 1px solid var(--line); }
 .br { border-right: 1px solid var(--line); }

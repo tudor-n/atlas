@@ -14,13 +14,16 @@ html, body { height: 100%; overflow: hidden; }
   grid-area: top; display: flex; align-items: stretch; min-width: 0; height: var(--h56);
   border-bottom: 1px solid var(--line); background: var(--ground); white-space: nowrap;
 }
+/* the brand cell is the logo handoff's top-bar lockup: the 26px mark, a 10px gap, the wordmark,
+   whose negative margin cancels its trailing tracking */
 .brand {
-  flex: none; display: flex; align-items: center; justify-content: center; min-width: 124px; padding: 0 20px;
+  flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 124px; padding: 0 20px;
   border-right: 1px solid var(--line); color: var(--text); text-decoration: none;
-  font-family: var(--mono); font-weight: 600; font-size: 13px; letter-spacing: .14em; text-indent: .14em;
+  font-family: var(--mono); font-weight: 600; font-size: 13px; letter-spacing: .14em;
 }
+.brand .wm { margin-right: -.14em; }
 .brand:hover { color: var(--text); }
-.brand.prs { background: var(--text); color: var(--ground); }
+.brand.prs { background: var(--text); color: var(--ground); --mk-ground: var(--text); }
 
 /* the tabs never wrap: when the bar runs out of room they scroll sideways */
 .top .tabs { flex: 0 1 auto; min-width: 0; height: auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
@@ -59,7 +62,8 @@ html, body { height: 100%; overflow: hidden; }
 .top.compact .stat .l, .top.compact .stat .swb > .lb, .top.compact .stat .sl .long { display: none; }
 .top.compact .stat .sl .short { display: inline; }
 @media (max-width: 1099px) {
-  .brand { min-width: 0; padding: 0 10px; }
+  .brand { min-width: 0; padding: 0 15px; }
+  .brand .wm { display: none; }  /* the mark alone says ATLAS */
   .top .tab, .top.tight .tab { padding: 0 7px; letter-spacing: .08em; }
   .top .tab.set { min-width: 0; padding: 0 10px; }
   .stat, .top.tight .stat { gap: 7px; padding: 0 8px; }
