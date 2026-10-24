@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from . import osdirs
+from . import legacy, osdirs
 
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd")
 # Async hooks never make the owner wait on a downed hub. Stop/SessionEnd stay synchronous so
@@ -23,7 +23,14 @@ OUR_SUFFIX = "atlas/hook_client.py"  # our own package path, not any file named 
 STABLE_SUFFIX = "atlas/hook/hook_client.py"  # the stable copy in a default state folder (P4)
 # Either suffix as whole path components, in a hook's args or a status line command (lowercased,
 # forward slashes): "notatlas/hook_client.py" or "tools/hook/hook_client.py" is someone else's.
-_OURS = re.compile(rf"(?:^|[\s/\"'])(?:{re.escape(OUR_SUFFIX)}|{re.escape(STABLE_SUFFIX)})(?=$|[\s\"'])")
+# The pre-rename suffixes count as ours too (rename spec §2.2), so install, uninstall and status
+# find and replace them and nothing is ever duplicated.
+def _suffix_rx(suffixes) -> re.Pattern:
+    return re.compile(rf"(?:^|[\s/\"'])(?:{'|'.join(map(re.escape, suffixes))})(?=$|[\s\"'])")
+
+
+_OURS = _suffix_rx((OUR_SUFFIX, STABLE_SUFFIX, *legacy.HOOK_SUFFIXES))
+_LEGACY = _suffix_rx(legacy.HOOK_SUFFIXES)
 # Both files describe one OS's Claude settings, so they live in that OS's state folder
 # (osdirs.state_dir()), never in the shared data/ folder (dual-boot design §6.2).
 STATE_FILE = "claude_integration.json"
@@ -137,11 +144,23 @@ def wrapper_path(bin_dir: Path) -> Path:
     return Path(bin_dir) / ("atlas-request.cmd" if sys.platform == "win32" else "atlas-request")
 
 
-def _wrapper_is_ours(path: Path) -> bool:
+def _wrapper_is_ours(path: Path, mark: str = WRAPPER_MARK) -> bool:
     try:
-        return WRAPPER_MARK in path.read_text(encoding="utf-8", errors="replace")[:400]
+        return mark in path.read_text(encoding="utf-8", errors="replace")[:400]
     except OSError:
         return False
+
+
+def legacy_wrappers(bin_dir: Path) -> list[Path]:
+    """The pre-rename wrapper files (`legacy.WRAPPER_NAMES`) that carry its own mark (rename spec
+    §2.2): only those are ours to remove."""
+    return [p for p in (Path(bin_dir) / name for name in legacy.WRAPPER_NAMES)
+            if p.is_file() and _wrapper_is_ours(p, legacy.WRAPPER_MARK)]
+
+
+def _remove_legacy_wrappers(bin_dir: Path) -> None:
+    for path in legacy_wrappers(bin_dir):
+        path.unlink(missing_ok=True)
 
 
 def check_wrappers(bin_dir: Path) -> None:
@@ -181,23 +200,38 @@ def _md_lines(text: str) -> tuple[list[str], str]:
 def _md_span(lines: list[str], path: Path) -> tuple[int, int] | None:
     """Where our block is: its marker lines (whole lines only: a marker quoted inside the owner's
     text doesn't count), or None. Anything but exactly one BEGIN followed by one END is refused,
-    rather than guessed at: guessing could delete the owner's text between stray markers."""
-    begins = [i for i, line in enumerate(lines) if line.strip() == MD_BEGIN]
-    ends = [i for i, line in enumerate(lines) if line.strip() == MD_END]
+    rather than guessed at: guessing could delete the owner's text between stray markers. The
+    pre-rename block (legacy markers, a matching pair) counts as ours: install replaces it where
+    it is (rename spec §2.2)."""
+    pairs = {MD_BEGIN: MD_END, legacy.MD_BEGIN: legacy.MD_END}
+    begins = [i for i, line in enumerate(lines) if line.strip() in pairs]
+    ends = [i for i, line in enumerate(lines) if line.strip() in pairs.values()]
     if not begins and not ends:
         return None
-    if len(begins) == 1 and len(ends) == 1 and begins[0] < ends[0]:
+    if (len(begins) == 1 and len(ends) == 1 and begins[0] < ends[0]
+            and pairs[lines[begins[0]].strip()] == lines[ends[0]].strip()):
         return begins[0], ends[0]
     raise IntegrationError(f"{path} has a damaged ATLAS block (its marker lines aren't one pair); "
                            "fix it by hand. Nothing was changed")
 
 
+def _md_is_legacy(claude_md: Path) -> bool:
+    """Whether CLAUDE.md holds our pre-rename block (whole marker lines; unreadable: no)."""
+    try:
+        lines = _md_lines(_read_md(claude_md))[0] if Path(claude_md).exists() else []
+        span = _md_span(lines, Path(claude_md))
+    except (OSError, UnicodeDecodeError, IntegrationError):
+        return False
+    return span is not None and lines[span[0]].strip() == legacy.MD_BEGIN
+
+
 def install_request_command(claude_md: Path, bin_dir: Path, *, python: str, script: str, port: int,
                             now: Callable[[], datetime] = datetime.now) -> None:
     """Write the atlas-request wrapper(s) (never over a file of the same name that isn't ours)
-    and our one CLAUDE.md line between marker lines. An existing block is replaced where it is;
-    otherwise it goes at the end. The file keeps its line endings and everything else in it, and is
-    backed up before it changes, as settings.json is."""
+    and our one CLAUDE.md line between marker lines. An existing block (also the pre-rename one)
+    is replaced where it is; otherwise it goes at the end. The file keeps its line endings and
+    everything else in it, and is backed up before it changes, as settings.json is. The pre-rename
+    wrapper is removed when it carries its own mark."""
     check_wrappers(bin_dir)
     claude_md = Path(claude_md)
     old = _read_md(claude_md) if claude_md.exists() else ""
@@ -219,6 +253,7 @@ def install_request_command(claude_md: Path, bin_dir: Path, *, python: str, scri
         _atomic_write(path, text)
         if sys.platform != "win32":
             os.chmod(path, 0o755)
+    _remove_legacy_wrappers(bin_dir)
 
 
 def uninstall_request_command(claude_md: Path, bin_dir: Path, *,
@@ -227,6 +262,7 @@ def uninstall_request_command(claude_md: Path, bin_dir: Path, *,
         path = Path(bin_dir) / name
         if path.exists() and _wrapper_is_ours(path):
             path.unlink()
+    _remove_legacy_wrappers(bin_dir)
     claude_md = Path(claude_md)
     if not claude_md.exists():
         return
@@ -250,7 +286,8 @@ def request_command_status(claude_md: Path, bin_dir: Path) -> bool:
         span = _md_span(lines, Path(claude_md))
     except (OSError, IntegrationError):
         return False
-    return span is not None and _wrapper_is_ours(wrapper_path(bin_dir))
+    return (span is not None and lines[span[0]].strip() == MD_BEGIN
+            and _wrapper_is_ours(wrapper_path(bin_dir)))
 
 
 def hook_entry(python: str, script: str, port: int, *, is_async: bool) -> dict:
@@ -538,3 +575,47 @@ def status(settings_path: Path, *, port: int, state_dir: Path | None = None) -> 
             "paths_current": (bool(events) or line_ours) and current,
             "previous_statusline": line_ours and "--passthrough-file" in command,
             "request_command": request_command_status(settings_path.parent / "CLAUDE.md", osdirs.bin_dir())}
+
+
+def _hooks_legacy(obj: dict) -> bool:
+    """Whether settings hold our own pre-rename hooks or status line (rename spec §2.2): a script
+    path ending in one of the legacy suffixes, as whole path components."""
+    def legacy_text(text) -> bool:
+        return bool(_LEGACY.search(_norm(text)))
+    hooks = obj.get("hooks", {})
+    for groups in hooks.values() if isinstance(hooks, dict) else []:
+        for g in groups if isinstance(groups, list) else []:
+            for h in _group_hooks(g):
+                if isinstance(h, dict):
+                    args = h.get("args")
+                    if legacy_text(" ".join(map(str, args)) if isinstance(args, list) else "") \
+                            or legacy_text(h.get("command", "")):
+                        return True
+    line = obj.get("statusLine")
+    return isinstance(line, dict) and legacy_text(line.get("command", ""))
+
+
+def repair_legacy(settings_path: Path, *, port: int, state_dir: Path, data_dir: Path | None = None,
+                  now: Callable[[], datetime] = datetime.now) -> bool:
+    """Rename spec §2.2, once per full hub start: when the target settings hold our own pre-rename
+    hooks or status line, install again at the current paths, exactly as Settings → Claude Code's
+    install does (hook_paths() of this OS's state folder, the hub's port, the shared data/ folder
+    for adoption; install keeps the passthrough from the state folder and makes a backup first).
+    That also removes the marked pre-rename wrapper, installs `atlas-request` and replaces
+    the old CLAUDE.md block where it was. True when it reinstalled.
+
+    A no-op (no write at all) when nothing legacy is there, and also when the legacy-named entries
+    already run exactly the current paths (a hub still on the legacy state folder, because the
+    shell's folder move failed) and no legacy wrapper or block is left: otherwise every start would
+    reinstall. Raises IntegrationError or OSError for the caller to log."""
+    settings_path, state_dir = Path(settings_path), Path(state_dir)
+    if not _hooks_legacy(_read(settings_path)):
+        return False
+    claude_md, bin_dir = settings_path.parent / "CLAUDE.md", osdirs.bin_dir()
+    if (status(settings_path, port=port, state_dir=state_dir)["paths_current"]
+            and not legacy_wrappers(bin_dir) and not _md_is_legacy(claude_md)):
+        return False
+    python, script = hook_paths(state_dir)
+    install(settings_path, python=python, script=script, port=port, state_dir=state_dir,
+            data_dir=data_dir, now=now)
+    return True

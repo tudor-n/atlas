@@ -725,6 +725,14 @@ def _integration_change(app: web.Application, install: bool) -> dict:
     return _integration_view(app)
 
 
+def repair_legacy_integration(app: web.Application) -> bool:
+    """The pre-rename hooks replaced at the current paths (rename spec §2.2), with exactly what
+    _integration_change's install uses: the target settings, this OS's state folder (its
+    hook_paths()), the hub's port and the shared data/ folder."""
+    return ci.repair_legacy(app["claude_settings_path"], port=app["port"], state_dir=osdirs.state_dir(),
+                            data_dir=app["paths"].data)
+
+
 async def post_integration_install(request: web.Request) -> web.Response:
     try:
         return web.json_response(await t(_integration_change, request.app, True))

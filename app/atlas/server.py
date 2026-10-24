@@ -26,7 +26,7 @@ from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
 from .routes import (add_reduced_routes, add_routes, errors, local_only, readonly_guard, record_usage,
-                     setup_done)
+                     repair_legacy_integration, setup_done)
 from .store import SchemaTooNew, Store, commit_hook
 from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
 from .tablet_routes import add_tablet_routes
@@ -139,6 +139,18 @@ def _rebuild_notes(app: web.Application) -> None:
         app["startup_errors"].append(f"notes index: could not index {failure}")
 
 
+def _repair_claude_integration(app: web.Application) -> None:
+    """Once per full start (rename spec §2.2): our own pre-rename Claude Code hooks, status line,
+    wrapper and CLAUDE.md block are replaced at the current paths. Quiet: a failure is only
+    logged (to hub.log), never a startup error; Settings → Claude Code shows "out of date" with
+    its install button anyway."""
+    try:
+        if repair_legacy_integration(app):
+            log.warning("replaced the pre-rename Claude Code integration in %s", app["claude_settings_path"])
+    except Exception as e:  # never fails a start
+        log.warning("could not replace the pre-rename Claude Code integration: %s", e)
+
+
 def _startup_sync(app: web.Application) -> list[str]:
     paths, store, repo = app["paths"], app["store"], app["repo"]
     errors_: list[str] = app["startup_errors"]
@@ -152,6 +164,7 @@ def _startup_sync(app: web.Application) -> list[str]:
             return default
 
     step("database", store.init_schema)
+    _repair_claude_integration(app)  # about Claude Code, not the brain: before setup too
     if not setup_done(app):
         return []
     step("git lock", _clear_stale_git_locks, app)
