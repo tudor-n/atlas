@@ -505,14 +505,27 @@ def refresh(live, state):
 
 
 HOOK_FILES = ("hook_client.py", "request_client.py")  # stdlib scripts run as files (P4; phase 3)
+PACKAGE = "atlas"
+# A slot built from a commit before the rename (rename spec §2.3) holds the package under its old
+# name: the first update after the rename runs from such a slot.
+LEGACY_PACKAGE = "brainhub"
+
+
+def slot_package(app_dir):
+    """The package folder in a slot's `app/`: `atlas/` if it is there, else the pre-rename one."""
+    new = os.path.join(app_dir, PACKAGE)
+    return new if os.path.isdir(new) or not os.path.isdir(os.path.join(app_dir, LEGACY_PACKAGE)) \
+        else os.path.join(app_dir, LEGACY_PACKAGE)
 
 
 def install_hook(state, cur):
     """Copy the current slot's hook client and atlas-request script to the stable
     `<state>/hook/` (P4), each when it differs. Run every time, so a copy that failed once is put
-    right on the next start. A slot from before phase 3 has no request_client.py: skipped."""
+    right on the next start. A slot from before phase 3 has no request_client.py: skipped. A slot
+    from before the rename has them in its legacy package folder (slot_package)."""
+    package = slot_package(os.path.join(slot_dir(state, cur["slot"]), "app"))
     for name in HOOK_FILES:
-        src = os.path.join(slot_dir(state, cur["slot"]), "app", "atlas", name)
+        src = os.path.join(package, name)
         dst = os.path.join(state, "hook", name)
         try:
             with open(src, "rb") as f:
