@@ -69,6 +69,8 @@ Tell Claude about anything that fails.
 - [ ] Click a widget tile, for example AGENTS. The main window comes forward on that page.
 - [ ] Closing the main window only hides it, and reopening is instant. The tray's **Quit** really quits.
 - [ ] A login autostart, or a second launch without `--open`, shows only the widget. The tray's **Open in browser** still works.
+- [ ] **The widget follows the window** (2026-10-24): open ATLAS from the menu, and no widget shows. Minimise the window, and the widget appears; click ATLAS in the taskbar, and it goes. Close the window, and both are gone (the tray icon stays).
+- [ ] **The new widget:** expand it (▾). It shows capture, then one NEEDS YOU list (it scrolls past six rows), a status strip and OPEN ATLAS. Clicking a row opens that page in the app. Tell Claude what still feels awkward.
 - [ ] Use it for a few days. Then tell Claude what still feels off, screen by screen.
 - [ ] On the tablet:
   - **‹ HOME** is now top left. It shows as `‹`, not an empty box.

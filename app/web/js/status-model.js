@@ -3,7 +3,7 @@
 // `drive`) and GET /api/voice. No DOM. The reduced app's /api/widget has only synopsis, attention,
 // tiles, drive and warnings, so every other field is optional here.
 import { driveText, readonlyReason } from './drive.js';
-import { tileSummary, usageWindow } from './widget-model.js';
+import { reviewCount, usageWindow } from './widget-model.js';
 import { widgetVoice } from './views/voice-model.js';
 
 // summary: the /api/widget body or null (not loaded yet, or the hub is unreachable).
@@ -33,7 +33,7 @@ export function statusFrom(summary, voice, opts = {}) {
   const wr = w.review || {};
   const proposals = rc ? rc.proposals : Number(wr.proposals) || 0;
   const entries = rc ? rc.entries
-    : Number.isFinite(wr.entries) ? wr.entries : Number(tileSummary('review', w).value) || 0;
+    : Number.isFinite(wr.entries) ? wr.entries : reviewCount(w);
   const review = {
     count: entries, warn: entries > 0, proposals,
     title: reviewTitle(entries, proposals, rc ? rc.failed : failed, !!rc || Number.isFinite(wr.entries)),

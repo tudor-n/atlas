@@ -3,6 +3,7 @@
 
 pub mod claude_watch;
 pub mod config;
+pub mod follow;
 pub mod migrate;
 pub mod supervisor;
 pub mod voice;
@@ -23,6 +24,7 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
+use follow::MainState;
 use supervisor::{Notice, Supervisor};
 #[cfg(windows)]
 use supervisor::CREATE_NO_WINDOW;
@@ -142,6 +144,46 @@ fn show_widget(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(WIDGET) {
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+/// The main window's state the widget last followed (`follow`); the tray's Show/Hide widget
+/// overrides it until the next change.
+struct Follow(Mutex<Option<MainState>>);
+
+/// Is the main window minimised? On Linux, GDK's own state, which the window-state event has
+/// already updated; elsewhere tauri's.
+fn main_minimized(w: &WebviewWindow) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::WidgetExt;
+        if let Some(gdk) = w.gtk_window().ok().and_then(|g| g.window()) {
+            return gdk.state().contains(gtk::gdk::WindowState::ICONIFIED);
+        }
+    }
+    w.is_minimized().unwrap_or(false)
+}
+
+/// The main window's state, as the widget follows it.
+fn main_state(app: &AppHandle) -> MainState {
+    match app.get_webview_window(MAIN) {
+        None => MainState::NotOpened,
+        Some(w) => follow::state_of(true, w.is_visible().unwrap_or(false), main_minimized(&w)),
+    }
+}
+
+/// Show or hide the widget for the main window's `state`, when that changed since the last time
+/// (`follow::decide`). Showing doesn't take the focus. The main thread only.
+fn follow_main(app: &AppHandle, state: MainState) {
+    let Some(follow) = app.try_state::<Follow>() else { return };
+    let show = {
+        let mut last = follow.0.lock().unwrap_or_else(|e| e.into_inner());
+        let show = follow::decide(*last, state);
+        *last = Some(state);
+        show
+    };
+    if let (Some(show), Some(w)) = (show, app.get_webview_window(WIDGET)) {
+        let _ = if show { w.show() } else { w.hide() };
     }
 }
 
@@ -346,6 +388,8 @@ impl Hub {
 /// Each watch tick, on the main thread: point the widget and the main window (if it was opened)
 /// at their hub pages when `next_step` says so.
 fn steer(app: &AppHandle) {
+    // The backstop for a missed window-state change (the events below are the quick path).
+    follow_main(app, main_state(app));
     let Some(hub) = app.try_state::<Hub>() else { return };
     let up = hub.up.load(Ordering::SeqCst);
     for hw in [&hub.widget, &hub.main] {
@@ -445,6 +489,17 @@ fn ensure_main(app: &AppHandle) -> Option<WebviewWindow> {
     match built {
         Ok(w) => {
             keep_on_screen(&w.as_ref().window());
+            // Minimising and restoring, straight from GTK: the widget appears and goes at once.
+            #[cfg(target_os = "linux")]
+            if let Ok(gtk_window) = w.gtk_window() {
+                use gtk::prelude::WidgetExt;
+                let handle = app.clone();
+                gtk_window.connect_window_state_event(move |win, ev| {
+                    let minimized = ev.new_window_state().contains(gtk::gdk::WindowState::ICONIFIED);
+                    follow_main(&handle, follow::state_of(true, win.is_visible(), minimized));
+                    gtk::glib::Propagation::Proceed
+                });
+            }
             Some(w)
         }
         Err(e) => {
@@ -485,6 +540,9 @@ fn show_main(app: &AppHandle, view: Option<String>) -> bool {
     let _ = w.unminimize();
     let shown = w.show().is_ok();
     let _ = w.set_focus();
+    if shown {
+        follow_main(app, MainState::Open);
+    }
     shown
 }
 
@@ -701,6 +759,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![open_main])
         .setup(move |app| {
             app.manage(Hub::new(port));
+            // The widget starts shown (the main window isn't opened yet), except when this start
+            // opens the main window (`--open`, the launcher entry): then it stays hidden.
+            // args_os: `std::env::args` panics on an argument that isn't UTF-8.
+            let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
+            let opening = wants_main(&args);
+            app.manage(Follow(Mutex::new(Some(MainState::NotOpened))));
             let widget = WebviewWindowBuilder::new(app, WIDGET, WebviewUrl::App("index.html".into()))
                 .title("ATLAS")
                 .inner_size(520.0, 44.0)
@@ -731,7 +795,9 @@ pub fn run() {
             let _ = widget.restore_state(StateFlags::POSITION);
             // A remembered (or first-launch) position may leave the window partly off-screen.
             keep_on_screen(&widget.as_ref().window());
-            widget.show()?;
+            if opening.is_none() {
+                widget.show()?;
+            }
 
             let handle = app.handle();
             #[cfg(unix)]
@@ -811,10 +877,8 @@ pub fn run() {
                 w.spawn();
             }
             watch(handle.clone(), sup.clone(), restart, TrayNotice { menu, line: notice_line, shown: None });
-            // Started by the launcher (`--open[=view]`): the main window too, not only the widget.
-            // args_os: `std::env::args` panics on an argument that isn't UTF-8.
-            let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
-            if let Some(view) = wants_main(&args) {
+            // Started by the launcher (`--open[=view]`): the main window, and no widget.
+            if let Some(view) = opening {
                 show_main(handle, view);
             }
             Ok(())
@@ -823,9 +887,17 @@ pub fn run() {
             if window.label() == MAIN {
                 // Closing the main window hides it (Quit is in the tray): the page, its WebSocket
                 // and any draft stay, and opening it again is instant.
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        follow_main(window.app_handle(), MainState::Hidden);
+                    }
+                    // Other OSes' way to notice a minimise (Linux has the GTK event too).
+                    WindowEvent::Resized(_) | WindowEvent::Focused(_) => {
+                        follow_main(window.app_handle(), main_state(window.app_handle()))
+                    }
+                    _ => {}
                 }
                 return;
             }

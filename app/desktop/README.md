@@ -89,6 +89,7 @@ Start `atlas-desktop` (`.exe` on Windows). The widget first shows "STARTING THE 
 - **Opening it at a view.** The widget's tiles call the shell's one command, `open_main`, which only the widget may call (`allow-open-main` in `capabilities/widget.json`): `window.__TAURI__.core.invoke('open_main', {view})`, where `view` is a hash route such as `agents` or `settings/tablet` (`[a-z]+(/[a-z0-9-]+)?`; anything else just opens the window). On the hub page already, it changes `location.hash` without a reload; otherwise it goes there with that view once the hub answers.
 - **Tray:** Open ATLAS (the main window), Open in browser (the full app in your browser: `cmd /C start` on Windows, `xdg-open` on Linux), Show/Hide widget, Pause voice, Start at login, Restart hub (only for a hub the shell started), Quit (stops the hub the shell started, then exits).
 - Launching the shell a second time shows the widget of the running one; with `--open` (or `--open=<view>`) it shows the running one's main window instead.
+- **The widget follows the main window** (`src/follow.rs`): it shows while the main window is minimised or was never opened, and hides while the main window is open or closed to the tray. A start with `--open` never shows it. The tray's Show/Hide widget overrides that until the main window next changes.
 
 ### Launcher entry (Linux)
 From `app/` in a dev copy (or with a slot's python), point it at the binary you built:

@@ -1,23 +1,25 @@
-// Desktop widget page: collapsed synopsis bar, expanded capture + tiles + popups (design §7.1),
-// in the arm language (phase 4.5 design §7; layout in widget.css).
+// Desktop widget page (design §7.1; the redesign of 2026-10-24): the collapsed bar says what needs
+// you; expanded, it adds capture, one NEEDS YOU list (its own scroll), a status strip and OPEN ATLAS.
+// The widget is ATLAS minimised: the shell shows it only while the main window is (follow.rs).
+// In the arm language (phase 4.5 design §7; layout in widget.css).
 import { get, post, put, onEvent } from './api.js';
 import { el, clear } from './dom.js';
-import { TILE_LABEL, tileSummary, popupRows, synopsisText, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome } from './widget-model.js';
+import { needsYou, barText, attention, statusStrip, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome } from './widget-model.js';
 import { widgetVoice } from './views/voice-model.js';
 
 const WIDTH = 520;
 const OFFLINE = 'ATLAS offline · retrying';
 const SVG = 'http://www.w3.org/2000/svg';
-const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.done', 'filing.failed', 'map.changed'];
+const REFRESH_EVENTS = ['items.changed', 'agents.changed', 'usage.changed', 'filing.done', 'filing.failed', 'map.changed',
+  'requests.changed'];
 
 let data = null;
 let offline = false;
 let expanded = false;
-let openTile = null;
 let debounce = null;
 let savedTimer = null;
 let saving = false;
-let popupError = '';
+let openError = '';
 let loading = false;
 let again = false;
 
@@ -42,7 +44,7 @@ function fitWindow() {
 // -- static shell, built once so the capture field keeps its text and focus ------------------
 // Press feedback (.prs on pointer-down, never :active), as press.js does in the app.
 document.addEventListener('pointerdown', (ev) => {
-  const t = ev.target instanceof Element ? ev.target.closest('.b, .wtile, button.wrow') : null;
+  const t = ev.target instanceof Element ? ev.target.closest('.b, button.wrow') : null;
   if (!t || t.disabled) return;
   t.classList.add('prs');
   const up = () => { t.classList.remove('prs'); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
@@ -61,9 +63,15 @@ const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, d
 const capture = el('input', { class: 'wcap', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
 const captureStatus = el('div', { class: 'wstat', role: 'status' });
 const notes = el('div', { class: 'wnotes', hidden: true });  // quiet warnings (time zone, Fast Startup)
-const grid = el('div', { class: 'wgrid' });
-const popup = el('div', { class: 'wpop', hidden: true });
-const body = el('div', { class: 'wbody', hidden: true }, el('div', { class: 'wcapbox' }, capture, captureStatus, notes), grid, popup);
+const listCount = el('span', { class: 'm wn' });
+const listHead = el('div', { class: 'wlist-h' }, el('span', { class: 'lb' }, 'NEEDS YOU'), listCount);
+const list = el('ul', { class: 'wlist', 'aria-label': 'Needs you', onkeydown: onListKey });
+const strip = el('div', { class: 'wstrip m', 'aria-label': 'Status' });
+const openErr = el('div', { class: 'wopen-err err', role: 'alert', hidden: true });
+const footer = el('div', { class: 'wfoot' },
+  el('button', { class: 'b h40', type: 'button', 'data-focus': 'open', onclick: () => openInApp(null) }, 'OPEN ATLAS ›'));
+const body = el('div', { class: 'wbody', hidden: true },
+  el('div', { class: 'wcapbox' }, capture, captureStatus, notes), listHead, list, strip, openErr, footer);
 root.appendChild(el('div', { class: 'wpanel' }, bar, body));
 
 function setExpanded(on) {
@@ -77,7 +85,6 @@ function setExpanded(on) {
     capture.focus();
     requestAnimationFrame(fitWindow);
   } else {
-    openTile = null;
     fitWindow();
   }
 }
@@ -94,7 +101,24 @@ function showStatus(text, isErr) {
   if (text && !isErr) savedTimer = setTimeout(() => { captureStatus.textContent = ''; }, 2000);
 }
 
+// The arrows move between the capture field and the list's rows; Enter on a row opens it.
+function rowButtons() { return [...list.querySelectorAll('button.wrow')]; }
+function onListKey(ev) {
+  if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+  const rows = rowButtons();
+  const i = rows.indexOf(document.activeElement);
+  if (i < 0) return;
+  ev.preventDefault();
+  if (ev.key === 'ArrowUp' && i === 0) capture.focus();
+  else rows[Math.min(rows.length - 1, Math.max(0, i + (ev.key === 'ArrowDown' ? 1 : -1)))].focus();
+}
+
 async function onCaptureKey(ev) {
+  if (ev.key === 'ArrowDown' && !ev.isComposing) {
+    const first = rowButtons()[0];
+    if (first) { ev.preventDefault(); first.focus(); }
+    return;
+  }
   if (ev.key !== 'Enter' || ev.isComposing) return;
   const text = capture.value;
   if (!text.trim() || saving) return;
@@ -121,58 +145,32 @@ function renderBar() {
     synopsis.title = '';
     dot.hidden = true;
   } else if (data) {
-    synopsis.textContent = synopsisText(data);
-    synopsis.title = data.drive ? synopsis.textContent : '';  // the banner is long: all of it on hover
+    synopsis.textContent = barText(data);
+    synopsis.title = synopsis.textContent;  // the bar cuts long text short: all of it on hover
     synopsis.classList.toggle('drive', !!data.drive);
-    dot.hidden = !(data.attention || data.drive);
+    dot.hidden = !attention(data);
   }
 }
 
-// In the desktop shell a view opens in the main window (`open_main`); in a browser, or if the shell
-// refuses (an older shell, a window it could not show) or doesn't answer within 3 s, POST /api/open
-// opens it in the browser. The arm tile always posts its own target.
-async function openInApp(name, view) {
-  popupError = '';
-  const plan = openPlan(name, view, tauriInvoke(window));
+// In the desktop shell a view opens in the main window (`open_main`), which then hides the widget;
+// in a browser, or if the shell refuses (an older shell, a window it could not show) or doesn't
+// answer within 3 s, POST /api/open opens it in the browser.
+async function openInApp(view) {
+  openError = '';
+  const plan = openPlan(view, tauriInvoke(window));
   try {
     if (plan.invoke && await openOutcome(() => plan.invoke('open_main', { view: plan.view })) === 'shell') return;
     await post('/api/open', plan.body);
   } catch (e) {
-    popupError = e.message || 'Could not open';
-    renderPopup();
-    fitWindow();
+    openError = e.message || 'Could not open';
   }
-}
-
-function renderPopup() {
-  clear(popup);
-  if (!openTile || !data) { popup.hidden = true; return; }
-  const name = openTile;
-  const rows = popupRows(name, data);
-  popup.hidden = false;
-  popup.appendChild(el('div', { class: 'wpop-h' }, el('span', { class: 'lb' }, TILE_LABEL[name] || name)));
-  if (name === 'arm') {
-    popup.appendChild(el('div', { class: 'wempty' }, el('span', { class: 'm' }, `${data.arm.url} · ${data.arm.reachable ? 'reachable' : 'offline'}`)));
-  } else if (!rows.length) {
-    popup.appendChild(el('div', { class: 'wempty' }, 'Nothing here'));
-  } else {
-    popup.appendChild(el('ul', null, rows.map((r, i) => {
-      const inner = [el('span', { class: 'wt' }, r.text), r.meta ? el('span', { class: 'wm' }, r.meta) : null];
-      return el('li', null, r.view
-        ? el('button', { class: 'wrow', type: 'button', 'data-focus': `row:${i}`, onclick: () => openInApp(name, r.view) }, inner)
-        : el('div', { class: 'wrow' }, inner));
-    })));
-  }
-  if (popupError) popup.appendChild(el('div', { class: 'wpop-err err', role: 'alert' }, popupError));
-  popup.appendChild(el('div', { class: 'wpop-f' },
-    el('button', { class: 'b h40', type: 'button', 'data-focus': 'footer', onclick: () => openInApp(name) },
-      name === 'arm' ? 'OPEN ROBOT ARM ›' : 'OPEN IN ATLAS ›')));
+  renderBody();
+  fitWindow();
 }
 
 function focusKey() {
   const a = document.activeElement;
-  if (a && a.dataset && a.dataset.focus && (grid.contains(a) || popup.contains(a))) return a.dataset.focus;
-  return null;
+  return a && a.dataset && a.dataset.focus && body.contains(a) ? a.dataset.focus : null;
 }
 
 function renderBody() {
@@ -181,22 +179,25 @@ function renderBody() {
   const warnings = Array.isArray(data.warnings) ? data.warnings : [];
   notes.textContent = warnings.join(' ');
   notes.hidden = !warnings.length;
-  clear(grid);
-  for (const name of data.tiles) {
-    if (!TILE_LABEL[name]) continue;
-    const s = tileSummary(name, data);
-    const open = openTile === name;
-    grid.appendChild(el('button', {
-      class: 'wtile' + (s.warn ? ' warn' : '') + (open ? ' open' : ''), type: 'button', 'data-focus': `tile:${name}`, 'data-tile': name, 'aria-expanded': String(open),
-      onclick: () => { openTile = openTile === name ? null : name; popupError = ''; renderBody(); fitWindow(); },
-    },
-    el('span', { class: 'lb' }, TILE_LABEL[name]),
-    el('span', { class: 'wv' }, s.value),
-    el('span', { class: 'wc' }, s.caption)));
+  const rows = needsYou(data);
+  listCount.textContent = rows.length ? String(rows.length) : '';
+  clear(list);
+  if (!rows.length) list.appendChild(el('li', { class: 'wempty' }, 'Nothing needs you.'));
+  for (const r of rows) {
+    list.appendChild(el('li', null, el('button', {
+      class: 'wrow' + (r.warn ? ' warn' : ''), type: 'button', 'data-focus': `row:${r.key}`, title: r.text,
+      onclick: () => openInApp(r.view),
+    }, el('span', { class: 'wsq', 'aria-hidden': 'true' }), el('span', { class: 'wt' }, r.text), el('span', { class: 'wm' }, r.meta))));
   }
-  renderPopup();
+  clear(strip);
+  statusStrip(data).forEach((s, i) => {
+    if (i) strip.appendChild(el('span', { class: 'wsep', 'aria-hidden': 'true' }, '·'));
+    strip.appendChild(el('span', { class: s.warn ? 'amb' : '' }, s.text));
+  });
+  openErr.textContent = openError;
+  openErr.hidden = !openError;
   if (key) {
-    for (const n of root.querySelectorAll('[data-focus]')) {
+    for (const n of body.querySelectorAll('[data-focus]')) {
       if (n.dataset.focus === key) { n.focus(); break; }
     }
   }

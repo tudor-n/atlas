@@ -149,9 +149,11 @@ export async function hierarchySection({ body, isDead, head }) {
 
 // -- PREFERENCES (and BACKUP's two keys) ------------------------------------------------------
 const MODELS = ['haiku', 'sonnet', 'opus'];
-const WIDGET_TILES = ['today', 'usage', 'agents', 'people', 'deadlines', 'review', 'projects', 'arm'];
 const BACKUP_KEYS = ['backup_remote', 'backup_debounce_s'];
 const OWN_SECTION = /^(tablet|voice)_/;
+// Kept in settings.json, but nothing reads them any more: the widget's tiles gave way to its NEEDS YOU
+// list (2026-10-24).
+const RETIRED = ['widget_tiles'];
 const HINTS = {
   port: 'Takes effect after ATLAS restarts. Then install the Claude Code integration again and re-run desktop-config, and restart ATLAS.',
   claude_path: 'Command name of the claude CLI (like claude), not a path: each OS finds it on its own PATH. Takes effect after ATLAS restarts.',
@@ -164,8 +166,7 @@ const HINTS = {
   usage_warn_pct: 'Usage at or above this % shows as a warning.',
   agents_end_linger_s: 'Seconds a closed session stays listed.',
   agents_stale_h: 'Hours without any event before a session is dropped.',
-  arm_url: 'Robot arm server address (opened from the widget).',
-  widget_tiles: 'Tiles shown in the expanded widget.',
+  arm_url: 'Robot arm (DUMMY) server address: the tablet\'s DUMMY tile opens it, and the widget shows whether it answers.',
 };
 
 // One control per settings key: {control, forId, read}. read() returns the value or throws Error(message).
@@ -181,17 +182,6 @@ function buildField(key, val) {
       read() {
         if (!a.value || !b.value) throw new Error('Pick both quiet-hours times.');
         return [a.value, b.value];
-      },
-    };
-  }
-  if (key === 'widget_tiles' && Array.isArray(val)) {
-    const tiles = WIDGET_TILES.map((t) => ({ t, b: toggle(t.toUpperCase(), val.includes(t), { title: prefLabel(t) }) }));
-    return {
-      control: el('div', { class: 'tgs', role: 'group', 'aria-label': name }, tiles.map((x) => x.b)),
-      read() {
-        const on = new Set(tiles.filter((x) => x.b.isOn()).map((x) => x.t));
-        if (!on.size) throw new Error('Pick at least one widget tile.');
-        return [...val.filter((t) => on.has(t)), ...WIDGET_TILES.filter((t) => on.has(t) && !val.includes(t))];
       },
     };
   }
@@ -265,7 +255,7 @@ export async function preferencesSection({ body, bar, isDead }) {
   let form;
   try {
     // The tablet's and the voice's keys have their own sections, and so does backup.
-    form = await settingsForm((all) => all.filter((k) => !BACKUP_KEYS.includes(k) && !OWN_SECTION.test(k)));
+    form = await settingsForm((all) => all.filter((k) => !BACKUP_KEYS.includes(k) && !OWN_SECTION.test(k) && !RETIRED.includes(k)));
   } catch (e) {
     if (!isDead()) body.appendChild(failLine(`Couldn't load the preferences: ${e.message}`));
     return;
