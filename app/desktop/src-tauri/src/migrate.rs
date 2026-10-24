@@ -57,14 +57,22 @@ pub struct Outcome {
     /// When the state move went through but `desktop.json` couldn't be rewritten: its `state`
     /// still names the old folder, which is gone, so the shell uses `(old, new)`'s new one.
     pub state_swap: Option<(PathBuf, PathBuf)>,
+    /// No override is set: `fix` also swaps a missing `BrainHub` path to its renamed sibling.
+    pub swap_siblings: bool,
 }
 
 impl Outcome {
-    /// The config as read, with the state swap applied (see `state_swap`).
+    /// The config as read, with what couldn't be written applied in memory: the state swap (see
+    /// `state_swap`) and the renamed-sibling swap of `root`, `live` and `app_dir`.
     pub fn fix(&self, mut cfg: config::DesktopConfig) -> config::DesktopConfig {
         if let (Some((old, new)), Some(state)) = (&self.state_swap, &cfg.state) {
-            if state == old && !old.exists() && new.exists() {
+            if state == old && moved_away(old, new) && new.exists() {
                 cfg.state = Some(new.clone());
+            }
+        }
+        for path in [&mut cfg.root, &mut cfg.live, &mut cfg.app_dir] {
+            if let Some(new) = path.as_deref().filter(|_| self.swap_siblings).and_then(renamed_sibling) {
+                *path = Some(new);
             }
         }
         cfg
@@ -94,12 +102,51 @@ fn overridden(env: Env) -> bool {
 
 /// The shell's start: the folder move (when due), then the legacy login entry. Logs to hub.log.
 pub fn run() -> Outcome {
-    let mut out = migrate_in(&config::real_env);
+    let mut out = start_in(&config::real_env);
     match remove_legacy_autostart(&config::real_env) {
         Ok(removed) => out.autostart_removed = removed,
         Err(e) => eprintln!("atlas-desktop: could not remove the old login entry: {e}"),
     }
     out
+}
+
+/// Every start (tests pass a fake `env`): the folder move when it is due, then, whenever no
+/// override is set, the path repointing of whichever `desktop.json` is in use. The owner may
+/// rename the shared folder (or mount the drive) only after the move: the next start follows it.
+pub(crate) fn start_in(env: Env) -> Outcome {
+    let mut out = migrate_in(env);
+    out.swap_siblings = !overridden(env);
+    if out.swap_siblings {
+        if let (Some(path), Some(d)) = (out.config.clone(), dirs(env)) {
+            let before = out.repointed.len();
+            let result = if path.is_file() { rewrite(&path, &d, &mut out) } else { Ok(()) };
+            let log_dir = if d.new_state.is_dir() { &d.new_state } else { &d.old_state };
+            match result {
+                Ok(()) if out.repointed.len() > before => crate::supervisor::append_log(
+                    &log_dir.join("hub.log"), &format!("repointed {}", list(&out.repointed[before..]))),
+                Ok(()) => {}
+                Err(e) => crate::supervisor::append_log(&log_dir.join("hub.log"), &e),
+            }
+        }
+    }
+    out
+}
+
+/// Whether the pre-rename shell or hub still runs: the legacy `desktop.json`'s port answers, or
+/// the legacy update step holds its lock. The folders are never moved under a running process.
+fn legacy_running(d: &Dirs, legacy_json: &Path) -> Option<String> {
+    let port = config::load(legacy_json).port;
+    if crate::supervisor::hub_up(port) {
+        return Some(format!("a hub answers on port {port}"));
+    }
+    let lock = d.old_state.join("runtime").join("update.lock");
+    if let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(&lock) {
+        if let Err(std::fs::TryLockError::WouldBlock) = file.try_lock() {
+            return Some(format!("its update step holds {}", lock.display()));
+        }
+        // Taken just now, or not lockable: it is released when `file` is dropped.
+    }
+    None
 }
 
 /// The folder move and the `desktop.json` rewrite, in `env` (tests pass a fake one).
@@ -108,6 +155,14 @@ pub(crate) fn migrate_in(env: Env) -> Outcome {
     let (Some(new_json), Some(d)) = (out.config.clone(), dirs(env)) else { return out };
     let legacy_json = d.old_cfg.join(DESKTOP_JSON);
     if overridden(env) || new_json.exists() || !legacy_json.is_file() {
+        return out;
+    }
+    if let Some(why) = legacy_running(&d, &legacy_json) {
+        let msg = format!("not moving the {LEGACY_ROOT_NAME} folders yet: {why}. Quit {LEGACY_ROOT_NAME} first \
+                           (tray → Quit), then start ATLAS again");
+        crate::supervisor::append_log(&d.old_state.join("hub.log"), &msg);
+        out.config = Some(legacy_json);
+        out.error = Some(msg);
         return out;
     }
     out.ran = true;
@@ -133,6 +188,12 @@ fn migrate(d: &Dirs, legacy_json: &Path, new_json: &Path, out: &mut Outcome) -> 
     // 1. State first: until the config folder has moved too, the legacy desktop.json says "not done".
     if move_dir(&d.old_state, &d.new_state)? {
         out.moved.push(format!("{} -> {}", d.old_state.display(), d.new_state.display()));
+        // Until the hub has repaired them, the hooks, the wrapper and the status line's
+        // passthrough still name the old folder: keep those paths working (the hub removes this
+        // once nothing names it: claude_integration.remove_legacy_compat).
+        if let Err(e) = leave_compat(&d.old_state, &d.new_state) {
+            out.repointed.push(format!("(no compat path at {}: {e})", d.old_state.display()));
+        }
     }
     // On Windows the state folder is the config folder: desktop.json moved with it.
     let here = if legacy_json.is_file() { legacy_json.to_path_buf() } else { new_json.to_path_buf() };
@@ -157,10 +218,48 @@ fn migrate(d: &Dirs, legacy_json: &Path, new_json: &Path, out: &mut Outcome) -> 
         .map_err(|e| format!("cannot write migrated.json: {e}"))
 }
 
+/// The marker file of the Windows compat copy (`legacy.COMPAT_MARKER` on the Python side).
+const COMPAT_MARKER: &str = "moved-to-atlas.txt";
+
+/// Linux: a symlink at the old state folder to the new one. Windows: the old folder again, with
+/// copies of the stable hook files and the passthrough, and a marker (a junction would need a
+/// process or a crate; the hook files are all the old paths need).
+#[cfg(not(windows))]
+fn leave_compat(old: &Path, new: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(new, old)
+}
+
+#[cfg(windows)]
+fn leave_compat(old: &Path, new: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(old.join("hook"))?;
+    for rel in ["hook/hook_client.py", "hook/request_client.py", "statusline_passthrough.txt"] {
+        let src = new.join(rel);
+        if src.is_file() {
+            std::fs::copy(&src, old.join(rel))?;
+        }
+    }
+    std::fs::write(old.join(COMPAT_MARKER), format!("{} moved to {}\n", old.display(), new.display()))
+}
+
+/// Whether `old` is the compat path `leave_compat` left for `new` (so it counts as moved).
+fn is_compat(old: &Path, new: &Path) -> bool {
+    if cfg!(windows) {
+        old.join(COMPAT_MARKER).is_file()
+    } else {
+        old.is_symlink() && std::fs::read_link(old).is_ok_and(|t| t == new)
+    }
+}
+
+/// The old folder is gone, or only our compat path is left in its place.
+fn moved_away(old: &Path, new: &Path) -> bool {
+    !old.exists() || is_compat(old, new)
+}
+
 /// Rename `from` to `to` in one rename, only when `to` is absent or an empty folder. Ok(false)
-/// when there is nothing to move (no `from`: never had one, or moved by an earlier start).
+/// when there is nothing to move (no `from`: never had one, or moved by an earlier start, which
+/// may have left its compat path there).
 fn move_dir(from: &Path, to: &Path) -> Result<bool, String> {
-    if from == to || !from.is_dir() {
+    if from == to || !from.is_dir() || is_compat(from, to) {
         return Ok(false);
     }
     if to.exists() {
@@ -209,7 +308,7 @@ fn repoint(obj: &mut Map<String, Value>, d: &Dirs) -> Vec<String> {
         obj.insert(key.into(), Value::String(new.to_string_lossy().into_owned()));
     };
     if let Some(state) = obj.get("state").and_then(Value::as_str).map(PathBuf::from) {
-        if state == d.old_state && !d.old_state.exists() && d.new_state.is_dir() {
+        if state == d.old_state && moved_away(&d.old_state, &d.new_state) && d.new_state.is_dir() {
             set(obj, "state", d.new_state.clone());
         }
     }
@@ -325,7 +424,8 @@ mod tests {
         std::fs::write(d.old_state.join("hub.log"), "old line\n").unwrap();
         std::fs::create_dir_all(&d.old_cfg).unwrap();
         let root = dir.join("mnt").join(LEGACY_ROOT_NAME);
-        let body = serde_json::json!({"port": 8090, "root": root, "live": root, "state": d.old_state});
+        // Port 1: nothing answers there, so the "old hub still running" check never fires by accident.
+        let body = serde_json::json!({"port": 1, "root": root, "live": root, "state": d.old_state});
         std::fs::write(d.old_cfg.join(DESKTOP_JSON), body.to_string()).unwrap();
         Setup { dir, home, d }
     }
@@ -342,14 +442,20 @@ mod tests {
         assert!(out.ran && out.error.is_none(), "{out:?}");
         let new_json = s.d.new_cfg.join(DESKTOP_JSON);
         assert_eq!(out.config.as_deref(), Some(new_json.as_path()));
-        assert!(!s.d.old_state.exists() && !s.d.old_cfg.exists());
+        assert!(!s.d.old_cfg.exists() || cfg!(windows));
         assert!(s.d.new_state.join("runtime").is_dir());
+        // The old state folder's paths keep working until the hub repairs the hooks.
+        assert!(is_compat(&s.d.old_state, &s.d.new_state), "the compat path");
+        #[cfg(not(windows))]
+        assert_eq!(std::fs::read_link(&s.d.old_state).unwrap(), s.d.new_state);
+        #[cfg(not(windows))]
+        assert!(s.d.old_state.join("hub.log").is_file(), "reachable through it");
         let cfg = json(&new_json);
         let root = s.dir.join("mnt").join(ROOT_NAME);
         assert_eq!(cfg["state"], Value::String(s.d.new_state.to_string_lossy().into()));
         assert_eq!(cfg["root"], Value::String(root.to_string_lossy().into()));
         assert_eq!(cfg["live"], cfg["root"]);
-        assert_eq!(cfg["port"], 8090);
+        assert_eq!(cfg["port"], 1);
         assert_eq!(out.repointed.len(), 3, "{out:?}");
         let record = json(&s.d.new_state.join("migrated.json"));
         assert_eq!(record["from"], LEGACY_PACKAGE);
@@ -479,14 +585,129 @@ mod tests {
         let _ = std::fs::remove_dir_all(&s.dir);
     }
 
+    /// Writes `desktop.json`'s `root` and `live` (keeping the rest).
+    fn set_root(path: &Path, root: &Path) {
+        let mut cfg = json(path);
+        cfg["root"] = Value::String(root.to_string_lossy().into());
+        cfg["live"] = cfg["root"].clone();
+        std::fs::write(path, cfg.to_string()).unwrap();
+    }
+
+    #[test]
+    fn the_root_renamed_after_the_migration_is_followed_at_the_next_start() {
+        let s = legacy_home("late-rename");
+        let old_root = s.dir.join("mnt").join(LEGACY_ROOT_NAME);
+        std::fs::create_dir_all(&old_root).unwrap(); // not renamed yet at the first start
+        let first = start_in(&env_for(&s.home, &[]));
+        assert!(first.ran && first.error.is_none(), "{first:?}");
+        let new_json = s.d.new_cfg.join(DESKTOP_JSON);
+        assert_eq!(config::load(&new_json).root.as_deref(), Some(old_root.as_path()));
+        let new_root = s.dir.join("mnt").join(ROOT_NAME);
+        std::fs::rename(&old_root, &new_root).unwrap(); // the owner's `mv`
+        let next = start_in(&env_for(&s.home, &[]));
+        assert!(!next.ran && next.repointed.len() == 2, "root and live: {next:?}");
+        let read = next.fix(config::load(&new_json));
+        assert_eq!(read.root.as_deref(), Some(new_root.as_path()));
+        assert_eq!(read.live.as_deref(), Some(new_root.as_path()));
+        let log = std::fs::read_to_string(s.d.new_state.join("hub.log")).unwrap();
+        assert!(log.contains("repointed root: "), "{log}");
+        // And then nothing more.
+        assert!(start_in(&env_for(&s.home, &[])).repointed.is_empty());
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn a_drive_missing_at_the_first_start_is_followed_once_it_is_there() {
+        let s = legacy_home("no-mount");
+        let first = start_in(&env_for(&s.home, &[])); // neither root exists: nothing to swap to
+        assert!(first.ran && first.error.is_none(), "{first:?}");
+        assert_eq!(first.repointed.len(), 1, "only the state: {first:?}");
+        let new_root = s.dir.join("mnt").join(ROOT_NAME);
+        std::fs::create_dir_all(&new_root).unwrap(); // mounted, already renamed
+        let next = start_in(&env_for(&s.home, &[]));
+        assert_eq!(config::load(&s.d.new_cfg.join(DESKTOP_JSON)).root.as_deref(), Some(new_root.as_path()));
+        assert_eq!(next.repointed.len(), 2, "{next:?}");
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn the_legacy_file_in_use_is_repointed_too_and_overrides_never_are() {
+        // The state move stopped early (its target is in the way): the legacy desktop.json is in use.
+        let s = legacy_home("legacy-in-use");
+        std::fs::create_dir_all(&s.d.new_state).unwrap();
+        std::fs::write(s.d.new_state.join("keep.txt"), "mine").unwrap();
+        let new_root = s.dir.join("mnt").join(ROOT_NAME);
+        std::fs::create_dir_all(&new_root).unwrap();
+        let out = start_in(&env_for(&s.home, &[]));
+        let legacy_json = s.d.old_cfg.join(DESKTOP_JSON);
+        assert!(out.error.is_some() && out.config.as_deref() == Some(legacy_json.as_path()), "{out:?}");
+        assert_eq!(config::load(&legacy_json).root.as_deref(), Some(new_root.as_path()));
+        assert_eq!(config::load(&legacy_json).state.as_deref(), Some(s.d.old_state.as_path()), "not moved");
+        // With an override, a file naming a missing BrainHub path is left exactly as it is.
+        let cfg_dir = s.dir.join("override-cfg");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        set_root(&legacy_json, &s.dir.join("mnt").join(LEGACY_ROOT_NAME));
+        std::fs::copy(&legacy_json, cfg_dir.join(DESKTOP_JSON)).unwrap();
+        let before = std::fs::read_to_string(cfg_dir.join(DESKTOP_JSON)).unwrap();
+        let cfg_var = cfg_dir.to_string_lossy().into_owned();
+        let out = start_in(&env_for(&s.home, &[("ATLAS_CONFIG_DIR", &cfg_var)]));
+        assert!(!out.ran && out.repointed.is_empty() && !out.swap_siblings);
+        assert_eq!(std::fs::read_to_string(cfg_dir.join(DESKTOP_JSON)).unwrap(), before);
+        let read = out.fix(config::load(&cfg_dir.join(DESKTOP_JSON)));
+        assert_eq!(read.root.as_deref(), Some(s.dir.join("mnt").join(LEGACY_ROOT_NAME).as_path()));
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn fix_swaps_a_missing_root_in_memory() {
+        let dir = temp("fix-root");
+        std::fs::create_dir_all(dir.join(ROOT_NAME)).unwrap();
+        let cfg = config::DesktopConfig { root: Some(dir.join(LEGACY_ROOT_NAME)), ..config::DesktopConfig::default() };
+        let on = Outcome { swap_siblings: true, ..Outcome::default() };
+        assert_eq!(on.fix(cfg.clone()).root, Some(dir.join(ROOT_NAME)));
+        assert_eq!(Outcome::default().fix(cfg.clone()).root, cfg.root);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nothing_moves_while_the_old_hub_answers() {
+        let s = legacy_home("running-port");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut cfg = json(&s.d.old_cfg.join(DESKTOP_JSON));
+        cfg["port"] = listener.local_addr().unwrap().port().into();
+        std::fs::write(s.d.old_cfg.join(DESKTOP_JSON), cfg.to_string()).unwrap();
+        let out = migrate_in(&env_for(&s.home, &[]));
+        assert!(!out.ran && out.error.as_deref().unwrap_or_default().contains("Quit BrainHub first"), "{out:?}");
+        assert!(s.d.old_state.join("runtime").is_dir() && !s.d.new_state.exists());
+        assert_eq!(out.config, Some(s.d.old_cfg.join(DESKTOP_JSON)));
+        assert!(std::fs::read_to_string(s.d.old_state.join("hub.log")).unwrap().contains("Quit BrainHub first"));
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn nothing_moves_while_the_old_update_step_holds_its_lock() {
+        let s = legacy_home("running-lock");
+        let lock = std::fs::File::create(s.d.old_state.join("runtime").join("update.lock")).unwrap();
+        lock.try_lock().unwrap();
+        let out = migrate_in(&env_for(&s.home, &[]));
+        assert!(!out.ran && out.error.as_deref().unwrap_or_default().contains("update.lock"), "{out:?}");
+        assert!(s.d.old_state.join("runtime").is_dir());
+        lock.unlock().unwrap();
+        assert!(migrate_in(&env_for(&s.home, &[])).ran, "once released, it runs");
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
     #[test]
     fn it_is_idempotent() {
         let s = legacy_home("twice");
         assert!(migrate_in(&env_for(&s.home, &[])).error.is_none());
         let before = std::fs::read_to_string(s.d.new_cfg.join(DESKTOP_JSON)).unwrap();
-        let out = migrate_in(&env_for(&s.home, &[]));
-        assert!(!out.ran && out.moved.is_empty() && out.repointed.is_empty());
+        // The compat path at the old state folder never looks like a legacy install again.
+        let out = start_in(&env_for(&s.home, &[]));
+        assert!(!out.ran && out.moved.is_empty() && out.repointed.is_empty() && out.error.is_none(), "{out:?}");
         assert_eq!(std::fs::read_to_string(s.d.new_cfg.join(DESKTOP_JSON)).unwrap(), before);
+        assert!(is_compat(&s.d.old_state, &s.d.new_state));
         let _ = std::fs::remove_dir_all(&s.dir);
     }
 
