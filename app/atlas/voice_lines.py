@@ -150,10 +150,11 @@ def time_words(t: datetime) -> str:
     return f"at {hh}{mm} {'am' if h < 12 else 'pm'}"
 
 
-def reminder_line(text: str, due: str | None, now: datetime) -> str:
+def reminder_line(text: str, due: str | None, now: datetime, opener: str = "A reminder.") -> str:
     """'A reminder. Submit the lab report. It's due today at 2 pm.' The item text is the owner's
-    own; the due part is left out when there's no due date or it can't be read."""
-    line = "A reminder. " + cap(sentence(text), CAP - 40)
+    own; the due part is left out when there's no due date or it can't be read. A workout says
+    'Workout time.' instead (`is_workout`)."""
+    line = opener + " " + cap(sentence(text), CAP - 40)
     if due:
         try:
             when = datetime.fromisoformat(due)
@@ -164,6 +165,22 @@ def reminder_line(text: str, due: str | None, now: datetime) -> str:
             part += " " + time_words(when)
         line += f" It's due {part}."
     return line
+
+
+def is_workout(text: str, words) -> bool:
+    """Does an item read like a workout? Any of the owner's workout words (Settings → Voice), as a
+    whole word or phrase, any case: "Leg day" and "gym at 6" do, "run the tests" doesn't (the
+    default list has "go for a run" and "running", not a bare "run")."""
+    if not isinstance(text, str) or not text:
+        return False
+    for w in words or ():
+        if isinstance(w, str) and w.strip():
+            if re.search(r"(?<![\w-])" + re.escape(w.strip()) + r"(?![\w-])", text, re.I):
+                return True
+    return False
+
+
+WORKOUT_OPENER = "Workout time."
 
 
 def catch_up_line(count: int) -> str:

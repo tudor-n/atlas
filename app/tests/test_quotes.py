@@ -28,7 +28,7 @@ def test_parse_reports_problems_with_line_numbers_and_keeps_the_rest():
     assert pools["agent_finished"] == ["Good one."] and pools["reminder"] == ["Ok {text}."]
     assert problems == ["line 1: a quote before the first ## heading", "line 4: unknown placeholder {nope}",
                         "line 5: a stray brace", "line 6: unknown pool 'nonsense' (known: agent_finished, "
-                        "agent_waiting, reminder, readback, catch_up)"]
+                        "agent_waiting, reminder, workout, readback, catch_up)"]
 
 
 def test_picker_cycles_without_repeats_then_reshuffles():
@@ -109,3 +109,37 @@ def test_load_quotes_tolerates_a_missing_or_unreadable_file(tmp_path):
 def test_voice_folder_is_protected_from_filing_and_not_a_note():
     assert protected_tops(["_voice/quotes.md", "notes/a.md"]) == ["_voice"]
     assert not is_note_path("_voice/quotes.md") and is_note_path("notes/a.md")
+
+
+# -- the workout pool (owner, 2026-10-24) ------------------------------------------------------------
+def test_the_seed_has_a_workout_pool_in_all_three_styles():
+    pools, problems = q.parse(q.SEED)
+    assert problems == [] and len(pools["workout"]) >= 30
+    assert q.WORKOUT_SECTION.startswith(q.WORKOUT_MARKER) and "## workout" in q.WORKOUT_SECTION
+    assert q.WORKOUT_SECTION.count("# The ") == 4  # the marker and the three styles
+
+
+def test_an_older_quotes_file_gets_the_workout_pool_once(tmp_path):
+    brain = tmp_path / "brain"
+    (brain / "_voice").mkdir(parents=True)
+    f = brain / "_voice" / "quotes.md"
+    f.write_text("## reminder\nMy own line.\n", encoding="utf-8")  # the owner's edits, no workout pool yet
+    assert q.ensure_workout_pool(brain) is True
+    pools, problems = q.parse(f.read_text(encoding="utf-8"))
+    assert problems == [] and pools["reminder"] == ["My own line."] and len(pools["workout"]) >= 30
+    assert b"\r" not in f.read_bytes()
+    assert q.ensure_workout_pool(brain) is False  # once
+    # The owner deleted the quips but kept the marker comment: that stands.
+    f.write_text("## reminder\nMy own line.\n" + q.WORKOUT_MARKER + " (removed)\n", encoding="utf-8")
+    assert q.ensure_workout_pool(brain) is False
+    # Their own ## workout heading, even empty, stands too.
+    f.write_text("## reminder\nx.\n## workout\n", encoding="utf-8")
+    assert q.ensure_workout_pool(brain) is False
+
+
+def test_the_workout_pool_needs_a_readable_file(tmp_path):
+    assert q.ensure_workout_pool(tmp_path / "nobrain") is False  # no file: ensure_quotes seeds the lot
+    brain = tmp_path / "b"
+    (brain / "_voice").mkdir(parents=True)
+    (brain / "_voice" / "quotes.md").write_bytes(b"\xff\xfe not utf-8")
+    assert q.ensure_workout_pool(brain) is False

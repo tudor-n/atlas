@@ -69,3 +69,20 @@ export function widgetVoice(v) {
   const quiet = v.quiet_now ? ' (quiet hours now)' : '';
   return { show: true, icon: '🔊', title: `Voice on${quiet} · click to switch it off`, action: 'off', muted: !!v.quiet_now };
 }
+
+// Settings → Voice → Workout words: the field's text as the setting's list. Commas separate; spaces
+// around a word don't count; duplicates (any case) fold into one. {list} or {error}.
+export function workoutWords(text) {
+  const seen = new Set();
+  const list = [];
+  for (const raw of String(text || '').split(',')) {
+    const w = raw.trim().replace(/\s+/g, ' ');
+    if (!w) continue;
+    if (w.length < 2 || w.length > 40) return { error: `Workout words: "${w}" must be 2 to 40 characters.` };
+    if (seen.has(w.toLowerCase())) continue;
+    seen.add(w.toLowerCase());
+    list.push(w);
+  }
+  if (list.length > 100) return { error: 'Workout words: at most 100.' };
+  return { list };
+}

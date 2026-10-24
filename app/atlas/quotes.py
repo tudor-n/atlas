@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "readback", "catch_up")
+POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up")
 PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day")
 COOLDOWN = timedelta(seconds=60)  # after a quip, lines within this play without one
 REL_PATH = "_voice/quotes.md"
@@ -23,7 +23,8 @@ SEED = """\
 # ATLAS's voice quotes (phase 4). Edit freely: the hub reads this file every time it speaks.
 #
 # Each "## name" heading starts a pool, one per kind of line:
-#   agent_finished, agent_waiting, reminder, readback (sass on readbacks is off by default), catch_up
+#   agent_finished, agent_waiting, reminder, workout (reminders that look like a workout; when it's
+#   empty they use reminder), readback (sass on readbacks is off by default), catch_up
 # Then one quote per line. A quote is spoken right after the information, as its own short clip.
 # Lines starting with # are comments. Blank lines don't matter.
 #
@@ -134,6 +135,43 @@ Reminder logged. Your response is being monitored.
 This is not a drill.
 Calendar integrity depends on you.
 Notification delivered. Excuses not accepted.
+
+# The workout pool (added 2026-10-24): quips for reminders that look like a workout (Settings →
+# Voice → Workout words). Empty or gone, those reminders use the reminder pool.
+## workout
+# The dry butler
+Your trainers are by the door, sir.
+I have laid out a towel and a fresh bottle of water.
+Shall I warn the neighbours about the grunting?
+The weights will not lift themselves, sir. I did ask.
+A splendid {time_of_day} for a little suffering, sir.
+I shall have a bath drawn for afterwards.
+Do warm up first. I shan't carry you up the stairs.
+One does admire your commitment. From the sofa.
+I have cleared nothing from your diary. You have time.
+Your future self sends his thanks, sir.
+# The sarcastic friend
+Get up. The couch will still be there later.
+No excuses today. I've heard them all.
+You'll feel great after. Probably.
+Shoes on. Water bottle. Go.
+Skipping it won't make you any fitter.
+It's {text}. You said you would. So go.
+Earphones in. Playlist on. Let's move.
+Nobody ever regretted the workout. Only skipping it.
+Ten minutes in and you'll stop complaining.
+Go on. Earn that dinner.
+# The ship's computer
+Physical maintenance cycle scheduled. Begin now.
+Muscle atrophy detected. Corrective action required.
+An elevated heart rate is now authorised.
+Sedentary period exceeded. Please relocate your body.
+Exercise protocol loaded. Compliance is mandatory.
+Hydration levels must be maintained. Bring water.
+Calorie expenditure is scheduled. Resistance is futile.
+Biological unit, prepare for exertion.
+Endurance test initiated. Do not abort early.
+Your skeleton is requesting movement.
 
 ## readback
 # The dry butler
@@ -286,6 +324,27 @@ def ensure_quotes(brain: Path) -> bool:
     path.parent.mkdir(exist_ok=True)
     with open(path, "x", encoding="utf-8", newline="\n") as f:
         f.write(SEED)
+    return True
+
+
+# The workout section as the seed has it, for a file seeded before it existed (`ensure_workout_pool`).
+WORKOUT_MARKER = "# The workout pool"
+WORKOUT_SECTION = SEED[SEED.index(WORKOUT_MARKER):SEED.index("## readback\n")]
+
+
+def ensure_workout_pool(brain: Path) -> bool:
+    """Add the workout section once to a quotes file seeded before it existed (2026-10-24). Never
+    when the file has a `## workout` heading or the section's marker comment (the owner deleted the
+    quips but kept the comment: that stands), never to a file it can't read. True when it wrote."""
+    path = quotes_path(brain)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if WORKOUT_MARKER in text or re.search(r"^##\s*workout\s*$", text, re.M):
+        return False
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write(("" if text.endswith("\n") else "\n") + "\n" + WORKOUT_SECTION.rstrip("\n") + "\n")
     return True
 
 

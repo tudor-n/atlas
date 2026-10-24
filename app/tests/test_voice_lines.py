@@ -107,3 +107,20 @@ def test_lines_have_no_colons_or_dashes_between_words():
              v.readback_answer({0: "3 mm", 1: "4 mm"})]
     for line in lines:
         assert ":" not in line and " - " not in line and "—" not in line
+
+
+def test_is_workout_matches_whole_words_and_phrases_any_case():
+    from atlas.config import DEFAULT_SETTINGS
+    words = DEFAULT_SETTINGS["voice_workout_words"]
+    for yes in ("Leg day", "GYM at 6", "go for a run", "Morning run 5k", "push ups x50", "Yoga with Ana", "physio exercises"):
+        assert v.is_workout(yes, words), yes
+    for no in ("Run the tests", "Model training run", "Update the weights folder", "Call Ana", "gymnastics on TV", "", None):
+        assert not v.is_workout(no, words), no
+    assert v.is_workout("badminton at 7", ["badminton"]) and not v.is_workout("badminton", [])
+
+
+def test_a_workout_reminder_opens_with_workout_time():
+    from datetime import datetime
+    now = datetime(2026, 10, 24, 9, 0)
+    assert v.reminder_line("leg day", "2026-10-24T18:00", now, v.WORKOUT_OPENER) == "Workout time. leg day. It's due today at 6 pm."
+    assert v.reminder_line("leg day", None, now) == "A reminder. leg day."

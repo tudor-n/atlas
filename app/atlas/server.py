@@ -21,7 +21,7 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
-from .quotes import ensure_quotes
+from .quotes import ensure_quotes, ensure_workout_pool
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
@@ -86,6 +86,9 @@ def _ensure_quotes(app: web.Application) -> None:
     """Brains set up before phase 4 get the voice's quote file, in a commit of its own."""
     if ensure_quotes(app["paths"].brain):
         app["repo"].commit_all("add the voice quotes")
+        app["backup"].notify_commit()
+    elif ensure_workout_pool(app["paths"].brain):  # a file seeded before the workout pool (2026-10-24)
+        app["repo"].commit_all("add the voice's workout quips")
         app["backup"].notify_commit()
 
 

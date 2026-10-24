@@ -4,7 +4,7 @@
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { button, switchEl, meter, selectBox } from '../components/ui.js';
-import { EVENT_LABELS, blendRows, readBlend, voiceName, statusLine, mb } from './voice-model.js';
+import { EVENT_LABELS, blendRows, readBlend, voiceName, statusLine, mb, workoutWords } from './voice-model.js';
 import { voiceDot } from './settings-model.js';
 import { prefRow, groupHead, intro, failLine } from './settings-sections.js';
 
@@ -92,6 +92,9 @@ export async function renderVoiceSettings(box, isDead, ui) {
     rows.forEach((r) => addRow(r.id, r.pct));
     const addBtn = button('ADD A VOICE', { size: 40, onclick: () => { if (editors.length < 3) addRow('', 20); } });
 
+    // Workout words: comma-separated; a reminder with one of them says "Workout time." and gets a workout quip.
+    const workout = el('input', { type: 'text', id: 'voice-workout', class: 'm', autocomplete: 'off',
+      value: (s.voice_workout_words || []).join(', ') });
     const speed = el('input', { type: 'range', id: 'voice-speed', min: '0.5', max: '2', step: '0.05', value: String(s.voice_speed) });
     const speedOut = el('span', { class: 'pv m out' }, `${s.voice_speed}×`);
     speed.oninput = () => { speedOut.textContent = `${speed.value}×`; };
@@ -114,10 +117,12 @@ export async function renderVoiceSettings(box, isDead, ui) {
       if (b.error) throw new Error(b.error);
       const mins = Number(finishMin.value);
       if (finishMin.value.trim() === '' || !Number.isFinite(mins) || mins < 0 || mins > 60) throw new Error('Long run: minutes, 0 to 60.');
+      const words = workoutWords(workout.value);
+      if (words.error) throw new Error(words.error);
       return {
         voice_enabled: on.isOn(), voice_sass: sass.isOn(), voice_sass_readback: sassRb.isOn(),
         voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.isOn()])),
-        voice_finish_min_s: Math.round(mins * 60), voice_blend: b.blend, voice_speed: Number(speed.value),
+        voice_finish_min_s: Math.round(mins * 60), voice_workout_words: words.list, voice_blend: b.blend, voice_speed: Number(speed.value),
         voice_volume: Number(volume.value), voice_boost: boost.isOn(), voice_duck_to: Number(duck.value),
         voice_model: model.value,
       };
@@ -142,6 +147,8 @@ export async function renderVoiceSettings(box, isDead, ui) {
       el('div', { class: 'pfs' }, swRow('VOICE ON', on)),
       el('section', { class: 'st-grp' }, groupHead('SPEAK WHEN'), el('div', { class: 'pfs' },
         events.map((e) => prefRow(e.text, e.box, { forId: e.box.id, cls: 'pf-t' })),
+        prefRow('WORKOUT WORDS', workout, { forId: 'voice-workout',
+          hint: 'A reminder with one of these (comma-separated, whole words) says "Workout time." and gets a workout quip.' }),
         prefRow('A LONG RUN IS AT LEAST', el('div', { class: 'pair' }, finishMin, el('span', { class: 'u' }, 'MINUTES')),
           { forId: 'voice-finish', hint: 'How long an agent must have run before "finished" is spoken.' }))),
       el('section', { class: 'st-grp' }, groupHead('SASS'), el('div', { class: 'pfs' },

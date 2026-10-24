@@ -343,7 +343,7 @@ def test_view(env):
                     "last_error": None, "quote_problems": []}
     (env.brain / "_voice" / "quotes.md").write_text("## nope\n", encoding="utf-8")
     assert env.a.view()["quote_problems"] == ["line 1: unknown pool 'nope' (known: agent_finished, agent_waiting, "
-                                              "reminder, readback, catch_up)"]
+                                              "reminder, workout, readback, catch_up)"]
 
 
 def test_a_broken_state_file_is_ignored(env):
@@ -552,3 +552,45 @@ def test_speaker_drops_a_line_stopped_before_it_was_sent(tmp_path):
     sp._stops = 1
     assert sp._write({"op": "say"}, gen=0) is None  # stopped after it left the queue: never sent
     sp.close()
+
+
+# -- workouts (owner, 2026-10-24) ------------------------------------------------------------------
+def _speak_reminder(env, text):
+    env.items = [item("w1", text, due="2026-10-23T15:01")]
+    env.a.tick()
+    env.now.t = T0 + timedelta(seconds=90)
+    env.a.tick()
+    return env.sink.said
+
+
+def test_a_workout_reminder_says_workout_time_and_gets_a_workout_quip(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text("## reminder\nA plain nudge.\n## workout\nShoes on. Go.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    assert _speak_reminder(env, "Leg day at the gym") == [["Workout time. Leg day at the gym. It's due today at 3 oh 1 pm.",
+                                                          "Shoes on. Go."]]
+    assert env.sink.lines[0].event == "reminder"  # still a reminder for its switch and quiet hours
+
+
+def test_a_plain_reminder_keeps_its_own_line_and_pool(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text("## reminder\nA plain nudge.\n## workout\nShoes on. Go.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    assert _speak_reminder(env, "Run the tests") == [["A reminder. Run the tests. It's due today at 3 oh 1 pm.", "A plain nudge."]]
+
+
+def test_a_workout_without_workout_quips_uses_the_reminder_pool(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text("## reminder\nA plain nudge.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    assert _speak_reminder(env, "yoga")[0][1] == "A plain nudge."
+
+
+def test_workout_words_come_from_settings_and_the_reminder_switch_still_rules(env):
+    env.settings["voice_workout_words"] = ["badminton"]
+    assert _speak_reminder(env, "Badminton with Ana")[0][0].startswith("Workout time. ")
+    env.settings["voice_events"]["reminder"] = False
+    env.items = [item("w2", "gym", due="2026-10-23T15:03")]
+    env.now.t = T0 + timedelta(seconds=200)
+    env.a.tick()
+    assert len(env.sink.said) == 1  # the reminder switch silences workouts too

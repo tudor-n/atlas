@@ -55,3 +55,11 @@ test('mb', () => {
   assert.equal(mb(0), '1 MB');
   assert.equal(mb(325532387), '326 MB');
 });
+
+test('workoutWords: commas, trimmed, deduplicated, bounded', async () => {
+  const { workoutWords } = await import('./voice-model.js');
+  assert.deepEqual(workoutWords(' gym,  Leg   day , yoga,, GYM '), { list: ['gym', 'Leg day', 'yoga'] });
+  assert.deepEqual(workoutWords(''), { list: [] });
+  assert.match(workoutWords('gym, x').error, /2 to 40/);
+  assert.match(workoutWords(Array.from({ length: 101 }, (_, i) => `w${i}`).join(',')).error, /at most 100/);
+});
