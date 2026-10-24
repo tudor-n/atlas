@@ -14,11 +14,27 @@ APP = Path(__file__).resolve().parents[1]
 
 
 def _worker(tmp_path, delay="0", extra_env=None):
-    env = {**os.environ, "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "BRAINHUB_VOICE_FAKE_DELAY": delay,
+    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(tmp_path / "said.jsonl"), "BRAINHUB_VOICE_FAKE_DELAY": delay,
            **(extra_env or {})}
     return subprocess.Popen([sys.executable, "-m", "brainhub", "voice-worker", "--state", str(tmp_path / "state")],
                             cwd=APP, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8")
+
+
+def _reply(p, timeout=20):
+    """One protocol line from the worker, or a failure carrying its stderr: never a hung test."""
+    import queue
+    import threading
+    q = queue.Queue()
+    threading.Thread(target=lambda: q.put(p.stdout.readline()), daemon=True).start()
+    try:
+        line = q.get(timeout=timeout)
+    except queue.Empty:
+        p.kill()
+        pytest.fail(f"the worker didn't answer in {timeout} s; its stderr:\n{p.stderr.read()}")
+    if not line:
+        pytest.fail(f"the worker exited ({p.wait(5)}); its stderr:\n{p.stderr.read()}")
+    return json.loads(line)
 
 
 def _send(p, obj):
@@ -41,8 +57,8 @@ def test_say_replies_ok_and_plays_in_order(tmp_path):
     try:
         _send(p, _say("a", "Robot arm has finished.", "Splendid."))
         _send(p, _say("b", "Note saved."))
-        assert json.loads(p.stdout.readline()) == {"id": "a", "ok": True}
-        assert json.loads(p.stdout.readline()) == {"id": "b", "ok": True}
+        assert _reply(p) == {"id": "a", "ok": True}
+        assert _reply(p) == {"id": "b", "ok": True}
     finally:
         p.stdin.close()
         assert p.wait(10) == 0
@@ -58,9 +74,9 @@ def test_a_failing_line_is_reported_and_the_worker_carries_on(tmp_path):
         _send(p, _say("bad", "FAIL-SYNTH"))
         p.stdin.write("not json\n[1,2]\n")
         _send(p, _say("good", "Fine."))
-        bad = json.loads(p.stdout.readline())
+        bad = _reply(p)
         assert bad["id"] == "bad" and bad["ok"] is False and "fake synthesis failure" in bad["error"]
-        assert json.loads(p.stdout.readline()) == {"id": "good", "ok": True}
+        assert _reply(p) == {"id": "good", "ok": True}
     finally:
         p.stdin.close()
         p.wait(10)
@@ -76,7 +92,7 @@ def test_stop_cuts_the_line_playing_now(tmp_path):
         time.sleep(0.5)
         t0 = time.monotonic()
         _send(p, {"op": "stop"})
-        assert json.loads(p.stdout.readline()) == {"id": "long", "ok": True}
+        assert _reply(p) == {"id": "long", "ok": True}
         assert time.monotonic() - t0 < 5
     finally:
         p.stdin.close()

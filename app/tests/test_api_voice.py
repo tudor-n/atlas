@@ -30,7 +30,7 @@ def said(tmp_path):
 
 @pytest.fixture
 async def client(aiohttp_client, paths, said):
-    env = {**os.environ, "BRAINHUB_VOICE_FAKE": str(said), "PYTHONPATH": str(APP)}
+    env = {**os.environ, "BRAINHUB_VOICE_TRACE": "1", "BRAINHUB_VOICE_FAKE": str(said), "PYTHONPATH": str(APP)}
     app = create_app(paths, runner=make_runner(), start_workers=False, voice_env=env)
     opened = []
     app["file_opener"] = opened.append
