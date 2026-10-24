@@ -73,6 +73,10 @@ def synopsis(today: dict, review: dict, waiting: list[dict], usage: dict, agents
     return " · ".join(parts) or "All clear"
 
 
+# Agent rows sent to the widget: its NEEDS YOU list scrolls, so every waiting one can be there.
+AGENT_ROWS = 20
+
+
 def build_widget(app_state: dict) -> dict:
     items, settings, bmap = app_state["items"], app_state["settings"], app_state.get("map")
     now: datetime = app_state["now"]
@@ -97,7 +101,7 @@ def build_widget(app_state: dict) -> dict:
 
     counts = {s: sum(1 for r in rows if shown(r) == s) for s in ("running", "waiting", "finished", "idle")}
     agents = {**counts, "rows": [{**{k: r.get(k) for k in ("project_name", "part", "where", "next_time")},
-                                  "status": shown(r)} for r in rows[:6]]}
+                                  "status": shown(r)} for r in rows[:AGENT_ROWS]]}
 
     open_items = [i for i in items if i.status == "open"]
     deadlines = sorted((i for i in open_items if i.due), key=lambda i: i.due)[:6]
