@@ -1,26 +1,15 @@
-// Pure model for the desktop widget (no DOM; drive.js is pure too): bar text, tile summaries and
-// popup rows from GET /api/widget.
+// Pure model for the desktop widget (no DOM; drive.js is pure too), from GET /api/widget: the bar's
+// summary, the NEEDS YOU list and the status strip (the widget redesign, 2026-10-24: one list of
+// what needs you instead of eight tiles and their popups).
 import { heldText } from './drive.js';
 import { adoptLegacy } from './legacy-keys.js';
 
-export const TILE_LABEL = {
-  today: 'Today', usage: 'Usage', agents: 'Agents', people: 'People',
-  deadlines: 'Deadlines', review: 'To review', projects: 'Projects', arm: 'Robot arm',
-};
-
-// The arm tile opens the `arm` target instead of a view.
-export const TILE_VIEW = {
-  today: 'today', usage: 'usage', agents: 'agents', people: 'people',
-  deadlines: 'deadlines', review: 'today', projects: 'browse',
-};
-
-// How a tile opens its view. In the desktop shell the widget asks the shell for the main window
-// (`open_main`, design §6); in a plain browser, or when that call fails, it posts /api/open, which
-// opens the browser. The arm tile always posts its own target. `invoke` is the shell's
-// `__TAURI__.core.invoke` or null (tauriInvoke below).
-export function openPlan(name, view, invoke) {
-  if (name === 'arm') return { invoke: null, view: null, body: { target: 'arm' } };
-  const v = view || TILE_VIEW[name] || null;
+// How a row (or OPEN ATLAS, view null) opens the app. In the desktop shell the widget asks the shell
+// for the main window (`open_main`, design §6); in a plain browser, or when that call fails, it
+// posts /api/open, which opens the browser. `invoke` is the shell's `__TAURI__.core.invoke` or null
+// (tauriInvoke below).
+export function openPlan(view, invoke) {
+  const v = view || null;
   return { invoke: typeof invoke === 'function' ? invoke : null, view: v, body: v ? { target: 'app', view: v } : { target: 'app' } };
 }
 
@@ -55,18 +44,11 @@ export function tauriInvoke(win) {
   }
 }
 
-const MAX_ROWS = 6;
 const hhmm = (iso) => String(iso || '').slice(-5);
-
-// The collapsed bar: the drive banner while the root isn't usable, else the server's synopsis. The
-// bar cuts long text short, so the held count goes first there.
-export function synopsisText(w) {
-  if (!w) return '';
-  if (!w.drive) return w.synopsis || '';
-  return [heldText(w.drive.held), w.drive.message].filter(Boolean).join(' · ');
-}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const hasUsed = (win) => !!win && win.used !== null && win.used !== undefined;
 
+// The 5-hour window when it has a reading, else the 7-day one (the app's top bar uses it too).
 export function usageWindow(w) {
   const u = w.usage || {};
   if (hasUsed(u.five_hour)) return { win: u.five_hour, label: '5h' };
@@ -74,108 +56,94 @@ export function usageWindow(w) {
   return null;
 }
 
-export function tileSummary(name, w) {
-  switch (name) {
-    case 'today': {
-      const t = w.today || {};
-      const overdue = t.overdue || 0;
-      return {
-        value: String(overdue + (t.due_today || 0)),
-        caption: overdue > 0 ? `due · ${overdue} overdue` : 'due today',
-        warn: overdue > 0,
-      };
-    }
-    case 'usage': {
-      const u = usageWindow(w);
-      if (!u) return { value: '—', caption: 'no data yet', warn: false };
-      return {
-        value: `${Math.round(u.win.used)}%`,
-        caption: `${u.label} · resets ${hhmm(u.win.resets_at)}`,
-        warn: !!u.win.warn,
-      };
-    }
-    case 'agents': {
-      const a = w.agents || {};
-      const waiting = a.waiting || 0;
-      return {
-        value: String(a.running || 0),
-        caption: waiting ? `running · ${waiting} waiting` : 'running',
-        warn: waiting > 0,
-      };
-    }
-    case 'people':
-      return { value: String(((w.people || {}).waiting || []).length), caption: 'waiting on others', warn: false };
-    case 'deadlines': {
-      const d = w.deadlines || [];
-      return { value: String(d.length), caption: d.length ? `next: ${d[0].due}` : 'none', warn: false };
-    }
-    case 'review': {
-      const r = w.review || {};
-      // Entries, as Today's TO REVIEW counts them (older hubs: proposals + failed filings).
-      const n = Number.isFinite(r.entries) ? r.entries : (r.proposals || 0) + (r.failed || 0);
-      return { value: String(n), caption: n === 1 ? 'entry to review' : 'entries to review', warn: n > 0 };
-    }
-    case 'projects':
-      return { value: String((w.projects || []).filter((p) => p.open > 0).length), caption: 'with open items', warn: false };
-    case 'arm': {
-      const on = !!(w.arm && w.arm.reachable);
-      return { value: on ? 'on' : 'off', caption: on ? 'reachable' : 'offline', warn: false };
-    }
-    default:
-      return { value: '', caption: '', warn: false };
-  }
+// Entries to review (the app's top bar uses it too).
+export function reviewCount(w) {
+  const r = w.review || {};
+  // Entries, as Today's TO REVIEW counts them (older hubs: proposals + failed filings).
+  return Number.isFinite(r.entries) ? r.entries : (r.proposals || 0) + (r.failed || 0);
 }
 
-function usageRow(label, win) {
-  if (!hasUsed(win)) return null;
-  return { text: `${label} window`, meta: `${Math.round(win.used)}% · resets ${hhmm(win.resets_at)}` };
+// NEEDS YOU: everything that wants the owner, most urgent first. Each row: {key, text, meta, view,
+// warn}. `view` is the app page a click opens (nav-model views). Calm rows (due today, a nudge)
+// have warn false; the amber square marks the rest.
+export function needsYou(w) {
+  if (!w) return [];
+  const rows = [];
+  ((w.agents || {}).rows || []).forEach((r, i) => {
+    if (r.status !== 'waiting') return;
+    rows.push({ key: `agent:${i}`, text: [r.project_name || 'An agent', r.part].filter(Boolean).join(' · '),
+      meta: 'waiting for you', view: 'agents', warn: true });
+  });
+  const n = reviewCount(w);
+  const failed = (w.review || {}).failed || 0;
+  if (n > 0) {
+    rows.push({ key: 'review', text: `${plural(n, 'entry', 'entries')} to review`,
+      meta: failed ? `${failed} failed` : 'confirm', view: 'today', warn: true });
+  }
+  const req = w.requests || 0;
+  if (req > 0) {
+    rows.push({ key: 'requests', text: plural(req, 'tablet request', 'tablet requests'), meta: 'answer on the tablet',
+      view: 'tablet', warn: true });
+  }
+  const t = w.today || {};
+  (t.top || []).forEach((d, i) => {
+    const overdue = i < (t.overdue || 0);  // the server lists the overdue ones first
+    rows.push({ key: `due:${i}`, text: d.text, meta: overdue ? `overdue · ${d.due || ''}` : 'due today', view: 'today', warn: overdue });
+  });
+  const u = w.usage || {};
+  for (const [win, label] of [[u.five_hour, '5-hour'], [u.seven_day, 'weekly']]) {
+    if (hasUsed(win) && win.warn) {
+      rows.push({ key: `usage:${label}`, text: `${Math.round(win.used)}% of the ${label} limit used`,
+        meta: `resets ${hhmm(win.resets_at)}`, view: 'usage', warn: true });
+    }
+  }
+  ((w.people || {}).waiting || []).forEach((p, i) => {
+    if (!p.nudge) return;
+    rows.push({ key: `nudge:${i}`, text: `Nudge ${p.name || p.person || 'them'}: ${p.text}`, meta: `since ${p.since}`,
+      view: 'people', warn: false });
+  });
+  return rows;
 }
 
-export function popupRows(name, w) {
-  let rows = [];
-  switch (name) {
-    case 'today':
-      rows = ((w.today || {}).top || []).map((i) => ({ text: i.text, meta: i.due || '' }));
-      break;
-    case 'usage': {
-      const u = w.usage || {};
-      rows = [usageRow('5h', u.five_hour), usageRow('7d', u.seven_day)].filter(Boolean);
-      break;
-    }
-    case 'agents':
-      rows = ((w.agents || {}).rows || []).map((r) => ({
-        text: [r.project_name, r.part].filter(Boolean).join(' · ') || '(unknown)',
-        // "unknown" (no entrypoint seen) and empty parts say nothing: left out.
-        meta: [r.status, r.where === 'unknown' ? '' : r.where, r.next_time ? 'next time' : '']
-          .map((m) => String(m || '').trim()).filter(Boolean).join(' · '),
-      }));
-      break;
-    case 'people':
-      rows = ((w.people || {}).waiting || []).map((p) => ({
-        text: `${p.name || p.person || 'Someone'}: ${p.text}`,
-        meta: p.nudge ? `since ${p.since} · nudge` : `since ${p.since}`,
-      }));
-      break;
-    case 'deadlines':
-      rows = (w.deadlines || []).map((d) => ({ text: d.text, meta: d.due || '' }));
-      break;
-    case 'review': {
-      const r = w.review || {};
-      if (r.proposals) rows.push({ text: `${r.proposals} proposal${r.proposals === 1 ? '' : 's'} to confirm`, meta: '' });
-      if (r.failed) rows.push({ text: `${r.failed} filing${r.failed === 1 ? '' : 's'} failed`, meta: '' });
-      break;
-    }
-    case 'projects':
-      rows = (w.projects || []).filter((p) => p.open > 0).map((p) => ({
-        text: p.name || p.slug,
-        meta: `${p.open} open` + (p.next_time ? ` · ${p.next_time} next time` : ''),
-        view: `project/${p.slug}`,
-      }));
-      break;
-    default:
-      break;
-  }
-  return rows.slice(0, MAX_ROWS);
+// The collapsed bar: the drive banner while the root isn't usable (held count first: the bar cuts
+// long text short); else what needs you in a few words, then the 5-hour usage; "All clear" when
+// nothing does.
+export function barText(w) {
+  if (!w) return '';
+  if (w.drive) return [heldText(w.drive.held), w.drive.message].filter(Boolean).join(' · ');
+  const rows = needsYou(w);
+  const count = (prefix) => rows.filter((r) => r.key.startsWith(prefix)).length;
+  const parts = [];
+  const agents = count('agent:');
+  if (agents) parts.push(agents === 1 ? '1 agent needs you' : `${agents} agents need you`);
+  const n = reviewCount(w);
+  if (n) parts.push(`${n} to review`);
+  if (w.requests) parts.push(plural(w.requests, 'request', 'requests'));
+  const due = count('due:');
+  if (due) parts.push(`${due} due`);
+  const nudges = count('nudge:');
+  if (nudges) parts.push(plural(nudges, 'nudge', 'nudges'));
+  const five = (w.usage || {}).five_hour;
+  return [parts.length ? parts.join(' · ') : 'All clear', hasUsed(five) ? `5h ${Math.round(five.used)}%` : '']
+    .filter(Boolean).join(' · ');
+}
+
+// Does anything need you (the bar's amber square)?
+export function attention(w) {
+  return !!w && (!!w.drive || needsYou(w).some((r) => r.warn));
+}
+
+// The status strip under the list: usage, agents running, the arm. [{text, warn}].
+export function statusStrip(w) {
+  if (!w) return [];
+  const out = [];
+  const u = w.usage || {};
+  if (hasUsed(u.five_hour)) out.push({ text: `5H ${Math.round(u.five_hour.used)}%`, warn: !!u.five_hour.warn });
+  if (hasUsed(u.seven_day)) out.push({ text: `7D ${Math.round(u.seven_day.used)}%`, warn: !!u.seven_day.warn });
+  const running = (w.agents || {}).running || 0;
+  out.push({ text: `${running} RUNNING`, warn: false });
+  if (w.arm) out.push({ text: w.arm.reachable ? 'ARM ON' : 'ARM OFF', warn: false });
+  return out;
 }
 
 // -- capture draft: what the owner typed survives a widget reload (never silently drop it) -----

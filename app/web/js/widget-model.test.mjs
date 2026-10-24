@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TILE_LABEL, TILE_VIEW, tileSummary, popupRows, synopsisText, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome, OPEN_MAIN_TIMEOUT_MS } from './widget-model.js';
+import { needsYou, barText, attention, statusStrip, DRAFT_KEY, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome, OPEN_MAIN_TIMEOUT_MS } from './widget-model.js';
 
 const W = (o = {}) => ({
   synopsis: 'x', attention: false, tiles: [],
@@ -13,78 +13,78 @@ const W = (o = {}) => ({
   ...o,
 });
 
-test('labels and views', () => {
-  assert.equal(TILE_LABEL.review, 'To review');
-  assert.equal(TILE_LABEL.arm, 'Robot arm');
-  assert.equal(TILE_VIEW.review, 'today');
-  assert.equal(TILE_VIEW.projects, 'browse');
-  assert.equal(TILE_VIEW.arm, undefined);
+
+const busy = () => W({
+  agents: { running: 1, waiting: 1, rows: [
+    { project_name: 'ATLAS', part: 'phase-4.5', status: 'waiting' },
+    { project_name: 'DUMMY arm', part: 'finger-follow', status: 'running' }] },
+  review: { proposals: 2, failed: 1, entries: 2 },
+  requests: 1,
+  today: { overdue: 1, due_today: 1, top: [{ text: 'Pay the rent', due: '2026-10-20' }, { text: 'Call the dentist', due: '2026-10-24' }] },
+  usage: { five_hour: { used: 91.4, resets_at: '2026-10-24T15:34', warn: true }, seven_day: { used: 21, resets_at: '2026-10-28T12:34', warn: false } },
+  people: { waiting: [{ name: 'Ana', text: 'lab report', since: '10-20', nudge: true }, { name: 'Bo', text: 'keys', since: '10-24', nudge: false }] },
 });
 
-test('today', () => {
-  assert.deepEqual(tileSummary('today', W({ today: { overdue: 0, due_today: 3, top: [] } })), { value: '3', caption: 'due today', warn: false });
-  assert.deepEqual(tileSummary('today', W({ today: { overdue: 1, due_today: 2, top: [] } })), { value: '3', caption: 'due · 1 overdue', warn: true });
+test('needsYou: the most urgent first, with the page each row opens', () => {
+  const rows = needsYou(busy());
+  assert.deepEqual(rows.map((r) => [r.key, r.text, r.meta, r.view, r.warn]), [
+    ['agent:0', 'ATLAS · phase-4.5', 'waiting for you', 'agents', true],
+    ['review', '2 entries to review', '1 failed', 'today', true],
+    ['requests', '1 tablet request', 'answer on the tablet', 'tablet', true],
+    ['due:0', 'Pay the rent', 'overdue · 2026-10-20', 'today', true],
+    ['due:1', 'Call the dentist', 'due today', 'today', false],
+    ['usage:5-hour', '91% of the 5-hour limit used', 'resets 15:34', 'usage', true],
+    ['nudge:0', 'Nudge Ana: lab report', 'since 10-20', 'people', false],
+  ]);
 });
 
-test('usage', () => {
-  const five = { used: 62.4, resets_at: '2026-10-21T14:20', warn: true };
-  assert.deepEqual(tileSummary('usage', W({ usage: { five_hour: five, seven_day: null } })), { value: '62%', caption: '5h · resets 14:20', warn: true });
-  assert.deepEqual(tileSummary('usage', W()), { value: '—', caption: 'no data yet', warn: false });
-  assert.deepEqual(tileSummary('usage', W({ usage: { five_hour: { used: null }, seven_day: null } })), { value: '—', caption: 'no data yet', warn: false });
+test('needsYou: calm is empty; running agents and plain waiting are not listed', () => {
+  assert.deepEqual(needsYou(W()), []);
+  assert.deepEqual(needsYou(null), []);
+  const calm = W({ agents: { running: 2, rows: [{ project_name: 'P', status: 'running' }] },
+    people: { waiting: [{ name: 'Bo', text: 'keys', since: '10-24', nudge: false }] } });
+  assert.deepEqual(needsYou(calm), []);
+  // Older hubs count proposals + failed filings, not entries.
+  assert.equal(needsYou(W({ review: { proposals: 1, failed: 0 } }))[0].text, '1 entry to review');
+  assert.equal(needsYou(W({ agents: { rows: [{ status: 'waiting' }] } }))[0].text, 'An agent');
 });
 
-test('usage falls back to seven_day', () => {
-  const seven = { used: 31, resets_at: '2026-10-25T09:00', warn: false };
-  assert.deepEqual(tileSummary('usage', W({ usage: { five_hour: null, seven_day: seven } })), { value: '31%', caption: '7d · resets 09:00', warn: false });
+test('barText: what needs you in a few words, then the 5-hour usage', () => {
+  assert.equal(barText(busy()), '1 agent needs you · 2 to review · 1 request · 2 due · 1 nudge · 5h 91%');
+  assert.equal(barText(W()), 'All clear');
+  assert.equal(barText(W({ usage: { five_hour: { used: 38, resets_at: 'x' } } })), 'All clear · 5h 38%');
+  const two = W({ agents: { rows: [{ status: 'waiting' }, { status: 'waiting' }] } });
+  assert.equal(barText(two), '2 agents need you');
+  assert.equal(barText(null), '');
 });
 
-test('agents', () => {
-  assert.deepEqual(tileSummary('agents', W({ agents: { running: 2, waiting: 1, rows: [] } })), { value: '2', caption: 'running · 1 waiting', warn: true });
-  assert.deepEqual(tileSummary('agents', W()), { value: '0', caption: 'running', warn: false });
-});
-
-test('people, deadlines, review, projects, arm', () => {
-  assert.deepEqual(tileSummary('people', W({ people: { waiting: [{}, {}], to_read: 0 } })), { value: '2', caption: 'waiting on others', warn: false });
-  assert.deepEqual(tileSummary('deadlines', W({ deadlines: [{ due: '2026-10-25' }, { due: '2026-11-01' }] })), { value: '2', caption: 'next: 2026-10-25', warn: false });
-  assert.deepEqual(tileSummary('deadlines', W()), { value: '0', caption: 'none', warn: false });
-  assert.deepEqual(tileSummary('review', W({ review: { proposals: 2, failed: 1 } })), { value: '3', caption: 'entries to review', warn: true });
-  assert.equal(tileSummary('review', W()).warn, false);
-  const projects = [{ slug: 'a', open: 2 }, { slug: 'b', open: 0 }, { slug: 'c', open: 1 }];
-  assert.deepEqual(tileSummary('projects', W({ projects })), { value: '2', caption: 'with open items', warn: false });
-  assert.deepEqual(tileSummary('arm', W({ arm: { reachable: true } })), { value: 'on', caption: 'reachable', warn: false });
-  assert.deepEqual(tileSummary('arm', W()), { value: 'off', caption: 'offline', warn: false });
-});
-
-test('popupRows caps at 6 and projects carry view paths', () => {
-  const top = Array.from({ length: 9 }, (_, i) => ({ text: 't' + i, due: '2026-10-2' + (i % 9) }));
-  assert.equal(popupRows('today', W({ today: { overdue: 0, due_today: 9, top } })).length, 6);
-  const projects = Array.from({ length: 8 }, (_, i) => ({ slug: 'p' + i, name: 'P' + i, open: i + 1, next_time: 0 }));
-  const rows = popupRows('projects', W({ projects }));
-  assert.equal(rows.length, 6);
-  assert.equal(rows[0].view, 'project/p0');
-  assert.equal(rows[0].text, 'P0');
-  assert.match(rows[0].meta, /1 open/);
-  assert.deepEqual(popupRows('projects', W({ projects: [{ slug: 'x', name: 'X', open: 0 }] })), []);
-});
-
-test('popupRows for other tiles', () => {
-  assert.deepEqual(popupRows('usage', W({ usage: { five_hour: { used: 50, resets_at: '2026-10-21T14:20' }, seven_day: { used: 10, resets_at: '2026-10-25T09:00' } } })).map((r) => r.text), ['5h window', '7d window']);
-  assert.deepEqual(popupRows('usage', W()), []);
-  const a = popupRows('agents', W({ agents: { rows: [{ project_name: 'Proj', part: 'api', status: 'running', where: 'cli', next_time: false }] } }));
-  assert.equal(a[0].text, 'Proj · api'); assert.match(a[0].meta, /running/);
-  const p = popupRows('people', W({ people: { waiting: [{ person: 'x', name: 'Ann', text: 'reply', since: '2026-10-10', nudge: true }] } }));
-  assert.equal(p[0].text, 'Ann: reply');
-  assert.equal(popupRows('deadlines', W({ deadlines: [{ text: 'd', due: '2026-10-25', project: 'p' }] }))[0].meta, '2026-10-25');
-  assert.equal(popupRows('review', W({ review: { proposals: 2, failed: 1 } })).length, 2);
-  assert.equal(popupRows('arm', W()).length, 0);
-});
-
-test('synopsis shows the drive banner while the root is not usable', () => {
-  assert.equal(synopsisText(W({ synopsis: '2 due today', drive: null })), '2 due today');
+test('barText shows the drive banner while the root is not usable', () => {
   const drive = { state: 'missing', message: "ATLAS's drive isn't available.", held: 0 };
-  assert.equal(synopsisText(W({ synopsis: 'ignored', drive })), drive.message);
-  assert.equal(synopsisText(W({ drive: { ...drive, held: 2 } })), `2 captures held on this OS · ${drive.message}`);
-  assert.equal(synopsisText(null), '');
+  assert.equal(barText(W({ drive })), drive.message);
+  assert.equal(barText(W({ drive: { ...drive, held: 2 } })), `2 captures held on this OS · ${drive.message}`);
+});
+
+test('attention: only rows that warn (and the drive banner) raise it', () => {
+  assert.equal(attention(busy()), true);
+  assert.equal(attention(W()), false);
+  assert.equal(attention(W({ today: { overdue: 0, due_today: 1, top: [{ text: 'x', due: 'd' }] } })), false);
+  assert.equal(attention(W({ drive: { message: 'm', held: 0 } })), true);
+  assert.equal(attention(null), false);
+});
+
+test('statusStrip: usage, agents running, the arm', () => {
+  assert.deepEqual(statusStrip(busy()), [
+    { text: '5H 91%', warn: true }, { text: '7D 21%', warn: false }, { text: '1 RUNNING', warn: false }, { text: 'ARM OFF', warn: false }]);
+  assert.deepEqual(statusStrip(W({ arm: { reachable: true } })), [{ text: '0 RUNNING', warn: false }, { text: 'ARM ON', warn: false }]);
+  assert.deepEqual(statusStrip(null), []);
+});
+
+test('openPlan: the shell when it is there, else POST /api/open', () => {
+  const inv = () => {};
+  assert.deepEqual(openPlan('agents', null), { invoke: null, view: 'agents', body: { target: 'app', view: 'agents' } });
+  const p = openPlan('today', inv);
+  assert.equal(p.invoke, inv); assert.equal(p.view, 'today'); assert.deepEqual(p.body, { target: 'app', view: 'today' });
+  assert.deepEqual(openPlan(null, 'not a function'), { invoke: null, view: null, body: { target: 'app' } });
 });
 
 function memStorage() {
@@ -113,17 +113,6 @@ test('capture draft: storage missing or throwing never breaks capture', () => {
   assert.equal(loadDraft({ getItem: () => 42 }), '');
 });
 
-test('openPlan: the shell when it is there, else POST /api/open; the arm always posts', () => {
-  const inv = () => {};
-  assert.deepEqual(openPlan('agents', undefined, null), { invoke: null, view: 'agents', body: { target: 'app', view: 'agents' } });
-  const p = openPlan('projects', undefined, inv);
-  assert.equal(p.invoke, inv); assert.equal(p.view, 'browse'); assert.deepEqual(p.body, { target: 'app', view: 'browse' });
-  assert.equal(openPlan('projects', 'project/robotarm', inv).view, 'project/robotarm');
-  assert.equal(openPlan('review', undefined, inv).view, 'today');
-  assert.deepEqual(openPlan('arm', undefined, inv), { invoke: null, view: null, body: { target: 'arm' } });
-  assert.deepEqual(openPlan('nope', undefined, 'not a function'), { invoke: null, view: null, body: { target: 'app' } });
-});
-
 test('tauriInvoke finds the shell bridge or nothing', () => {
   assert.equal(tauriInvoke(null), null);
   assert.equal(tauriInvoke({}), null);
@@ -135,15 +124,6 @@ test('tauriInvoke finds the shell bridge or nothing', () => {
   assert.deepEqual(core.calls, [['open_main', { view: 'agents' }]]);
   const trap = { get __TAURI__() { throw new Error('denied'); } };
   assert.equal(tauriInvoke(trap), null);
-});
-
-test('agents popup meta leaves out "unknown" and empty parts', () => {
-  const rows = (r) => popupRows('agents', W({ agents: { rows: [r] } }))[0].meta;
-  assert.equal(rows({ project_name: 'P', status: 'waiting', where: 'unknown', next_time: true }), 'waiting · next time');
-  assert.equal(rows({ project_name: 'P', status: 'running', where: 'terminal', next_time: false }), 'running · terminal');
-  assert.equal(rows({ project_name: 'P', status: 'idle', where: '', next_time: false }), 'idle');
-  assert.equal(rows({ project_name: 'P', status: ' ', where: null }), '');
-  assert.equal(rows({ project_name: 'P', status: 'finished', where: 'IDE', next_time: true }), 'finished · IDE · next time');
 });
 
 test('openOutcome: the shell when open_main resolves, else the fallback (rejected, thrown, too slow)', async () => {

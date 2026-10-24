@@ -153,8 +153,9 @@ The **Agents** view lists your Claude Code sessions on this PC: project, part, w
 
 ### Widget
 `http://127.0.0.1:<port>/widget` is a small always-dark panel; it works in any browser, and the desktop shell shows it in a frameless always-on-top window.
-- **Collapsed:** one line, e.g. `3 due today · 1 waiting on Teammate A · 5h 62% (resets 14:20) · 2 agents running`, or `All clear`. An amber dot means something waits for you: proposals or failed filings to review, an agent waiting, or usage at or above the warning level. With a drive banner, the line shows the banner instead.
-- **Expanded** (the ▾ button): a capture box (Enter saves, with source `widget`; Esc collapses) and tiles: Today, Usage, Agents, People, Deadlines, To review, Projects, Robot arm (`widget_tiles` picks and orders them). A tile opens a popup with up to 6 rows and "Open in ATLAS ↗". The Robot arm tile says reachable or offline from `arm_url`.
+- **It is ATLAS minimised** (2026-10-24). The shell shows the widget only while the main window is minimised, or before it was ever opened (a login autostart); opening the main window hides it, and closing the main window (to the tray) hides both. The tray's Show/Hide widget overrides that until the main window next changes.
+- **Collapsed:** one line saying what needs you, e.g. `1 agent needs you · 2 to review · 1 request · 5h 38%`, or `All clear · 5h 38%`. An amber square means something waits for you. With a drive banner, the line shows the banner instead.
+- **Expanded** (the ▾ button): a capture box (Enter saves, with source `widget`; Esc collapses), then **NEEDS YOU**, one list, most urgent first: agents waiting for you, entries to review, tablet requests, overdue and due-today items, usage at or above the warning level, people to nudge. A row opens the app on its page. Past six rows the list scrolls inside itself, so the panel never runs off the screen. Under it a strip (`5H 38% · 7D 21% · 1 RUNNING · ARM OFF`) and **OPEN ATLAS**. The arrows move between the capture box and the rows.
 - It refreshes on hub events and every 60 s; with the hub down it says `ATLAS offline · retrying`, and it reconnects by itself when the hub is back (the desktop shell doesn't reload it).
 - What you type in the capture box is kept as a draft in the page's local storage until it's saved. If the page reloads, the widget opens expanded with your text back in the box.
 
@@ -162,7 +163,7 @@ The **Agents** view lists your Claude Code sessions on this PC: project, part, w
 `app/desktop/` is a Tauri v2 shell, "ATLAS", built on each OS (WebView2 on Windows, WebKitGTK under XWayland on Kubuntu): the widget window, the tray icon, start at login, and a supervisor that starts the hub (on Windows without console windows) if it isn't running and restarts it after a crash. It holds no logic of its own. Full instructions: [`desktop/README.md`](desktop/README.md). In short:
 1. Build once per OS, from the live copy, into a local target folder (setup step 5): about 5 minutes the first time; the result is `<target dir>/release/atlas-desktop` (`.exe` on Windows).
 2. Configure: `desktop-config --runtime --live <live copy> --root <root>` (setup step 6) writes `desktop.json` to the config folder: `port`, `root`, `live`, `state`. The shell then runs claude-sync once and the update step before starting the hub from the current runtime slot with `--port <port>`. (Without `--runtime` it writes the dev form, `python` and `app_dir`, and starts the hub straight from that checkout.) After changing the port, re-run it **and restart ATLAS**: the shell reads the file only at start.
-3. Run `atlas-desktop`. Tray: Open ATLAS, Show/Hide widget, Start at login, Restart hub (only for a hub the shell started), Quit (stops that hub too).
+3. Run `atlas-desktop`. Tray: Open ATLAS, Show/Hide widget (an override: the widget otherwise follows the main window), Start at login, Restart hub (only for a hub the shell started), Quit (stops that hub too).
 4. **Start at login** (tray, off by default): the `HKCU\...\CurrentVersion\Run` key on Windows, `~/.config/autostart/` on Kubuntu (KDE lists it under Autostart); untick to remove.
 5. Logs: `hub.log` in the state folder (hub output and the shell's `[atlas-desktop t=…]` lines).
 
@@ -175,8 +176,7 @@ All in the Settings view.
 | `fable_usage_url` | `https://claude.ai/settings/usage` | Opened by "Fable usage ↗" (`https://` only). |
 | `agents_end_linger_s` | 60 | Seconds an ended session stays in the Agents panel (0–3600). |
 | `agents_stale_h` | 12 | Hours without events before a row is dropped (1–168). |
-| `arm_url` | `http://127.0.0.1:8080` | The robot arm UI: the widget's Robot arm tile checks and opens it. |
-| `widget_tiles` | all eight, in order | Which tiles the expanded widget shows, and their order. |
+| `arm_url` | `http://127.0.0.1:8080` | The robot arm (DUMMY) UI: the tablet's DUMMY tile opens it, and the widget's strip says whether it answers. |
 
 ## Phase 3: the workbench tablet
 The Samsung SM-T110 at the bench, in Fully Kiosk Browser, is a separate ES5 page at `/tablet`. Its home screen has two tiles, each with its logo: **DUMMY**, which opens the arm UI, and **ATLAS**, the journal. The journal has three tabs:
