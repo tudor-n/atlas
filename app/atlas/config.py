@@ -30,6 +30,17 @@ DEFAULT_SETTINGS: dict = {
     "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True},
     "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
     "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
+    # Reminders whose text has one of these (whole words, any case) are workouts: "Workout time."
+    # and a quip from the workout pool (owner, 2026-10-24). No bare "run" or "training": "run the
+    # tests" and "model training" aren't workouts.
+    "voice_workout_words": ["workout", "work out", "gym", "leg day", "push day", "pull day", "arm day",
+                            "upper body", "lower body", "cardio", "hiit", "lifting", "lift weights",
+                            "deadlift", "deadlifts", "squats", "bench press", "push ups", "pushups",
+                            "pull ups", "pullups", "plank", "abs", "stretching", "yoga", "pilates",
+                            "running", "go for a run", "morning run", "evening run", "jog", "jogging",
+                            "swim", "swimming", "cycling", "bike ride", "spin class", "hike", "climbing",
+                            "bouldering", "boxing", "strength training", "weight training", "exercise",
+                            "exercises", "physio"],
     # Owner, 2026-10-24: the voice was lost under music. Boost evens every line out to a steady
     # loudness; duck_to is the share (%) of their volume other apps keep while ATLAS speaks (100 = off).
     "voice_boost": True, "voice_duck_to": 30,
@@ -134,6 +145,12 @@ def validate_setting(key: str, value) -> None:
         if not isinstance(value, str) or not _IPV4.match(value) or not _private_ipv4(value):
             raise ValueError("tablet_address must be this laptop's home address: a private IPv4 like "
                              "192.168.0.200 (10.x, 172.16-31.x or 192.168.x), or empty")
+        return
+    if key == "voice_workout_words":
+        ok = (isinstance(value, list) and len(value) <= 100 and len({v.strip().lower() for v in value if isinstance(v, str)}) == len(value)
+              and all(isinstance(v, str) and 2 <= len(v.strip()) <= 40 for v in value))
+        if not ok:
+            raise ValueError("voice_workout_words must be up to 100 distinct words or short phrases of 2-40 characters")
         return
     if key == "tablet_units":
         ok = (isinstance(value, list) and 1 <= len(value) <= 20 and len(set(map(str, value))) == len(value)

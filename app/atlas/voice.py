@@ -292,8 +292,12 @@ class Announcer:
                     self._spoken.add(("reminder", item.id, raw))
                 self._submit("catch_up", vl.catch_up_line(len(due)), {"count": vl.number_words(len(due))}, None)
                 return
+            words = self._settings().get("voice_workout_words") or []
             for item, raw in due:
-                self._submit("reminder", vl.reminder_line(item.text, item.due, now), {"text": vl.cap(item.text, 120)},
+                workout = vl.is_workout(item.text, words)
+                opener = vl.WORKOUT_OPENER if workout else "A reminder."
+                meta = {"text": vl.cap(item.text, 120), **({"pool": "workout"} if workout else {})}
+                self._submit("reminder", vl.reminder_line(item.text, item.due, now, opener), meta,
                              ("reminder", item.id, raw))
 
     # -- the gates, the merge, the quip ---------------------------------------------------------
@@ -357,7 +361,11 @@ class Announcer:
                       if lines[0].meta.get("project") else None}
             values.pop("line", None)
             values.pop("sid", None)
-            quip = self._picker.pick(event, pool.get(event, []), values, now)
+            # A workout reminder draws from the workout pool, else (empty or gone) the reminder one.
+            name = values.pop("pool", None) or event
+            if not pool.get(name):
+                name = event
+            quip = self._picker.pick(name, pool.get(name, []), values, now)
             self._state.save()
             if quip:
                 parts.append(quip)
