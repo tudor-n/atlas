@@ -1,9 +1,12 @@
 """The launcher entry for the desktop shell (phase 4.5, design §6): `python -m atlas
-desktop-entry install|uninstall|status --exec <binary> [--data-home <dir>]`.
+desktop-entry install|uninstall|status --exec <binary> [--live <live copy>] [--data-home <dir>]`.
 
 `install` writes `<data home>/applications/dev.atlas.desktop.desktop`, whose `Exec` starts the
 shell with `--open` (the shell, or the one already running, then shows its main window), and copies
-the shell's icon to `<data home>/icons/hicolor/256x256/apps/dev.atlas.desktop.png`. The data
+the shell's icon to `<data home>/icons/hicolor/256x256/apps/dev.atlas.desktop.png`. With
+`--live`, the entry starts the live copy's launcher instead (`app/atlas/launcher.py`, run by the
+system `python3` with `-I -S`), which first brings the shell up to the live copy's master and
+rebuilds it when needed, then starts it the same way. The data
 home is `--data-home`, else `$XDG_DATA_HOME` (absolute), else `~/.local/share`. It is idempotent: a
 file already right is left alone. `install` also removes the pre-rename entry and icon
 (`legacy.LAUNCHER_ID`) when they are ours (rename spec §1). `uninstall` removes only the two
@@ -14,6 +17,7 @@ Linux only for now: on Windows it says so and exits 2. Stdlib only.
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -56,14 +60,36 @@ def exec_arg(path: str) -> str:
     return quoted.replace("\\", "\\\\")
 
 
-def desktop_file(exe: str) -> str:
+def exec_value(exe: str, launcher: tuple[str, str] | None = None) -> str:
+    """The `Exec` value: the shell with `--open`, or with `launcher` = (python, launcher.py) that
+    launcher, which ends by starting the shell with `--open`."""
+    if launcher is None:
+        return f"{exec_arg(exe)} --open"
+    python, script = launcher
+    return f"{exec_arg(python)} -I -S {exec_arg(script)} --exe {exec_arg(exe)} --open"
+
+
+def find_launcher(live: Path) -> tuple[str, str]:
+    """(python, launcher.py) for a live copy: the system python3 (the launcher is stdlib only and
+    must not depend on a runtime slot, which an update may rebuild), and the live copy's launcher.
+    ValueError when either is missing."""
+    script = Path(os.path.abspath(live)) / "app" / "atlas" / "launcher.py"
+    if not script.is_file():
+        raise ValueError(f"{script} is not a file")
+    python = next((p for p in ("/usr/bin/python3", shutil.which("python3")) if p and os.access(p, os.X_OK)), None)
+    if python is None:
+        raise ValueError("no python3 found")
+    return python, str(script)
+
+
+def desktop_file(exe: str, launcher: tuple[str, str] | None = None) -> str:
     return "\n".join([
         "[Desktop Entry]",
         "Type=Application",
         "Version=1.5",
         "Name=ATLAS",
         "Comment=Your second brain: capture, review and ask",
-        f"Exec={exec_arg(exe)} --open",
+        f"Exec={exec_value(exe, launcher)}",
         f"Icon={APP_ID}",
         f"StartupWMClass={WM_CLASS}",
         "Categories=Office;Utility;",
@@ -130,16 +156,19 @@ def check_exec(exe: Path) -> Path:
     return exe
 
 
-def install(exe: Path, data_home: Path, icon_source: Path = ICON_SOURCE) -> dict:
+def install(exe: Path, data_home: Path, icon_source: Path = ICON_SOURCE, launcher: tuple[str, str] | None = None) -> dict:
     exe = check_exec(exe)
     desktop, icon = paths(data_home)
-    text = desktop_file(str(exe)).encode("utf-8")
+    text = desktop_file(str(exe), launcher).encode("utf-8")
     icon_bytes = Path(icon_source).read_bytes()
     wrote_desktop = _write_if_changed(desktop, text)
     wrote_icon = _write_if_changed(icon, icon_bytes)
     removed = remove_legacy(data_home, icon_source)
-    return {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe),
-            "changed": wrote_desktop or wrote_icon or bool(removed), "removed_legacy": removed}
+    result = {"desktop_file": str(desktop), "icon": str(icon), "exec": str(exe),
+              "changed": wrote_desktop or wrote_icon or bool(removed), "removed_legacy": removed}
+    if launcher is not None:
+        result["launcher"] = launcher[1]
+    return result
 
 
 def uninstall(data_home: Path) -> dict:
@@ -160,7 +189,8 @@ def _exec_line(text: str) -> str | None:
     return None
 
 
-def status(data_home: Path, exe: Path | None = None, icon_source: Path = ICON_SOURCE) -> dict:
+def status(data_home: Path, exe: Path | None = None, icon_source: Path = ICON_SOURCE,
+           launcher: tuple[str, str] | None = None) -> dict:
     desktop, icon = paths(data_home)
     try:
         text = desktop.read_text(encoding="utf-8")
@@ -171,7 +201,7 @@ def status(data_home: Path, exe: Path | None = None, icon_source: Path = ICON_SO
               "exec": _exec_line(text) if text is not None else None}
     if exe is not None:
         try:
-            current = (text == desktop_file(str(check_exec(exe)))
+            current = (text == desktop_file(str(check_exec(exe)), launcher)
                        and icon.read_bytes() == Path(icon_source).read_bytes())
         except (OSError, ValueError):
             current = False
@@ -184,6 +214,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("action", choices=["install", "uninstall", "status"])
     ap.add_argument("--exec", dest="exe", type=Path, default=None,
                     help="the desktop shell's binary (atlas-desktop); required for install")
+    ap.add_argument("--live", type=Path, default=None,
+                    help="the live copy: the entry starts its launcher, which updates and rebuilds the shell first")
     ap.add_argument("--data-home", type=Path, default=None,
                     help="instead of $XDG_DATA_HOME or ~/.local/share (tests use a temp folder)")
     args = ap.parse_args(argv)
@@ -192,14 +224,15 @@ def main(argv: list[str]) -> int:
         return 2
     data_home = args.data_home or default_data_home()
     try:
+        launcher = find_launcher(args.live) if args.live is not None and args.action != "uninstall" else None
         if args.action == "install":
             if args.exe is None:
                 ap.error("install needs --exec <binary>")
-            result = install(args.exe, data_home)
+            result = install(args.exe, data_home, launcher=launcher)
         elif args.action == "uninstall":
             result = uninstall(data_home)
         else:
-            result = status(data_home, args.exe)
+            result = status(data_home, args.exe, launcher=launcher)
     except (OSError, ValueError) as e:
         print(f"desktop-entry: {e}", file=sys.stderr)
         return 1

@@ -22,6 +22,9 @@ fn main() {
     for path in ["Cargo.toml", "Cargo.lock", "build.rs", "tauri.conf.json", "src", "capabilities", "../dist"] {
         println!("cargo:rerun-if-changed={path}");
     }
+    // The icons aren't in the digest, but tauri bakes them into the binary (window and tray icon):
+    // a new icon must rebuild it (the launcher rebuilds after any live-copy commit).
+    println!("cargo:rerun-if-changed=icons");
     let attributes = tauri_build::Attributes::new()
         .app_manifest(tauri_build::AppManifest::new().commands(&["open_main"]));
     if let Err(e) = tauri_build::try_build(attributes) {

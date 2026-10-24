@@ -40,6 +40,20 @@
     if (hgt !== undefined) e.style.height = hgt + 'px';
     return e;
   }
+  // A logo, 'atlas' or 'dummy' (index.html's hidden templates), size px square at x, y.
+  function logo(name, x, y, size) {
+    var m = document.getElementById('mk-' + name).cloneNode(true);
+    m.removeAttribute('id');
+    m.setAttribute('width', String(size)); m.setAttribute('height', String(size));
+    var box = at(h('div', 'abs logo'), x, y, size, size);
+    box.appendChild(m);
+    return box;
+  }
+  // ATLAS's lockup at the top left of a screen, its top at y: the mark, then the wordmark.
+  function lockup(e, y) {
+    e.appendChild(logo('atlas', 40, y, 26));
+    e.appendChild(at(h('div', 'abs wordmark mono', 'ATLAS'), 76, y));
+  }
   function txt(e, s) { s = s === undefined || s === null ? '' : String(s); if (e._t !== s) { e._t = s; e.textContent = s; } }
   function hasCls(e, c) { return (' ' + e.className + ' ').indexOf(' ' + c + ' ') >= 0; }
   function cls(e, c, on) {
@@ -158,7 +172,7 @@
   var boot = {};
   (function () {
     var e = screen('boot');
-    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 40));
+    lockup(e, 30);
     boot.msg = at(h('div', 'abs dim'), 40, 72, 900); boot.msg.style.fontSize = '26px'; e.appendChild(boot.msg);
     txt(boot.msg, 'Connecting…');
   })();
@@ -166,7 +180,7 @@
   // waiting for the PC's setup wizard
   (function () {
     var e = screen('setup');
-    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 40));
+    lockup(e, 30);
     var t = at(h('div', 'abs', 'Set up ATLAS on the PC first.'), 40, 72); t.style.fontSize = '26px'; e.appendChild(t);
   })();
 
@@ -174,7 +188,7 @@
   var home = {};
   (function () {
     var e = screen('home');
-    e.appendChild(at(h('div', 'abs label', 'ATLAS'), 40, 34));
+    lockup(e, 24);
     home.clock = at(h('div', 'abs mono'), 880, 28, 104); home.clock.style.textAlign = 'right'; home.clock.style.fontSize = '16px';
     e.appendChild(home.clock);
     function block(x, name, sub) {
@@ -184,6 +198,7 @@
       return { el: b, dot: dot, sub: s };
     }
     home.robot = block(40, 'ROBOT');
+    home.robot.el.appendChild(logo('dummy', 32, 32, 56));  // the arm's own mark: DUMMY
     home.journal = block(532, 'JOURNAL');
     home.msg = at(h('div', 'abs amber'), 40, 492, 900); home.msg.style.fontSize = '17px'; e.appendChild(home.msg);
     home.who = at(h('div', 'abs faint'), 40, 548, 900); home.who.style.fontSize = '15px'; e.appendChild(home.who);

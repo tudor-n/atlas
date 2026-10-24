@@ -20,6 +20,8 @@
   --green: #30d158;     /* live, healthy, done */
   --amber: #ffb020;     /* attention, risky, armed */
   --err: #ff6a5c;       /* error text only */
+  --atlas: #3ec7ff;     /* ATLAS blue: the logo's centre node, and nowhere else */
+  --mk-ground: var(--ground); /* what a logo's knockout matches: the colour the logo sits on */
 
   /* type */
   --sans: "Roboto", "Droid Sans", system-ui, sans-serif;

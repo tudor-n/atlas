@@ -9,16 +9,25 @@
   html, body { background: transparent; margin: 0; }
   .panel {
     box-sizing: border-box; width: 520px; max-width: 100%; height: 44px;
-    display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px 0 0;
     background: #000; color: #8a8a8a;
     border: 1px solid #3a3a3a; border-radius: 4px;
     font: 12px/1 ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", Consolas, monospace;
     letter-spacing: .06em; cursor: grab; user-select: none;
   }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #ffb020; flex: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #ffb020; flex: none; margin-left: 4px; }
+  /* the grip slot with the ATLAS mark, as the widget page draws it */
+  .grip {
+    box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex: none;
+    width: 36px; height: 100%; border-right: 1px solid #262626;
+  }
+  .mk { display: block; flex: none; pointer-events: none; }
+  .mk .ks { stroke: #000; }
+  .mk .kf { fill: #000; }
+  .mk .hub { fill: #3ec7ff; }
 </style>
 </head>
 <body>
-<div class="panel" data-tauri-drag-region="deep"><span class="dot"></span>STARTING THE HUB…</div>
+<div class="panel" data-tauri-drag-region="deep"><span class="grip"><svg class="mk" viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><circle cx="32" cy="32" r="21" fill="none" stroke="#fff" stroke-width="3.5"/><rect class="ks" x="26" y="5" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="ks" x="26" y="47" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="ks" x="5" y="26" width="12" height="12" rx="1.5" fill="#fff" stroke-width="3"/><rect class="kf" x="47" y="26" width="12" height="12" rx="1.5" stroke="#fff" stroke-width="3"/><circle class="hub" cx="32" cy="32" r="7"/></svg></span><span class="dot"></span>STARTING THE HUB…</div>
 </body>
 </html>

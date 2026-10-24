@@ -25,6 +25,18 @@ body { font: 400 15px/1.4 Roboto, "Droid Sans", sans-serif; color: #ffffff; -web
 .dot.ok { background: #30d158; }
 .dot.warn { background: #ffb020; }
 
+/* the logos (index.html's hidden templates, cloned by tablet.js): the knockout matches what the
+   logo sits on, black here and the pressed tile's #262626 there */
+#marks { display: none; }
+.logo svg { display: block; }
+.mk .ks { stroke: #000000; }
+.mk .kf { fill: #000000; }
+.mode.down .mk .ks { stroke: #262626; }
+.mode.down .mk .kf { fill: #262626; }
+/* ATLAS's lockup, top left (the arm UI's brand: 26px mark, 10px gap, 13px tracked wordmark) */
+.wordmark { height: 26px; line-height: 26px; font-size: 13px; font-weight: 600; letter-spacing: 0.14em; color: #ffffff;
+            white-space: nowrap; }
+
 /* buttons: a #3a3a3a outline; primary = white fill; pressed = white (primary pressed #b8b8b8) */
 .btn { position: absolute; height: 48px; line-height: 46px; border: 1px solid #3a3a3a; border-radius: 3px;
        font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; text-align: center;
