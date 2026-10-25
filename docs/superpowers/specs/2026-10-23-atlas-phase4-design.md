@@ -13,6 +13,7 @@ Phase 4 gives the hub a voice, which speaks through the PC speakers:
    - **an agent finished**: only after a run of at least 2 minutes, a threshold you can change **(owner)**;
    - **a reminder is due**;
    - **a readback of what was just typed on the tablet**.
+   - **a reply after the one input** (added by the owner on 2026-10-25: what it extracted or found; `voice-input-decisions.md` VI4).
 3. **Sass:** pre-written quotes with no AI, at least 100 of them, in a **mix of three styles: dry butler, sarcastic friend and ship's computer** **(owner)**. The information comes first and the quip after. Templates are filled with real values.
 4. **Controls:**
    - voice on/off (in Settings and on the widget);
@@ -78,6 +79,7 @@ hub events ──► Announcer (rules: on/off, which events, quiet hours, pause,
 | `agent_finished` | `running` → `finished`, where the running stretch lasted ≥ `voice_finish_min_s` (default 120) | "{project} has finished. It took {duration}." |
 | `reminder` | an open item's reminder time passes while the hub runs (§4.3) | "A reminder. {text}." plus "It's due {when}." when it has a due date |
 | `readback` | a tablet note or measurement answer is saved | answer: "{label}. {value} {unit words}." per field, then "Saved." Note: "Note saved." then the note's text. |
+| `reply` (added 2026-10-25, `voice-input-decisions.md` VI4) | a note from the one input is filed (or fails), or the ATLAS screen answers a question | "I pulled out two possible tasks.", "Filed it. Nothing to confirm.", "I found three entries on that.", "Nothing on that." Counts and fixed phrases only. |
 
 - **Wording rules (from the listening test, §2).** Every line, and every quote in §5, follows them:
   - short spoken sentences, each ending in a full stop: "Robot arm has finished. It took forty-two minutes.";

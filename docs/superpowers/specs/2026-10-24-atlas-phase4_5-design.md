@@ -67,7 +67,7 @@ Text conventions: a true minus `−`, `°` for units, `–` for an empty value. 
 - **List rows:** 52px. A current row is a white fill with black 600 text.
 - **Segmented controls:** the selected cell is white.
 - **Press feedback:** a class added on pointer-down, not `:active`.
-- **Motion:** none, apart from a 120 ms slide of the switch knob.
+- **Motion:** none, apart from a 120 ms slide of the switch knob, and the ATLAS dot on the ATLAS screen, which follows the voice's loudness while ATLAS speaks (owner, 2026-10-25; `voice-input-decisions.md` VI8, VI9).
 
 Desktop additions the arm doesn't need:
 - Hover lifts an outline to `#8a8a8a`.
@@ -79,7 +79,7 @@ Desktop additions the arm doesn't need:
 
 **Top bar**, from left to right:
 1. `ATLAS` brand, which goes to Today.
-2. Tabs: **TODAY · ASK · JOURNAL · BROWSE · AGENTS · TABLET**.
+2. Tabs: **TODAY · ASK · JOURNAL · BROWSE · AGENTS · TABLET**. (2026-10-25: ASK became **ATLAS**, the one write-or-ask screen; `#/ask` still lands there. `voice-input-decisions.md` VI1.)
 3. A spacer.
 4. The status cluster:
    - amber chips, shown only when they apply: `OFFLINE`, `READ-ONLY`, `DRIVE`, `N FAILED`;
@@ -147,7 +147,7 @@ It is always visible, reduced mode included.
 - **Footer:** `CONFIRM ALL` (primary) and `TELL IT WHAT'S WRONG`. The correction box stays folded until that button is pressed, or while a draft exists.
 - **Failed:** the error text, "Your text is safe in the log", and `RETRY`.
 
-**Ask.**
+**Ask.** (Replaced on 2026-10-25 by the ATLAS screen, which keeps all of this for a question: `voice-input-decisions.md` VI1–VI3.)
 - A 56px query field with `ASK`.
 - A 360px MATCHES rail and the ANSWER in `.read`. Citations are dim underlined links.
 - `DIG DEEPER` is an amber outline, because it uses allowance.
@@ -213,7 +213,7 @@ Views keep their logic and get new `el()` trees and classes. All pure models and
 **Guard test `tests/test_web_design.py`** checks that:
 - colours are hex only, with no rgba;
 - there are no shadows, gradients or filters, and no external URLs;
-- `transition` appears only on the switch knob;
+- `transition` appears only on the switch knob, and only the ATLAS dot animates from JS (VI9);
 - there are no `style=` attributes in the HTML;
 - every `/static/` link resolves;
 - fonts are served as `font/woff2`.

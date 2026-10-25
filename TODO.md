@@ -1,7 +1,7 @@
 # ATLAS: the owner's to-do list
 
 Everything that's waiting on you, in order. Tick each item here as you go.
-Last updated: 2026-10-24 (phase 4.5 added; phases 5 and 6 on hold; the rename to ATLAS added as step 8).
+Last updated: 2026-10-25 (phase 4.5 added; phases 5 and 6 on hold; the rename to ATLAS added as step 8).
 
 **About the names:** the app is now called ATLAS (was BrainHub). The steps below already use the new names (`/mnt/data/ATLAS`, `~/.cache/atlas-target`, `atlas-request`…). They only exist once you've done **step 8**, so do step 8 as soon as its PR is merged, then carry on with whatever is still open above it.
 
@@ -112,6 +112,17 @@ The app is called ATLAS now. Most of the switch happens by itself the first time
   - Delete the old build and the old web view folders (the window positions are remembered again after one start):
     `rm -rf ~/.cache/brainhub-target ~/.local/share/dev.brainhub.desktop ~/.config/dev.brainhub.desktop`
 - [ ] **Windows (on hold):** the same folder rename on Windows, `D:\BrainHub` → `D:\ATLAS`, then build the app there. ATLAS moves `%LOCALAPPDATA%\BrainHub` by itself on its first start.
+
+### 9. One input, and ATLAS's replies (after its PR is merged)
+ATLAS replaced the ASK tab: one field to write something down or ask, and ATLAS says what it found. Details: `docs/superpowers/voice-input-decisions.md`.
+- [ ] Open **ATLAS** (Alt+2). Type "when is the dentist": **ASK** lights up. Type "need to call the dentist tomorrow": **NOTE** lights up. Press the other one to overrule it.
+- [ ] Save that note. Its card opens on the screen, and once it's filed you hear "I pulled out one possible task." and a quip. The same line shows next to the blue dot.
+- [ ] Ask something you wrote about. You hear "I found … entries on that." Ask something you never wrote: "Nothing on that."
+- [ ] Watch the blue dot while ATLAS speaks: it should grow and shrink with the words, then settle. Tell Claude if it feels too jumpy or too lazy.
+- [ ] Settings → Voice → SASS: turn **Add a quip after the information** off and save a note: only the plain line. Turn **Reply when I write something down or ask** off: nothing is spoken, but the caption still shows. Turn both back on.
+- [ ] From TODAY, type a question in the bottom bar and press Enter: ATLAS opens with the answer. Do the same in the widget.
+- [ ] Settings → Voice → **Edit quotes**: the new `reply_…` pools are at the end of the file. Change or delete what doesn't land.
+- [ ] Tell Claude about any sentence ATLAS got wrong (a note it took for a question, or the other way round).
 
 ## Later
 - [ ] **Windows (on hold):** the Windows half of the dual-boot checks, claude-sync, the Windows rollout, and the Windows half of the tablet (allow `python.exe` on private networks; update both OSes together because of schema 3).
