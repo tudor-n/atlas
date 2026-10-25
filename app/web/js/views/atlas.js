@@ -5,7 +5,8 @@
 // as Ask did. Above both: the ATLAS dot (atlas-dot.js), which moves while ATLAS speaks, and a one-line
 // caption of what ATLAS last said (atlas.reply), shown whether or not the voice spoke. What was done is
 // always named with the other way one press away (SAVE AS NOTE INSTEAD, ASK INSTEAD), so a wrong guess
-// never loses what was written. Leaving the screen hands the last note to the tray.
+// never loses what was written. Leaving the screen hands the last note to the tray, and anything typed
+// but not sent to the capture bar.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { answerNodes, hitList, noteText } from '../components/text.js';
@@ -24,7 +25,7 @@ export function render(container, params, query) {
   let lastQ = '';
   let noteSeq = 0;
   let pinned = null;     // the owner's NOTE/ASK press, until the field is emptied
-  let saving = false;
+  let saving = null;     // the text being saved, while a save is in flight
   let note = null;       // the note on screen: {entryId, text, card}
   let savedText = null;  // the text last saved as a note here (ASK INSTEAD keeps it in the log)
   let readonly = '';
@@ -158,13 +159,16 @@ export function render(container, params, query) {
 
   // -- notes -----------------------------------------------------------------------------------------
   async function saveNote(text, { clearOnSave = false } = {}) {
-    if (saving) return;
-    saving = true;
+    if (saving !== null) return;
+    saving = text;
     go.disabled = true;
     formErr.textContent = '';
     try {
       const res = await api.post('/api/entries', { text, source: 'pc', reply: true });
-      if (dead) return;
+      if (dead) {  // the owner left while it saved: its card goes to the tray, as on leaving
+        if (!(res && res.held)) tray(res.entry_id, text);
+        return;
+      }
       if (clearOnSave && input.value === text) clearField();  // saved; keep anything typed meanwhile
       stop();
       savedText = text;
@@ -183,8 +187,9 @@ export function render(container, params, query) {
       show('note');
     } catch (e) {
       if (!dead) formErr.textContent = `Not saved: ${e.message}. Your text is still here.`;
+      else toBar(text, `Not saved: ${e.message}. Your text is back here.`);  // the field is gone
     } finally {
-      saving = false;
+      saving = null;
       go.disabled = false;
     }
   }
@@ -197,8 +202,11 @@ export function render(container, params, query) {
     note = null;
     card.destroy();
     card.remove();
-    document.dispatchEvent(new CustomEvent('atlas:tray', { detail: { entryId, text } }));
+    tray(entryId, text);
   }
+  const tray = (entryId, text) => document.dispatchEvent(new CustomEvent('atlas:tray', { detail: { entryId, text } }));
+  // Text that would be lost with this screen goes into the capture bar (app.js), with why when given.
+  const toBar = (text, why) => document.dispatchEvent(new CustomEvent('atlas:draft', { detail: { text, why } }));
 
   // -- questions -----------------------------------------------------------------------------------
   function stop() { if (closeStream) { closeStream(); closeStream = null; } }
@@ -280,6 +288,7 @@ export function render(container, params, query) {
   function ask(q) {
     if (!q) return;
     lastQ = q;
+    release();  // a note on screen goes to the tray: hidden here, it would be out of reach
     closeNote();
     hitsCount.textContent = '';
     clear(hitsBody).appendChild(emptyRow('Searching…'));
@@ -340,6 +349,10 @@ export function render(container, params, query) {
 
   return () => {
     dead = true;
+    // What was typed and not sent goes to the capture bar (it shows again off this screen); not the
+    // text a save in flight is taking care of.
+    const left = input.value;
+    if (left.trim() && left !== saving) toBar(left);
     document.removeEventListener('visibilitychange', onShown);
     window.removeEventListener('focus', onShown);
     stop();

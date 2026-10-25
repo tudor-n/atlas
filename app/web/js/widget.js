@@ -154,12 +154,15 @@ async function onCaptureKey(ev) {
   if (!text.trim() || saving) return;
   saving = true;
   if (intent() === 'ask') {
-    try {  // the hub holds it for the ATLAS screen, which opens on it
+    try {  // the hub holds it for the ATLAS screen, which opens on it; the text stays until it has opened
       await post('/api/atlas/handoff', { text });
+      if (!await openInApp('atlas')) {
+        showStatus("COULDN'T OPEN ATLAS · YOUR TEXT IS STILL HERE", true);
+        return;
+      }
       if (capture.value === text) { capture.value = ''; pinned = null; syncIntent(); }
       saveDraft(draftStore(), capture.value);
       showStatus('ASKING ATLAS', false);
-      openInApp('atlas');
     } catch (e) {
       showStatus(e.message || 'Could not ask', true);
     } finally {
@@ -199,17 +202,21 @@ function renderBar() {
 // In the desktop shell a view opens in the main window (`open_main`), which then hides the widget;
 // in a browser, or if the shell refuses (an older shell, a window it could not show) or doesn't
 // answer within 3 s, POST /api/open opens it in the browser.
+// True once the view is opening (the main window, or the browser through the hub).
 async function openInApp(view) {
   openError = '';
   const plan = openPlan(view, tauriInvoke(window));
+  let opened = false;
   try {
-    if (plan.invoke && await openOutcome(() => plan.invoke('open_main', { view: plan.view })) === 'shell') return;
+    if (plan.invoke && await openOutcome(() => plan.invoke('open_main', { view: plan.view })) === 'shell') return true;
     await post('/api/open', plan.body);
+    opened = true;
   } catch (e) {
     openError = e.message || 'Could not open';
   }
   renderBody();
   fitWindow();
+  return opened;
 }
 
 function focusKey() {

@@ -23,11 +23,27 @@ test('an auxiliary with a subject asks', () => {
   }
 });
 
-test('a recall verb asks', () => {
+test('a recall verb aimed at what was written asks', () => {
   for (const s of ['find the notes on the arm calibration', 'show me what Ana said', 'tell me about the gearbox',
-    'look up the servo order', 'search physics', 'list my open tasks', 'remind me what the plan was']) {
+    'find everything on the gearbox', 'search my notes for the servo', 'look up my entries about Ana',
+    'list my open tasks', 'remind me what the plan was']) {
     assert.deepEqual(guessIntent(s), { intent: 'ask', reason: 'recall' }, s);
   }
+});
+
+test('a to-do that only starts like a search is a note', () => {
+  for (const s of ['Find a better bearing for joint 3', 'Search for cheaper servos tomorrow', 'List of parts: M3 screws, nuts',
+    'Tell me later, Mihai said the gearbox ships Monday', 'look up the servo datasheet', 'search physics',
+    'show the prototype to Ana']) {
+    assert.equal(intent(s), 'note', s);
+  }
+});
+
+test('with two sentences, the last one decides, and a task in either makes it a note', () => {
+  assert.equal(intent('Is the wrist servo the MG996R? Need to order two more by Friday'), 'note');
+  assert.equal(intent('Need to order servos. Did I already?'), 'note');
+  assert.equal(intent('The servo buzzes. Did I order a spare?'), 'ask');
+  assert.equal(intent('Is it the MG996R? Thanks.'), 'note');
 });
 
 test('tasks and chores are notes, even with a question mark', () => {

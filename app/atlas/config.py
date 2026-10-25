@@ -231,9 +231,10 @@ def load_settings(paths: Paths, problems: list | None = None) -> dict:
         if key not in DEFAULT_SETTINGS:
             continue
         if key == "voice_events" and isinstance(value, dict):
-            # A file saved before an event existed (VI5): the new switches start at their default,
-            # instead of the whole dict failing and taking the owner's other switches with it.
-            value = {**DEFAULT_SETTINGS["voice_events"], **value}
+            # Saved by another build (VI5): one from before an event existed lacks its switch, which
+            # starts at its default; one from after has a switch this build doesn't know, which is left
+            # out. Either way the owner's other switches stand, instead of the whole dict failing.
+            value = {**DEFAULT_SETTINGS["voice_events"], **{k: v for k, v in value.items() if k in VOICE_EVENTS}}
         try:
             validate_setting(key, value)
         except ValueError as e:

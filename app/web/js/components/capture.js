@@ -86,8 +86,9 @@ export function mountCapture(root, { onSaved, onAsk }) {
     if (intent() === 'ask' && onAsk) {
       error.textContent = '';
       status.textContent = '';
-      if (onAsk(text.trim()) === false) {  // no ATLAS screen right now (reduced mode): keep the text
-        error.textContent = "Can't ask while ATLAS's data folder is unavailable. Your text is still here; press NOTE to save it.";
+      const why = onAsk(text.trim());  // a reason when there is no ATLAS screen right now: keep the text
+      if (why) {
+        error.textContent = why;
         return;
       }
       input.value = '';
@@ -115,5 +116,14 @@ export function mountCapture(root, { onSaved, onAsk }) {
     }
   }
 
-  return { setStatus: (s) => { status.textContent = s; }, focus: () => input.focus() };
+  // Text handed back from the ATLAS screen (typed there, not sent): added to whatever the bar holds.
+  function setDraft(text, why) {
+    input.value = input.value.trim() ? `${input.value}\n${text}` : text;
+    pinned = null;
+    error.textContent = why || '';
+    status.textContent = why ? '' : 'Your unsent text from ATLAS';
+    fit();
+  }
+
+  return { setStatus: (s) => { status.textContent = s; }, focus: () => input.focus(), setDraft };
 }

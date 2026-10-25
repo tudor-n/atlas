@@ -389,8 +389,10 @@ def test_guard_catches_style_writes():
 # panel; nothing moves there.
 DOT_JS = "js/components/atlas-dot.js"
 DOT_ATTRS = {"viewBox", "class", "aria-hidden", "focusable", "cx", "cy", "r"}
-FRAME_ALLOW = {DOT_JS: "the ATLAS dot's loop (VI8)",
-               "js/widget.js": "one frame to let layout settle before measuring the panel, not motion"}
+# file -> the one animation-frame call it may make (None: any, for the dot's loop), and why
+FRAME_ALLOW = {DOT_JS: (None, "the ATLAS dot's loop (VI8)"),
+               "js/widget.js": ("requestAnimationFrame(fitWindow)",
+                                "one frame to let layout settle before measuring the panel, not motion")}
 JS_MOTION = [(name, re.compile(p)) for name, p in (
     ("animation frame", r"\brequestAnimationFrame\b"),
     ("Web Animations", r"\.\s*animate\s*\(|\bnew\s+(?:Animation|KeyframeEffect)\b|\bgetAnimations\s*\("),
@@ -399,8 +401,20 @@ JS_MOTION = [(name, re.compile(p)) for name, p in (
 
 
 def _js_motion(rel: str, src: str) -> list[tuple[int, str]]:
-    return [(ln, name) for ln, name in _find(JS_MOTION, _strip_js_comments(src))
-            if not (name == "animation frame" and rel in FRAME_ALLOW)]
+    code = _strip_js_comments(src)
+    lines = code.split("\n")
+    allowed, _ = FRAME_ALLOW.get(rel, ("", ""))
+    out = []
+    for ln, name in _find(JS_MOTION, code):
+        if name == "animation frame" and rel in FRAME_ALLOW:
+            if allowed is None:
+                continue
+            if lines[ln - 1].count("requestAnimationFrame") == 1 and allowed in lines[ln - 1]:
+                continue
+        out.append((ln, name))
+    if allowed and code.count("requestAnimationFrame") > 1:  # the one call, not a loop around it
+        out.append((0, "more than one animation frame"))
+    return out
 
 
 @pytest.mark.parametrize("f", _js_params({}))
@@ -434,6 +448,11 @@ def test_guard_catches_js_motion():
         assert not _js_motion("js/x.js", src), src
     assert not _js_motion(DOT_JS, "requestAnimationFrame(tick)")
     assert _js_motion(DOT_JS, "n.animate([], 1)")  # the dot gets frames, not the other APIs
+    # the widget gets its one layout frame, and nothing more
+    assert not _js_motion("js/widget.js", "if (on) requestAnimationFrame(fitWindow);")
+    assert _js_motion("js/widget.js", "requestAnimationFrame(spin)")
+    assert _js_motion("js/widget.js", "requestAnimationFrame(fitWindow); requestAnimationFrame(fitWindow)")
+    assert _js_motion("js/widget.js", "requestAnimationFrame(fitWindow);\nfunction s() { requestAnimationFrame(fitWindow); }")
 
 
 # -- HTML sinks (rule 6): text enters the page only through el()/textContent -------------------------

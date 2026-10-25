@@ -147,6 +147,7 @@ async function route() {
     cleanup = typeof result === 'function' ? result : null;
   } catch (e) {
     console.error(e);
+    oneInput(false);  // the view didn't load: the capture bar is the way in
     clear(container).appendChild(e.drive  // the drive went away: its notice, not an error
       ? el('div', { class: 'vw reduced' }, notice(driveText(e.drive), { title: 'DRIVE' }))
       : el('p', { class: 'bn err', role: 'alert' }, `Couldn't load this page: ${e.message}`));
@@ -226,14 +227,19 @@ async function boot() {
       else showTrayCard(entryId);  // at once: it shows the filing's live progress, then the review
     },
     // A question typed in the bar: the ATLAS screen answers it (voice-input decisions VI1).
-    // In reduced mode there is no ATLAS screen: false keeps the text in the bar.
+    // Without the ATLAS screen (reduced mode, setup) the bar keeps the text and shows why.
     onAsk: (text) => {
-      if (mode() !== 'full') return false;
+      if (mode() === 'reduced') return "Can't ask while ATLAS's data folder is unavailable. Your text is still here; press NOTE to save it.";
+      if (mode() === 'setup') return 'Finish setup first, then ask. Your text is still here.';
       location.hash = `#/atlas?q=${encodeURIComponent(text)}`;
-      return true;
+      return '';
     },
   });
   startTray(capture);
+  document.addEventListener('atlas:draft', (ev) => {
+    const { text, why } = ev.detail || {};
+    if (typeof text === 'string' && text.trim()) capture.setDraft(text, why);
+  });
   document.addEventListener('keydown', (ev) => onKey(ev, capture));
   // A reconnect may follow a restart (exit 75 once the drive is back): re-route if the mode changed.
   api.onEvent('ws.open', async () => { if (await refreshState()) route(); });

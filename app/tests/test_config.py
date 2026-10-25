@@ -195,17 +195,23 @@ def test_voice_events_validation(paths):
             save_settings(paths, {"voice_events": bad})
 
 
-def test_voice_events_saved_before_an_event_existed_keep_their_switches(paths):
-    """The owner's file has the four switches from before `reply` (VI5): they stay, reply starts on."""
+def test_voice_events_saved_by_another_build_keep_their_switches(paths):
+    """The owner's file has the four switches from before `reply` (VI5): they stay, reply starts on.
+    A file from a later build with a switch this one doesn't know keeps the known ones too."""
     paths.settings_file.parent.mkdir(exist_ok=True)
     old = {"agent_waiting": False, "agent_finished": True, "reminder": False, "readback": True}
     paths.settings_file.write_text(json.dumps({"voice_events": old}), encoding="utf-8")
     problems: list = []
     assert load_settings(paths, problems)["voice_events"] == {**old, "reply": True}
+    newer = {**old, "reply": False, "something_later": True}
+    paths.settings_file.write_text(json.dumps({"voice_events": newer}), encoding="utf-8")
+    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": False}
     assert problems == []
-    paths.settings_file.write_text(json.dumps({"voice_events": {**old, "bogus": True}}), encoding="utf-8")
-    assert load_settings(paths, problems)["voice_events"]["agent_waiting"] is True  # still refused whole
+    paths.settings_file.write_text(json.dumps({"voice_events": {**old, "reply": "yes"}}), encoding="utf-8")
+    assert load_settings(paths, problems)["voice_events"]["agent_waiting"] is True  # a bad value: refused whole
     assert problems
+    with pytest.raises(ValueError):  # a save still names every switch, and only those
+        save_settings(paths, {"voice_events": {**old, "reply": True, "something_later": True}})
 
 
 @pytest.mark.parametrize("blend", [{"bm_george": 1}, {"af_heart": 0.5, "bm_george": 0.25, "bf_emma": 0.25},

@@ -29,9 +29,11 @@ These rulings amend the phase 4 design (`specs/2026-10-23-atlas-phase4-design.md
     - ends with `?`;
     - opens with a question word and an auxiliary ("what did", "when's", "how many");
     - opens with an auxiliary and a subject ("did I", "is there"). A noun subject counts only after auxiliaries an imperative can't start with, so "did the parcel come" asks but "do the dishes" doesn't;
-    - opens with a recall verb ("find", "show me", "look up", "list", "remind me what…").
-  - **Task phrasings stay notes, even with a `?`:** "remind me to…", "need to…", "todo", "don't forget", "remember to", "note to self".
-  - **Anything longer is a note**, whatever it holds.
+    - opens with a recall verb aimed at what was written: "find my notes…", "search for everything…", "show me what…", "tell me about…", "list my…", "remind me what…".
+  - **With two sentences, the last one decides:** "The servo buzzes. Did I order a spare?" asks.
+  - **A task phrasing in any sentence makes it a note, even with a `?`:** "remind me to…", "need to…", "todo", "don't forget", "remember to", "note to self". So "Is it the MG996R? Need to order two more by Friday" is a note.
+  - **A to-do that only starts like a search is a note:** "Find a better bearing for joint 3", "Search for cheaper servos", "List of parts…", "Tell me later, …".
+  - **Anything longer is a note**, whatever it holds. A note is the safe side: it is in the log either way.
   - **NOTE | ASK follows the guess as you type.** A press overrides it until the field is emptied, including a press before typing.
   - **Keys:** Enter sends while it says ASK, and is a new line for a note. Ctrl+Enter always sends.
 - **VI3 A wrong guess never loses anything.** The screen always names what it did and offers the other way:
@@ -39,7 +41,10 @@ These rulings amend the phase 4 design (`specs/2026-10-23-atlas-phase4-design.md
   - **"Saved as a note" → ASK INSTEAD.** It asks the same text.
     - The note stays in the log: the raw log is append-only (rule 1), and the line says so.
     - Once a text is in the log, asking it shows "It is in your log as a note too." instead of the save button.
-  - **When a new note replaces it, or the owner leaves the screen,** the note on screen goes to the tray (the `atlas:tray` event), like a capture's card. Its filing and proposals stay one press away.
+  - **When a new note replaces it, a question is asked, or the owner leaves the screen,** the note on screen goes to the tray (the `atlas:tray` event), like a capture's card. Its filing and proposals stay one press away.
+  - **Text typed but not sent goes into the capture bar** when the owner leaves the screen (the `atlas:draft` event), added to whatever the bar holds.
+  - **A save still in flight when the owner leaves:** if it lands, its card goes to the tray; if it fails, the text goes into the capture bar with the error.
+  - **Where the bar can't ask** (reduced mode, setup), a question stays in the bar with the reason, and NOTE saves it.
 - **VI11 One primary.** The screen's SAVE/ASK is an outline until the field holds text, as the capture bar's is, so a note's CONFIRM ALL is the one white primary.
 
 ## The replies
@@ -60,7 +65,8 @@ These rulings amend the phase 4 design (`specs/2026-10-23-atlas-phase4-design.md
     - a tablet note (it isn't filed, and it has its readback);
     - dig deeper.
   - **Questions get one only from the ATLAS screen** (`GET /api/ask?…&reply=1`).
-- **VI5 The owner's saved switches survive.** Their `settings.json` has the four keys from before `reply`, and `voice_events` must name every event. So `load_settings` fills keys added since from the defaults, instead of the whole dict failing and resetting their switches. A save from Settings still sends the full set; an unknown key is still refused.
+- **VI5 The owner's saved switches survive another build.** Their `settings.json` has the four keys from before `reply`, and `voice_events` must name every event. So `load_settings` fills keys added since from the defaults, and leaves out keys it doesn't know (a later build's), instead of the whole dict failing and resetting the switches. A save from Settings still sends exactly the full set.
+  - The older builds can't be changed: one that reads the five-key dict resets every voice switch to its default, and a Settings save there writes those back. That happens only if an older build runs after this one has saved Settings (a rollback, or the other OS before its update). Windows is on hold, so in practice only a rollback.
 - **VI6 Sass.** With `voice_sass` on, the info line gets a quip from `reply_tasks`, `reply_filed`, `reply_found` or `reply_nothing`. `failed` has no pool. The quips follow these rules:
   - **The picker and timing:** the same picker, cycle and 60 s quip cooldown as every line (phase 4 §5). They are sent at once, like readbacks, never merged.
   - **The voice:** the sarcastic friend only (V-S1). 42 quips are in the seed (12, 10, 10, 10), including the owner's two lines in the quote rules' form: "Look {them} over and pretend you're not gonna procrastinate {them}." and "Look over it, will you?".
@@ -90,7 +96,7 @@ These rulings amend the phase 4 design (`specs/2026-10-23-atlas-phase4-design.md
   - It moves for every line ATLAS speaks, not only replies: it is ATLAS talking.
   - **Measured** (headless Chrome, the real voice at 1 % volume): a rest of 18, up to 28.6 on stressed syllables, a dip to rest in the 0.4 s gap before the quip, and back to exactly 18 at the end.
 - **VI9 The motion rule, amended.** Phase 4.5 §2 now reads: none apart from the switch knob and the ATLAS dot. `tests/test_web_design.py` enforces this:
-  - only `js/components/atlas-dot.js` may run animation frames (the widget's one layout frame is ruled in, and it doesn't move anything);
+  - only `js/components/atlas-dot.js` may run animation frames (the widget's one `requestAnimationFrame(fitWindow)` is ruled in, exactly once: it waits for layout, and moves nothing);
   - no Web Animations or SVG animation anywhere;
   - the dot sets no attribute but its static SVG setup and `r`.
 
@@ -99,11 +105,23 @@ These rulings amend the phase 4 design (`specs/2026-10-23-atlas-phase4-design.md
 ## The widget
 - **VI10 The widget's question waits in the hub.**
   - **Why:** the shell's `open_main` takes a view name only (`valid_view` lets no query into a URL), so the widget can't send `#/atlas?q=…`.
-  - **How:** the widget posts the question to `POST /api/atlas/handoff`. That is memory only: the latest question, kept 2 minutes, allowed on a read-only root. Then it opens `atlas`.
+  - **How:** the widget posts the question to `POST /api/atlas/handoff`. That is memory only: the latest question, kept 2 minutes, allowed on a read-only root. Then it opens `atlas`. Its field is cleared only once ATLAS has opened (the main window, or the browser through the hub); if neither opens, the text stays, with the reason.
   - **The screen** takes it with `POST /api/atlas/handoff/take` on arrival, and again when the window comes forward while ATLAS is already open.
   - Both endpoints are PC-only, outside `/api/tablet/`.
 
+## Review fixes (2026-10-25)
+An independent review of the branch found the following; each is fixed above:
+- **Losing what was typed:** unsent text on leaving ATLAS, a save in flight on leaving, a question in the bar where it can't be asked, a widget question cleared before ATLAS opened (VI3, VI10).
+- **A note out of reach:** a note hidden behind a question (VI3).
+- **The intent rules:** to-dos that started like searches went to ASK (VI2).
+- **The bar on a failed load:** it stayed hidden when the ATLAS view failed to load (now restored).
+- **A later build's switch:** an unknown key reset the voice switches (VI5).
+- **The guard:** it allowed any animation frame in the widget (VI9).
+
+The review also checked these and found them sound: the `voice.quiet` guarantee, which entries get a reply, the Announcer's locking, the new endpoints against `local_only`, `readonly_guard` and `lan_guard`, the dot's loop, the tray and the quote-file append.
+
 ## Residuals
+- **The widget's question waits in a single slot.** A second question sent within 2 minutes, before ATLAS took the first, replaces it. The widget clears a question only once ATLAS has opened on it, so in practice the first is taken first.
 - **The intent rules are English** and won't catch every phrasing. NOTE | ASK shows the guess before sending, and VI3 makes a wrong one cheap. Collect the misses like filing's calibration cases.
 - **Static files carry no `Cache-Control`.** During the check, a page that only changed its hash kept the old module until a real reload. This was already so, and isn't new here. After an update the hub restarts and the page reloads, but a heuristic cache could still serve an old module once.
 - **Checked by hand on 2026-10-25** on Kubuntu, in headless Chrome at 1440×900 against a scratch hub. A fake `claude` filed and answered, so no plan usage was spent, and the real voice ran at 1 % volume with no ducking. Everything was deleted afterwards. The checks were:
