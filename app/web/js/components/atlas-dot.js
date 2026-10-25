@@ -34,7 +34,9 @@ export function atlasDot({ cls = 'atl-dot' } = {}) {
     frame = 0;
     const dt = last ? now - last : 16;
     last = now;
-    const level = line ? levelAt(line.env, line.frameMs, now - line.t0) : null;
+    // A frame's time can be a little before the event arrived (it marks the frame's start): that is
+    // the line's first frame, not a line already over.
+    const level = line ? levelAt(line.env, line.frameMs, Math.max(0, now - line.t0)) : null;
     if (line && level === null) line = null;  // the envelope ran out
     r = step(r, radiusFor(level), dt);
     if (!line && settled(r)) {

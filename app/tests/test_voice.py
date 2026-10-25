@@ -371,6 +371,15 @@ def test_a_reply_with_sass_carries_its_pools_quip_in_the_speech_and_the_caption(
     assert env.a.reply("failed") == "That one didn't file. Your words are safe in the log."  # no pool, no quip
 
 
+def test_the_tasks_quip_says_it_for_one_and_them_for_more(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text("## reply_tasks\nLook {them} over.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    assert env.a.reply("tasks", 1) == "I pulled out one possible task. Look it over."
+    env.now.t = T0 + timedelta(minutes=2)
+    assert env.a.reply("tasks", 3) == "I pulled out three possible tasks. Look them over."
+
+
 @pytest.mark.parametrize("gate", ["off", "switch", "quiet", "paused", "not installed"])
 def test_every_gate_silences_a_reply_but_the_caption_stays(env, gate):
     ensure_quotes(env.brain)

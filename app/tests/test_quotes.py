@@ -162,7 +162,7 @@ def test_the_seed_has_the_reply_pools_with_the_owners_lines():
     pools, problems = q.parse(q.SEED)
     assert problems == [] and q.REPLY_POOLS == ("reply_tasks", "reply_filed", "reply_found", "reply_nothing")
     assert all(len(pools[p]) >= 8 for p in q.REPLY_POOLS)
-    assert "Look them over and pretend you're not gonna procrastinate them." in pools["reply_tasks"]
+    assert "Look {them} over and pretend you're not gonna procrastinate {them}." in pools["reply_tasks"]
     assert "Look over it, will you?" in pools["reply_found"]
     assert q.REPLIES_SECTION.startswith(q.REPLIES_MARKER) and q.SEED.endswith(q.REPLIES_SECTION)
 

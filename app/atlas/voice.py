@@ -267,8 +267,9 @@ class Announcer:
                 pool_name = f"reply_{kind}"
                 if s["voice_sass"] and pool_name in POOLS:
                     pool, _ = load_quotes(self._brain)
-                    count_words = vl.number_words(count) if count else None
-                    quip = self._picker.pick(pool_name, pool.get(pool_name, []), {"count": count_words}, now)
+                    values = {"count": vl.number_words(count) if count else None,
+                              "them": ("it" if count == 1 else "them") if kind == "tasks" else None}
+                    quip = self._picker.pick(pool_name, pool.get(pool_name, []), values, now)
                     self._state.save()
                     if quip:
                         parts.append(quip)

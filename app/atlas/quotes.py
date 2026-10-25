@@ -15,7 +15,7 @@ from pathlib import Path
 
 POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up",
                           "reply_tasks", "reply_filed", "reply_found", "reply_nothing")
-PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day")
+PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day", "them")
 COOLDOWN = timedelta(seconds=60)  # after a quip, lines within this play without one
 REL_PATH = "_voice/quotes.md"
 _FIELD = re.compile(r"\{([^{}]*)\}")
@@ -30,7 +30,7 @@ SEED = """\
 # Then one quote per line. A quote is spoken right after the information, as its own short clip.
 # Lines starting with # are comments. Blank lines don't matter.
 #
-# Placeholders, filled with real values: {project} {duration} {count} {text} {time_of_day}
+# Placeholders, filled with real values: {project} {duration} {count} {text} {time_of_day} {them}
 # A quote whose placeholder has no value for that line is simply skipped.
 #
 # What sounds natural (from the listening test): short sentences that end in a full stop, no colons
@@ -198,20 +198,20 @@ Took your time, didn't you.
 # Replies (added 2026-10-25): what ATLAS adds after you write something down or ask it something.
 # reply_tasks follows "I pulled out two possible tasks.", reply_filed "Filed it. Nothing to confirm."
 # (or "… three things to confirm."), reply_found "I found three entries on that.", and reply_nothing
-# "Nothing on that." {count} is the number in words.
+# "Nothing on that." {count} is the number in words; {them} is "it" for one task and "them" for more.
 ## reply_tasks
 # The sarcastic friend
-Look them over and pretend you're not gonna procrastinate them.
-Confirm them. Putting them off is a separate step.
-Have a look. They won't do themselves.
-Go on, confirm them. I'll act surprised.
-There you go. Fresh things to avoid.
-Look them over before they turn into someday.
+Look {them} over and pretend you're not gonna procrastinate {them}.
+Confirm {them}. Putting {them} off is a separate step.
+Have a look. Tasks don't do themselves.
+Go on, confirm {them}. I'll act surprised.
+There you go. Something fresh to avoid.
+Look {them} over before someday happens.
 You said it, not me. Go confirm.
-Check them. Then actually do one.
+Check {them}. Then actually start.
 More homework. You're welcome.
 That's {count}. No pressure.
-Look them over. The procrastinating can wait.
+Look {them} over. The procrastinating can wait.
 Have a look. Future you is watching.
 
 ## reply_filed
@@ -244,7 +244,7 @@ Go on, read it. I didn't make it up.
 # The sarcastic friend
 Either you never wrote it down, or you're inventing memories.
 Not a word. Did you dream it?
-Nothing. Maybe write it down next time.
+Maybe write it down next time.
 I looked. Honestly, I did.
 Blank. Like your notes on the subject.
 Nope. Not a thing.

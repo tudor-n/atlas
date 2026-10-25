@@ -49,7 +49,8 @@ export function render(container, params, query) {
     },
   });
   const pick = seg(INTENTS, 'note', (v) => { pinned = v; sync(); input.focus(); }, { label: 'Note or question' });
-  const go = button('SAVE', { primary: true, type: 'submit', cls: 'atl-go' });
+  // SAVE or ASK: an outline at rest, the white primary only while there is text (one primary on screen)
+  const go = button('SAVE', { type: 'submit', cls: 'atl-go' });
   const form = el('form', { class: 'atl-bar', onsubmit: (ev) => { ev.preventDefault(); submit(); } },
     el('label', { class: 'sr', for: 'atl-q' }, 'Write something down or ask'), input, pick, go);
   const formErr = el('p', { class: 'atl-err err', role: 'alert' });
@@ -59,6 +60,7 @@ export function render(container, params, query) {
     const now = intent();
     INTENTS.forEach((o, i) => pick.children[i].setAttribute('aria-pressed', o.value === now ? 'true' : 'false'));
     go.textContent = now === 'ask' ? 'ASK' : 'SAVE';
+    go.classList.toggle('pr', input.value.trim() !== '');
   }
   function fit() {
     const top = input.scrollTop;
@@ -75,7 +77,7 @@ export function render(container, params, query) {
   // -- what was done, and the other way ---------------------------------------------------------
   const was = el('div', { class: 'atl-was', hidden: true });
   function showWas(text, action, hint) {
-    clear(was).append(el('span', { class: 'lb' }, text), action || null, hint ? el('span', { class: 'f atl-hint' }, hint) : null);
+    clear(was).append(...[el('span', { class: 'lb' }, text), action, hint && el('span', { class: 'f atl-hint' }, hint)].filter(Boolean));
     was.hidden = false;
   }
 
