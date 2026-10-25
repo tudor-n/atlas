@@ -436,12 +436,16 @@ def worker_command(state: Path) -> list[str]:
 
 
 class Speaker:
-    """One thread in front of the worker process: a bounded queue, one line at a time."""
+    """One thread in front of the worker process: a bounded queue, one line at a time.
+
+    on_event(type, data), from this thread: "voice.speaking" {env, frame_ms} as a line starts to
+    sound (its loudness, for the ATLAS dot), "voice.quiet" {} once it has ended, however it ended."""
 
     def __init__(self, state: Path, *, command: Callable[[], list[str]] | None = None,
                  env: dict | None = None, now: Callable[[], datetime] = datetime.now,
-                 idle_s: float = IDLE_S, reply_timeout_s: float = REPLY_TIMEOUT_S):
-        self._state, self._now = Path(state), now
+                 idle_s: float = IDLE_S, reply_timeout_s: float = REPLY_TIMEOUT_S,
+                 on_event: Callable[[str, dict], None] | None = None):
+        self._state, self._now, self._on_event = Path(state), now, on_event
         self._command = command or (lambda: worker_command(self._state))
         self._env, self._idle_s, self._reply_timeout_s = env, idle_s, reply_timeout_s
         self._lines: deque[Line] = deque()
@@ -523,23 +527,43 @@ class Speaker:
         if not sent:
             self._kill()
             raise RuntimeError("the voice worker stopped")
-        while True:
-            try:
-                reply = self._replies.get(timeout=self._reply_timeout_s)
-            except queue.Empty:
-                self._kill()
-                raise RuntimeError("the voice worker didn't answer in time") from None
-            if reply is None:
-                self._kill()
-                raise RuntimeError("the voice worker stopped")
-            if reply.get("id") != rid:
-                continue  # a late reply to a line cut short earlier
-            if reply.get("ok"):
-                self.last_error = None
-                self.spoken += 1
-            else:
-                self.last_error = str(reply.get("error") or "unknown error")
+        speaking = False
+        try:
+            while True:
+                try:
+                    reply = self._replies.get(timeout=self._reply_timeout_s)
+                except queue.Empty:
+                    self._kill()
+                    raise RuntimeError("the voice worker didn't answer in time") from None
+                if reply is None:
+                    self._kill()
+                    raise RuntimeError("the voice worker stopped")
+                if reply.get("id") != rid:
+                    continue  # a late reply to a line cut short earlier
+                if reply.get("event") == "playing" and "ok" not in reply:  # not the end: it starts to sound
+                    env = reply.get("env")
+                    speaking = True
+                    self._emit("voice.speaking", {
+                        "env": [int(x) for x in env if isinstance(x, (int, float))] if isinstance(env, list) else [],
+                        "frame_ms": reply.get("frame_ms") if isinstance(reply.get("frame_ms"), int) else 40})
+                    continue
+                if reply.get("ok"):
+                    self.last_error = None
+                    self.spoken += 1
+                else:
+                    self.last_error = str(reply.get("error") or "unknown error")
+                return
+        finally:
+            if speaking:  # ended, stopped, or the worker gone: the dot settles
+                self._emit("voice.quiet", {})
+
+    def _emit(self, type_: str, data: dict) -> None:
+        if self._on_event is None:
             return
+        try:
+            self._on_event(type_, data)
+        except Exception:
+            log.exception("voice: the %s event failed", type_)
 
     def _ensure_worker(self) -> None:
         if self._proc and self._proc.poll() is None:

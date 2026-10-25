@@ -514,6 +514,45 @@ def test_speaker_stop_empties_the_queue_and_cuts_the_line(tmp_path):
         sp.close()
 
 
+def test_speaker_says_when_a_line_sounds_and_when_it_ends(tmp_path):
+    events = []
+    sp = _speaker(tmp_path, on_event=lambda k, d: events.append((k, d)))
+    try:
+        sp.say(_line("one"))
+        sp.say(_line("FAIL-SYNTH"))  # never sounds: no events
+        assert _wait(lambda: sp.spoken == 1 and sp.last_error is not None), _log(tmp_path)
+        assert events == [("voice.speaking", {"env": [0] * 25, "frame_ms": 40}), ("voice.quiet", {})]
+    finally:
+        sp.close()
+
+
+def test_speaker_goes_quiet_when_a_line_is_stopped_or_the_worker_dies(tmp_path):
+    events = []
+    sp = _speaker(tmp_path, delay="20", on_event=lambda k, d: events.append(k))
+    try:
+        sp.say(_line("long"))
+        assert _wait(lambda: events == ["voice.speaking"]), _log(tmp_path)
+        sp.stop()
+        assert _wait(lambda: events == ["voice.speaking", "voice.quiet"], 10), _log(tmp_path)
+        sp.say(_line("killed"))
+        assert _wait(lambda: events.count("voice.speaking") == 2), _log(tmp_path)
+        sp._kill()
+        assert _wait(lambda: events.count("voice.quiet") == 2, 10), _log(tmp_path)
+    finally:
+        sp.close()
+
+
+def test_a_broken_event_handler_never_stops_the_voice(tmp_path):
+    def boom(k, d):
+        raise RuntimeError("nope")
+    sp = _speaker(tmp_path, on_event=boom)
+    try:
+        sp.say(_line("one"))
+        assert _wait(lambda: sp.spoken == 1) and sp.last_error is None, _log(tmp_path)
+    finally:
+        sp.close()
+
+
 def test_speaker_survives_a_worker_that_cannot_start(tmp_path):
     sp = v.Speaker(tmp_path / "state", command=lambda: [str(tmp_path / "no-such-python")])
     try:

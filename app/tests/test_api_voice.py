@@ -259,3 +259,16 @@ async def test_a_read_only_root_still_captions_the_plain_line(client):
     app["voice"] = None
     assert await atlas_reply(app, "found", 2) == "I found two entries on that."
     assert _replies(sent) == [{"kind": "found", "text": "I found two entries on that.", "entry_id": None}]
+
+
+async def test_the_page_hears_when_a_line_sounds_and_ends(client, paths):
+    _install(paths)
+    sent = _record(client.server.app)
+    assert (await client.post("/api/voice/sample", json={})).status == 204
+    deadline = time.monotonic() + 15
+    while "voice.quiet" not in [k for k, _ in sent] and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    kinds = [k for k, _ in sent if k.startswith("voice.")]
+    assert kinds[:2] == ["voice.speaking", "voice.quiet"]
+    speaking = next(d for k, d in sent if k == "voice.speaking")
+    assert speaking["frame_ms"] == 40 and len(speaking["env"]) == 50  # the sample's two parts, a second each

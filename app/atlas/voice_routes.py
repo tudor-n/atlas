@@ -34,13 +34,14 @@ def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> Non
         return
     state = osdirs.state_dir()
 
-    def changed(data: dict) -> None:  # from a thread: hop onto the loop for the broadcast
+    def send(type_: str, data: dict) -> None:  # from a thread: hop onto the loop for the broadcast
         loop = app.get("loop")
         if loop is not None and not loop.is_closed():
-            asyncio.run_coroutine_threadsafe(app["broadcast"]("voice.changed", data), loop)
+            asyncio.run_coroutine_threadsafe(app["broadcast"](type_, data), loop)
 
-    app["voice_download"] = vf.Downloader(paths.data, on_change=lambda st: changed({"download": st}))
-    app["voice_speaker"] = Speaker(state, env=speaker_env)
+    app["voice_download"] = vf.Downloader(paths.data, on_change=lambda st: send("voice.changed", {"download": st}))
+    # voice.speaking / voice.quiet: the ATLAS screen's dot follows the line as it sounds (VI8)
+    app["voice_speaker"] = Speaker(state, env=speaker_env, on_event=send)
     app["voice"] = Announcer(
         settings=lambda: load_settings(paths), brain=paths.brain, state_path=state / "voice.json",
         files=lambda s: vf.files(paths.data, s["voice_model"]),
