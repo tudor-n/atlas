@@ -646,8 +646,9 @@ async def test_startup_adds_missing_voice_quotes_in_its_own_commit_and_keeps_own
     # The owner's lines stay as they are; a file from before the workout pool gets it once, at the
     # end, in a commit of its own (2026-10-24).
     text = path.read_text(encoding="utf-8")
-    assert text.startswith("## readback\nMine.\n") and "## workout" in text
-    assert "add the voice's workout quips" in repo._run("log", "--format=%s").stdout
+    assert text.startswith("## readback\nMine.\n") and "## workout" in text and "## reply_tasks" in text
+    log = repo._run("log", "--format=%s").stdout
+    assert "add the voice's workout quips" in log and "add the voice's reply quips" in log
     assert not repo.is_dirty()
     await _started(aiohttp_client, app_paths)
     assert path.read_text(encoding="utf-8") == text

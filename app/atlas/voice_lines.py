@@ -207,6 +207,37 @@ def readback_answer(answers: dict[int, str]) -> str:
     return cap(" ".join(parts), CAP - 7) + " Saved."
 
 
+def _things(n: int, one: str, many: str) -> str:
+    return f"{number_words(n)} {one if n == 1 else many}"
+
+
+# What ATLAS says after the one input (voice-input decisions VI4): counts and fixed phrases only,
+# never the proposals' or the answer's text (an agent wrote those).
+REPLY_KINDS: tuple[str, ...] = ("tasks", "filed", "found", "nothing", "failed")
+
+
+def reply_line(kind: str, count: int = 0, others: int = 0) -> str:
+    """'tasks': 'I pulled out two possible tasks.' (plus 'And one more thing to confirm.' when there
+    are other proposals); 'filed': 'Filed it. Nothing to confirm.' or 'Filed it. Three things to
+    confirm.'; 'found': 'I found three entries on that.'; 'nothing': 'Nothing on that.' (recall's
+    own words); 'failed': the filing failed, and the words are safe."""
+    if kind == "tasks":
+        line = f"I pulled out {_things(count, 'possible task', 'possible tasks')}."
+        if others:
+            line += f" And {_things(others, 'more thing', 'more things')} to confirm."
+        return line
+    if kind == "filed":
+        return "Filed it. " + (f"{_things(count, 'thing', 'things').capitalize()} to confirm." if count
+                               else "Nothing to confirm.")
+    if kind == "found":
+        return f"I found {_things(count, 'entry', 'entries')} on that."
+    if kind == "nothing":
+        return "Nothing on that."
+    if kind == "failed":
+        return "That one didn't file. Your words are safe in the log."
+    raise ValueError(f"unknown reply kind: {kind}")
+
+
 def merge(event: str, lines: list[dict]) -> str:
     """Several lines of one event type that arrived together, as one line. Each dict carries the
     fields its line was built from (`project`, `text`, `seconds`)."""

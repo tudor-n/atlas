@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from atlas.config import load_settings, save_settings
@@ -179,18 +181,31 @@ def test_voice_defaults(paths):
     s = load_settings(paths)
     assert s["voice_enabled"] is True and s["voice_sass"] is True and s["voice_sass_readback"] is False
     assert s["voice_events"] == {"agent_waiting": True, "agent_finished": True, "reminder": True,
-                                 "readback": True}
+                                 "readback": True, "reply": True}
     assert s["voice_blend"] == {"bm_george": 0.7, "bm_fable": 0.3}  # Atlas's voice (owner)
     assert s["voice_speed"] == 0.95 and s["voice_volume"] == 80 and s["voice_model"] == "int8"
     assert s["voice_finish_min_s"] == 120
 
 
 def test_voice_events_validation(paths):
-    ok = {"agent_waiting": False, "agent_finished": True, "reminder": True, "readback": False}
+    ok = {"agent_waiting": False, "agent_finished": True, "reminder": True, "readback": False, "reply": False}
     assert save_settings(paths, {"voice_events": ok})["voice_events"] == ok
     for bad in [{}, {**ok, "extra": True}, {**ok, "reminder": 1}, {"agent_waiting": True}, [], None]:
         with pytest.raises(ValueError):
             save_settings(paths, {"voice_events": bad})
+
+
+def test_voice_events_saved_before_an_event_existed_keep_their_switches(paths):
+    """The owner's file has the four switches from before `reply` (VI5): they stay, reply starts on."""
+    paths.settings_file.parent.mkdir(exist_ok=True)
+    old = {"agent_waiting": False, "agent_finished": True, "reminder": False, "readback": True}
+    paths.settings_file.write_text(json.dumps({"voice_events": old}), encoding="utf-8")
+    problems: list = []
+    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": True}
+    assert problems == []
+    paths.settings_file.write_text(json.dumps({"voice_events": {**old, "bogus": True}}), encoding="utf-8")
+    assert load_settings(paths, problems)["voice_events"]["agent_waiting"] is True  # still refused whole
+    assert problems
 
 
 @pytest.mark.parametrize("blend", [{"bm_george": 1}, {"af_heart": 0.5, "bm_george": 0.25, "bf_emma": 0.25},

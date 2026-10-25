@@ -1,7 +1,8 @@
 """The voice (phase 4 design §3–§4): when to speak, what, and the queue in front of the worker.
 
 `Announcer` decides. It takes agent transitions (from AgentTracker, in a worker thread), the
-reminder tick (every 30 s) and the tablet's readbacks, runs every line through the gates (on, the
+reminder tick (every 30 s), the tablet's readbacks and the one input's replies (`reply`: the line
+comes back as the screen's caption too), runs every line through the gates (on, the
 files installed, the event ticked, not quiet hours, not paused, not a repeat), merges lines of one
 kind that arrive within a few seconds, adds a quip, and hands the result to `Speaker`.
 
@@ -28,7 +29,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from . import voice_lines as vl
-from .quotes import QuotePicker, load_quotes
+from .quotes import POOLS, QuotePicker, load_quotes
 
 log = logging.getLogger(__name__)
 
@@ -252,6 +253,34 @@ class Announcer:
         """Only the owner's values: the item labels were written by an agent (atlas-request)."""
         with self._lock:
             self._submit("readback", vl.readback_answer(answers), {}, None)
+
+    def reply(self, kind: str, count: int = 0, others: int = 0) -> str:
+        """What ATLAS says after the one input filed a note or answered a question (VI4), spoken
+        through the same gates as every line (on, installed, the `reply` switch, quiet hours,
+        pause). Returns the line as composed, quip and all, whether it was spoken or not: the
+        screen shows it as the caption, so the sass survives a silent voice. At once, never merged."""
+        info = vl.reply_line(kind, count, others)
+        try:
+            with self._lock:
+                s, now = self._settings(), self._now()
+                parts = [info]
+                pool_name = f"reply_{kind}"
+                if s["voice_sass"] and pool_name in POOLS:
+                    pool, _ = load_quotes(self._brain)
+                    count_words = vl.number_words(count) if count else None
+                    quip = self._picker.pick(pool_name, pool.get(pool_name, []), {"count": count_words}, now)
+                    self._state.save()
+                    if quip:
+                        parts.append(quip)
+                files = self._files(s)
+                if files is not None and self._gate("reply", s, now):
+                    line = Line("reply", info, {"line": info}, now, parts=parts)
+                    line.request = _request(parts, s, files)
+                    self._speaker.say(line)
+                return " ".join(parts)
+        except Exception:
+            log.exception("voice: the reply failed")
+            return info
 
     def tick(self) -> None:
         """Every TICK_S: speak the reminders whose time fell in (last tick, now]. The first tick of

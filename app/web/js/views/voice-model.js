@@ -5,6 +5,7 @@ export const EVENT_LABELS = [
   ['agent_finished', 'An agent finished a long run'],
   ['reminder', 'Reminders'],
   ['readback', 'Read back what I type on the tablet'],
+  ['reply', 'Reply when I write something down or ask'],
 ];
 
 export const mb = (bytes) => `${Math.max(1, Math.round(bytes / 1e6))} MB`;
