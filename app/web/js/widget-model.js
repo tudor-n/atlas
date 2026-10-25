@@ -47,6 +47,8 @@ export function tauriInvoke(win) {
 const hhmm = (iso) => String(iso || '').slice(-5);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const hasUsed = (win) => !!win && win.used !== null && win.used !== undefined;
+// An agent's part, or '' for none: the hub sends "—" then (the Agents table's placeholder).
+const partOf = (p) => { const s = String(p || '').trim(); return s === '—' ? '' : s; };
 
 // The 5-hour window when it has a reading, else the 7-day one (the app's top bar uses it too).
 export function usageWindow(w) {
@@ -71,7 +73,7 @@ export function needsYou(w) {
   const rows = [];
   ((w.agents || {}).rows || []).forEach((r, i) => {
     if (r.status !== 'waiting') return;
-    rows.push({ key: `agent:${i}`, text: [r.project_name || 'An agent', r.part].filter(Boolean).join(' · '),
+    rows.push({ key: `agent:${i}`, text: [r.project_name || 'An agent', partOf(r.part)].filter(Boolean).join(' · '),
       meta: 'waiting for you', view: 'agents', warn: true });
   });
   const n = reviewCount(w);

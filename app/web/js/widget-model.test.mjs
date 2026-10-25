@@ -49,6 +49,14 @@ test('needsYou: calm is empty; running agents and plain waiting are not listed',
   assert.equal(needsYou(W({ agents: { rows: [{ status: 'waiting' }] } }))[0].text, 'An agent');
 });
 
+test('needsYou: an agent without a part is just its project (the hub sends "—" for none)', () => {
+  const text = (row) => needsYou(W({ agents: { rows: [{ status: 'waiting', ...row }] } }))[0].text;
+  assert.equal(text({ project_name: 'Proj1', part: '—' }), 'Proj1');
+  assert.equal(text({ project_name: 'Proj1', part: '  ' }), 'Proj1');
+  assert.equal(text({ part: '—' }), 'An agent');
+  assert.equal(text({ project_name: 'Proj1', part: ' main ' }), 'Proj1 · main');
+});
+
 test('barText: what needs you in a few words, then the 5-hour usage', () => {
   assert.equal(barText(busy()), '1 agent needs you · 2 to review · 1 request · 2 due · 1 nudge · 5h 91%');
   assert.equal(barText(W()), 'All clear');
