@@ -26,7 +26,7 @@ ATLAS is a local second brain. You type free text; a headless Claude Code agent 
 - `data/root.json`: the root's marker (a random id, the brain format, the time zone it was made in), written by setup. `data/hub.lock`: which hub runs on this root.
 - `data/worktrees/`: temporary agent checkouts, removed after each filing (a leftover from the other OS is removed at the next start).
 - `data/voice/`: the voice's model and voices files (phase 4), downloaded once from Settings → Voice, about 121 MB (354 MB with the higher-quality model). Both OSes use the same copy.
-- `brain/_voice/quotes.md`: the voice's quips, yours to edit (phase 4). The filing agent can't touch it, and Ask doesn't search it.
+- `brain/_voice/quotes.md`: the voice's quips, yours to edit (phase 4). The filing agent can't touch it, and questions on the ATLAS screen don't search it.
 
 `brain/` and `data/` are git-ignored by the code repo.
 
@@ -197,7 +197,7 @@ All typing uses an in-page keyboard, so the Android keyboard never opens. On the
 - On the tablet you type each value with its unit (`412` then the **mm** chip), and **SET** moves to the next item. **SEND** writes one raw-log entry with every value.
 - Answers go to **Tablet** on the PC, never back to the agent.
 
-**Tablet notes** are kept verbatim in the raw log (`source=tablet`) and can be found by Ask. They are **not filed** until you press **File this** in the PC's **Tablet** view.
+**Tablet notes** are kept verbatim in the raw log (`source=tablet`) and can be found by a question on the ATLAS screen. They are **not filed** until you press **File this** in the PC's **Tablet** view.
 
 **IGNORE** on the tablet needs a second tap within 2 s. It hides a note or request without deleting it, and **Show ignored** on the PC brings it back.
 
@@ -208,11 +208,12 @@ ATLAS speaks through the PC speakers, in Atlas's voice (Kokoro, British English:
 - **an agent that needs you** (a permission prompt, a question, an error stop);
 - **an agent that finished a long run**: 2 minutes or more by default, measured from your prompt to the stop;
 - **a reminder**: at its remind time and again at its due time. A date with no time speaks when quiet hours end (08:00 by default). After the hub was off, missed reminders become one line ("You have three reminders from while I was off"). Anything older than a day is left to Today;
-- **a readback** of what you typed on the tablet ("Width of the desk. 1200 millimetres. Saved.").
+- **a readback** of what you typed on the tablet ("Width of the desk. 1200 millimetres. Saved.");
+- **a reply** after you write something down or ask (2026-10-25): "I pulled out two possible tasks." once a note is filed, "I found three entries on that." or "Nothing on that." after a question. Only counts and fixed phrases: never the proposals' or the answer's text. Its own switch (Settings → Voice → **Reply when I write something down or ask**), and every other switch, quiet hours and pause apply. The ATLAS screen also shows the line as a caption, spoken or not.
 
 It never reads text an agent wrote: only your project names and your own words. Nothing is spoken during quiet hours, and nothing silenced is saved for later.
 
-**Sass:** after the information comes a quip from `brain/_voice/quotes.md`: 137 to start, all in one style since 2026-10-24: a sarcastic friend (the dry butler and the ship's computer were retired). Each pool goes round without repeats. After a quip, lines within the next minute play without one. Readbacks get no quip unless you tick it. Edit the file any time (Settings → Voice → **Edit quotes**). Its header explains the format, and lines it can't use are listed in Settings.
+**Sass:** after the information comes a quip from `brain/_voice/quotes.md`: 137 to start, all in one style since 2026-10-24: a sarcastic friend (the dry butler and the ship's computer were retired). Each pool goes round without repeats. After a quip, lines within the next minute play without one. Readbacks get no quip unless you tick it. Replies use the `reply_tasks`, `reply_filed`, `reply_found` and `reply_nothing` pools (42 to start; `{them}` says "it" for one task); a quotes file from before gets them appended once, in a commit of its own. Edit the file any time (Settings → Voice → **Edit quotes**). Its header explains the format, and lines it can't use are listed in Settings.
 
 **Over music** (2026-10-24): every line is evened out to a steady loudness (about −14 dBFS RMS, with a soft limiter), and while ATLAS speaks, other apps (Spotify, a video) play at 30 % of their volume, then come back; a volume you change meanwhile stands. Settings → Voice → **Even loudness** and **Other sounds while speaking** (100 % = leave them alone). The ducking uses `pactl` (PipeWire's PulseAudio side), on Linux only; if the worker dies mid-line, the next one gives the volumes back.
 
@@ -237,10 +238,11 @@ Add the launcher entry once with `python -m atlas desktop-entry install --exec <
 - colour only when it means something: green is ok or live, amber is attention or a risky action. Risky buttons (dismiss, remove, revoke, ignore) need a second tap within 2 s.
 
 **Where things are:**
-- **Top bar:** the tabs TODAY · ASK · JOURNAL · BROWSE · AGENTS · TABLET, then a status cluster, then SETTINGS.
+- **Top bar:** the tabs TODAY · ATLAS · JOURNAL · BROWSE · AGENTS · TABLET, then a status cluster, then SETTINGS.
   - The status cluster holds attention chips, the review count, the 5-hour usage, the agents running and waiting, and the voice switch.
-  - Keys: Alt+1…6 for the tabs, Alt+0 for Settings, Alt+C to jump to capture.
-- **Capture** is always at the bottom: Ctrl+Enter saves. New filings show as compact rows just above it; open one with **REVIEW**.
+  - Keys: Alt+1…6 for the tabs, Alt+0 for Settings, Alt+C to jump to capture (on the ATLAS screen, its own field).
+- **ATLAS** (2026-10-25; it replaced Ask) is one field to write something down or ask. **NOTE | ASK** shows what ATLAS thinks you mean as you type ("when is…", "did I…", a `?` → ASK; "need to…", "remind me to…", anything long → NOTE); press it to change its mind. A note is saved and filed, and its card opens right there to confirm the tasks; a question gets the matches and a cited answer, with **DIG DEEPER**. **SAVE AS NOTE INSTEAD** and **ASK INSTEAD** fix a wrong guess (a note stays in the log either way). Above it, ATLAS is the blue dot from the logo: it grows and shrinks with the voice while it speaks, and the line it said shows beside it.
+- **Capture** is at the bottom of every other view, with the same **NOTE | ASK**: Ctrl+Enter sends (Enter too, for a question). A question opens ATLAS on it. New filings show as compact rows just above it; open one with **REVIEW**. The widget's field does the same.
 - **Today:**
   - TO REVIEW is a queue; the selected entry's card opens below it. Use ↑/↓ to move through the queue.
   - Each proposal has ✓, EDIT and ✕. **CONFIRM ALL** confirms them all, and **TELL IT WHAT'S WRONG** re-files.

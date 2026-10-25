@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +25,10 @@ from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
 from .quotes import ensure_quotes
 from .rawlog import append_entry
-from .recall import deeper_answer, quick_answer, search_hits
+from .recall import NOTHING, deeper_answer, quick_answer, search_hits
 from .store import Store
 from .today import compute_today
+from .voice_lines import reply_line
 from .widget import build_widget
 
 log = logging.getLogger(__name__)
@@ -275,6 +277,63 @@ async def backup_push(request: web.Request) -> web.Response:
     return web.json_response(request.app["backup"].status())
 
 
+# -- ATLAS's replies (voice-input decisions VI4) -----------------------------
+async def atlas_reply(app: web.Application, kind: str, count: int = 0, others: int = 0, *,
+                      entry_id: str | None = None) -> str:
+    """What ATLAS says after the one input filed a note or answered a question: spoken through the
+    voice's gates, and broadcast as `atlas.reply` for the ATLAS screen's caption either way. Never
+    raises: the note is saved and the answer given whatever the voice does (V39)."""
+    text = reply_line(kind, count, others)
+    voice = app.get("voice")  # None on a read-only root: the plain line, nothing spoken
+    if voice is not None:
+        try:
+            text = await t(voice.reply, kind, count, others)
+        except Exception:
+            log.exception("voice: the reply failed")
+    try:
+        await app["broadcast"]("atlas.reply", {"kind": kind, "text": text, "entry_id": entry_id})
+    except Exception:
+        log.exception("could not broadcast the reply")
+    return text
+
+
+async def reply_to_filing(app: web.Application, entry_id: str, done: bool) -> None:
+    """A filing the owner waited on has ended: its item proposals are the possible tasks."""
+    if not done:
+        await atlas_reply(app, "failed", entry_id=entry_id)
+        return
+    proposals = await t(app["store"].list_proposals, entry_id=entry_id)
+    items = sum(1 for p in proposals if p.ptype == "item")
+    others = len(proposals) - items
+    if items:
+        await atlas_reply(app, "tasks", items, others, entry_id=entry_id)
+    else:
+        await atlas_reply(app, "filed", others, entry_id=entry_id)
+
+
+# The widget opens a main-window view only by name (the shell lets nothing else into a URL), so a
+# question typed there waits here, in memory, for the ATLAS screen to take it (VI1): the latest one,
+# for HANDOFF_S. Nothing is written, so it works on a read-only root too.
+HANDOFF_S = 120
+
+
+async def post_handoff(request: web.Request) -> web.Response:
+    text = (await body_dict(request)).get("text")
+    if not isinstance(text, str) or not text.strip():
+        return err(400, "the question is blank")
+    if len(text) > 4000:
+        return err(400, "the question is too long")
+    request.app["atlas_handoff"].update(text=text.strip(), at=time.monotonic())
+    return web.json_response({"ok": True}, status=202)
+
+
+async def take_handoff(request: web.Request) -> web.Response:
+    held = request.app["atlas_handoff"]
+    text, at = held.pop("text", None), held.pop("at", 0.0)
+    fresh = text is not None and time.monotonic() - at <= HANDOFF_S
+    return web.json_response({"text": text if fresh else None})
+
+
 # -- handlers: capture and filing --------------------------------------------
 async def post_entry(request: web.Request) -> web.Response:
     app = request.app
@@ -298,6 +357,8 @@ async def post_entry(request: web.Request) -> web.Response:
         await t(app["store"].add_entry, entry)
         await t(app["store"].index_entry, entry)
         await t(app["worker"].mark_queued, entry.id)
+        if body.get("reply") is True:  # the one input waits on it: ATLAS replies when it's filed
+            app["worker"].replies.add(entry.id)
         app["worker"].queue.put_nowait(entry.id)
     except Exception:  # the log has it; startup backfill recovers the index
         log.exception("entry %s saved to the log but not indexed or queued", entry.id)
@@ -363,6 +424,7 @@ async def retry_filing(request: web.Request) -> web.Response:
     if await _in_progress(app, eid):
         return err(409, "filing in progress")
     await t(app["worker"].mark_queued, eid)
+    app["worker"].replies.add(eid)  # the owner pressed RETRY: they're waiting on it
     app["worker"].queue.put_nowait(eid)
     return web.json_response({"ok": True}, status=202)
 
@@ -377,6 +439,7 @@ async def correct_filing(request: web.Request) -> web.Response:
         return err(409, "filing in progress")
     # Queued from this moment, as a retry is: the card stops offering ✓ on the stale proposals.
     await t(app["worker"].mark_queued, eid)
+    app["worker"].replies.add(eid)
 
     async def run() -> None:
         try:
@@ -384,6 +447,7 @@ async def correct_filing(request: web.Request) -> web.Response:
         except Exception as e:
             log.exception("correction of %s failed", eid)
             await app["broadcast"]("filing.failed", {"entry_id": eid, "error": str(e)[:500]})
+            await app["worker"].reply_to(eid, False)  # failed before the filing started
 
     task = asyncio.create_task(run())
     app["background"].add(task)
@@ -522,19 +586,26 @@ async def _event(resp: web.StreamResponse, name: str, data) -> None:
     await resp.write(f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
 
 
-async def _stream(request: web.Request, hits, chunks) -> web.StreamResponse:
+async def _stream(request: web.Request, hits, chunks, on_answer=None) -> web.StreamResponse:
+    """hits, the answer's deltas, then done. on_answer(text) (an answer that streamed without an
+    error) returns ATLAS's reply, sent as one more `reply` event before done."""
     resp = web.StreamResponse(headers={"Content-Type": "text/event-stream",
                                        "Cache-Control": "no-cache"})
     await resp.prepare(request)
     try:
         if hits is not None:
             await _event(resp, "hits", [asdict(h) for h in hits])
+        answer, failed = [], False
         try:
             async with contextlib.aclosing(chunks) as stream:
                 async for chunk in stream:
+                    answer.append(chunk if isinstance(chunk, str) else "")
                     await _event(resp, "delta", chunk)
         except (ClaudeError, ValueError, OSError) as e:
+            failed = True
             await _event(resp, "error", str(e) or type(e).__name__)
+        if on_answer is not None and not failed:
+            await _event(resp, "reply", await on_answer("".join(answer)))
         await _event(resp, "done", {})
     except ConnectionResetError:
         pass
@@ -553,8 +624,15 @@ async def ask(request: web.Request) -> web.StreamResponse:
     q = _question(request)
     settings = await t(load_settings, paths)
     hits = await t(search_hits, app["store"], q, settings["recall_top_n"])
+
+    async def replied(answer: str) -> str:  # ?reply=1: the ATLAS screen asked (VI4)
+        if not hits or answer.strip() == NOTHING:
+            return await atlas_reply(app, "nothing")
+        return await atlas_reply(app, "found", len(hits))
+
     return await _stream(request, hits, quick_answer(
-        app["runner"], q, hits, settings, paths.prompts, paths.brain))
+        app["runner"], q, hits, settings, paths.prompts, paths.brain),
+        replied if request.query.get("reply") == "1" else None)
 
 
 async def ask_deeper(request: web.Request) -> web.StreamResponse:
@@ -835,7 +913,7 @@ async def reduced_widget(request: web.Request) -> web.Response:
 
 
 # Opening a page writes nothing, so it works in every mode (the widget's "Open in ATLAS").
-_HARMLESS_POSTS = ("/api/open",)
+_HARMLESS_POSTS = ("/api/open", "/api/atlas/handoff", "/api/atlas/handoff/take")  # memory only
 _TABLET_CAPTURE = re.compile(r"/api/tablet/notes|/api/tablet/requests/[^/]+/answer")
 _IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
 
@@ -872,6 +950,7 @@ def add_reduced_routes(app: web.Application) -> None:
 
 
 def add_routes(app: web.Application) -> None:
+    app["atlas_handoff"] = {}  # the widget's question for the ATLAS screen (post_handoff)
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
         web.get("/api/map", get_map), web.put("/api/map", put_map),
@@ -889,6 +968,7 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/today", get_today),
         web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
+        web.post("/api/atlas/handoff", post_handoff), web.post("/api/atlas/handoff/take", take_handoff),
         web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
         web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
         web.patch("/api/agents/{session_id}", patch_agent),

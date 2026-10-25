@@ -343,7 +343,72 @@ def test_view(env):
                     "last_error": None, "quote_problems": []}
     (env.brain / "_voice" / "quotes.md").write_text("## nope\n", encoding="utf-8")
     assert env.a.view()["quote_problems"] == ["line 1: unknown pool 'nope' (known: agent_finished, agent_waiting, "
-                                              "reminder, workout, readback, catch_up)"]
+                                              "reminder, workout, readback, catch_up, reply_tasks, reply_filed, "
+                                              "reply_found, reply_nothing)"]
+
+
+# -- replies after the one input (VI4) -----------------------------------------------------------------
+def test_a_reply_speaks_its_line_and_returns_it(env):
+    assert env.a.reply("tasks", 2) == "I pulled out two possible tasks."
+    assert env.a.reply("found", 3) == "I found three entries on that."
+    assert env.sink.said == [["I pulled out two possible tasks."], ["I found three entries on that."]]
+    assert env.sink.lines[0].event == "reply"
+
+
+def test_a_reply_with_sass_carries_its_pools_quip_in_the_speech_and_the_caption(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text(
+        "## reply_tasks\nThat's {count}. Go confirm.\n## reply_nothing\nNo {count} here.\nNot a word.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    caption = env.a.reply("tasks", 2, 1)
+    assert caption == "I pulled out two possible tasks. And one more thing to confirm. That's two. Go confirm."
+    assert env.sink.said == [["I pulled out two possible tasks. And one more thing to confirm.", "That's two. Go confirm."]]
+    env.now.t = T0 + timedelta(minutes=2)
+    assert env.a.reply("nothing") == "Nothing on that. Not a word."  # {count} has no value: skipped
+    env.now.t = T0 + timedelta(minutes=2, seconds=30)
+    assert env.a.reply("nothing") == "Nothing on that."  # the quip cooldown holds, as for every line
+    env.now.t = T0 + timedelta(minutes=10)
+    assert env.a.reply("failed") == "That one didn't file. Your words are safe in the log."  # no pool, no quip
+
+
+def test_the_tasks_quip_says_it_for_one_and_them_for_more(env):
+    (env.brain / "_voice").mkdir()
+    (env.brain / "_voice" / "quotes.md").write_text("## reply_tasks\nLook {them} over.\n", encoding="utf-8")
+    env.settings["voice_sass"] = True
+    assert env.a.reply("tasks", 1) == "I pulled out one possible task. Look it over."
+    env.now.t = T0 + timedelta(minutes=2)
+    assert env.a.reply("tasks", 3) == "I pulled out three possible tasks. Look them over."
+
+
+@pytest.mark.parametrize("gate", ["off", "switch", "quiet", "paused", "not installed"])
+def test_every_gate_silences_a_reply_but_the_caption_stays(env, gate):
+    ensure_quotes(env.brain)
+    env.settings["voice_sass"] = True
+    if gate == "off":
+        env.settings["voice_enabled"] = False
+    elif gate == "switch":
+        env.settings["voice_events"] = {**env.settings["voice_events"], "reply": False}
+    elif gate == "quiet":
+        env.now.t = T0.replace(hour=23, minute=30)
+    elif gate == "paused":
+        env.a.pause(60)
+    else:
+        env.installed = False
+    caption = env.a.reply("found", 1)
+    assert caption.startswith("I found one entry on that. ") and len(caption) > len("I found one entry on that. ")
+    assert env.sink.said == []
+
+
+def test_sass_off_means_the_info_alone(env):
+    ensure_quotes(env.brain)
+    assert env.a.reply("tasks", 1) == "I pulled out one possible task."
+    assert env.sink.said == [["I pulled out one possible task."]]
+
+
+def test_a_broken_reply_never_raises(env, monkeypatch):
+    monkeypatch.setattr(v, "load_quotes", lambda brain: (_ for _ in ()).throw(OSError("gone")))
+    env.settings["voice_sass"] = True
+    assert env.a.reply("filed", 0) == "Filed it. Nothing to confirm."
 
 
 def test_a_broken_state_file_is_ignored(env):
@@ -454,6 +519,45 @@ def test_speaker_stop_empties_the_queue_and_cuts_the_line(tmp_path):
         sp.stop()
         assert _wait(lambda: sp.spoken == 1, 10), _log(tmp_path)
         assert [s["parts"] for s in _said(tmp_path)] == [["long"]] and _said(tmp_path)[0]["stopped"]
+    finally:
+        sp.close()
+
+
+def test_speaker_says_when_a_line_sounds_and_when_it_ends(tmp_path):
+    events = []
+    sp = _speaker(tmp_path, on_event=lambda k, d: events.append((k, d)))
+    try:
+        sp.say(_line("one"))
+        sp.say(_line("FAIL-SYNTH"))  # never sounds: no events
+        assert _wait(lambda: sp.spoken == 1 and sp.last_error is not None), _log(tmp_path)
+        assert events == [("voice.speaking", {"env": [0] * 25, "frame_ms": 40}), ("voice.quiet", {})]
+    finally:
+        sp.close()
+
+
+def test_speaker_goes_quiet_when_a_line_is_stopped_or_the_worker_dies(tmp_path):
+    events = []
+    sp = _speaker(tmp_path, delay="20", on_event=lambda k, d: events.append(k))
+    try:
+        sp.say(_line("long"))
+        assert _wait(lambda: events == ["voice.speaking"]), _log(tmp_path)
+        sp.stop()
+        assert _wait(lambda: events == ["voice.speaking", "voice.quiet"], 10), _log(tmp_path)
+        sp.say(_line("killed"))
+        assert _wait(lambda: events.count("voice.speaking") == 2), _log(tmp_path)
+        sp._kill()
+        assert _wait(lambda: events.count("voice.quiet") == 2, 10), _log(tmp_path)
+    finally:
+        sp.close()
+
+
+def test_a_broken_event_handler_never_stops_the_voice(tmp_path):
+    def boom(k, d):
+        raise RuntimeError("nope")
+    sp = _speaker(tmp_path, on_event=boom)
+    try:
+        sp.say(_line("one"))
+        assert _wait(lambda: sp.spoken == 1) and sp.last_error is None, _log(tmp_path)
     finally:
         sp.close()
 

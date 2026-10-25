@@ -21,7 +21,7 @@ def _worker(tmp_path, delay="0", extra_env=None):
                             text=True, encoding="utf-8")
 
 
-def _reply(p, timeout=20):
+def _message(p, timeout=20):
     """One protocol line from the worker, or a failure carrying its stderr: never a hung test."""
     import queue
     import threading
@@ -35,6 +35,14 @@ def _reply(p, timeout=20):
     if not line:
         pytest.fail(f"the worker exited ({p.wait(5)}); its stderr:\n{p.stderr.read()}")
     return json.loads(line)
+
+
+def _reply(p, timeout=20, events=None):
+    """The next final reply; the "playing" events before it go to `events` when given."""
+    while "event" in (msg := _message(p, timeout)):
+        if events is not None:
+            events.append(msg)
+    return msg
 
 
 def _send(p, obj):
@@ -68,13 +76,26 @@ def test_say_replies_ok_and_plays_in_order(tmp_path):
     assert not list((tmp_path / "state" / "voice").glob("*.wav"))  # the temp clip is gone
 
 
+def test_each_line_says_it_is_playing_with_its_loudness_first(tmp_path):
+    p = _worker(tmp_path)
+    try:
+        _send(p, _say("a", "Robot arm has finished.", "Splendid."))
+        playing = _message(p)
+        assert _message(p) == {"id": "a", "ok": True}
+    finally:
+        p.stdin.close()
+        p.wait(10)
+    # the fake engine's two seconds of silence: 50 frames of 40 ms, all quiet
+    assert playing == {"id": "a", "event": "playing", "frame_ms": 40, "env": [0] * 50}
+
+
 def test_a_failing_line_is_reported_and_the_worker_carries_on(tmp_path):
     p = _worker(tmp_path)
     try:
         _send(p, _say("bad", "FAIL-SYNTH"))
         p.stdin.write("not json\n[1,2]\n")
         _send(p, _say("good", "Fine."))
-        bad = _reply(p)
+        bad = _message(p)  # it never got as far as playing
         assert bad["id"] == "bad" and bad["ok"] is False and "fake synthesis failure" in bad["error"]
         assert _reply(p) == {"id": "good", "ok": True}
     finally:
@@ -133,6 +154,19 @@ def test_to_wav_scales_by_volume(tmp_path):
         assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (vw.SAMPLE_RATE, 1, 2)
         first = int.from_bytes(w.readframes(1), "little", signed=True)
     assert abs(first - 0.25 * 32767) < 2
+
+
+def test_envelope_follows_the_loudness_frame_by_frame():
+    import numpy as np
+    sr = vw.SAMPLE_RATE
+    assert vw.envelope(np.zeros(sr, dtype=np.float32)) == [0] * 25
+    assert vw.envelope(np.zeros(0, dtype=np.float32)) == []
+    assert len(vw.envelope(np.zeros(sr + 1, dtype=np.float32))) == 26  # a partial last frame counts
+    line = _speechlike(-20, 2.0)  # half a second on, half off
+    env = vw.envelope(vw.prepare(line, 80))
+    assert len(env) == 50 and max(env) == 100 and all(0 <= x <= 100 for x in env)
+    assert min(env[2:10]) > 90 and max(env[14:24]) == 0  # voiced, then the pause
+    assert vw.envelope(vw.prepare(line, 0)) == [0] * 50  # volume 0 is silence
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Linux players")
@@ -248,12 +282,13 @@ def test_a_stop_during_synthesis_cancels_the_line(tmp_path):
     wr.write(json.dumps(_say("b", "After the stop.")) + "\n")
     wr.flush()
     deadline = time.monotonic() + 10
-    while out.getvalue().count("\n") < 2 and time.monotonic() < deadline:
+    while out.getvalue().count('"ok"') < 2 and time.monotonic() < deadline:
         time.sleep(0.05)
     wr.close()
     assert done.wait(10)
     replies = [json.loads(x) for x in out.getvalue().splitlines()]
-    assert replies == [{"id": "a", "ok": True}, {"id": "b", "ok": True}]
+    assert [r for r in replies if "event" not in r] == [{"id": "a", "ok": True}, {"id": "b", "ok": True}]
+    assert [r["id"] for r in replies if "event" in r] == ["b"]  # the dot never moves for the cut line
     assert played.read_text().count("x") == 1  # only the line after the stop played
 
 
@@ -399,7 +434,7 @@ def test_serve_ducks_around_each_line_with_the_request_level(tmp_path):
     wr.write(json.dumps({**_say("a", "One."), "boost": True, "duck_to": 25}) + "\n")
     wr.flush()
     deadline = time.monotonic() + 10
-    while '"id": "a"' not in out.getvalue() and time.monotonic() < deadline:
+    while '"ok"' not in out.getvalue() and time.monotonic() < deadline:
         time.sleep(0.05)
     wr.close()
     assert done.wait(10)

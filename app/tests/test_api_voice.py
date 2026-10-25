@@ -1,4 +1,5 @@
 """The voice in the hub, end to end through the API, with the real worker process in fake mode."""
+import asyncio
 import json
 import os
 import time
@@ -7,8 +8,11 @@ from pathlib import Path
 import pytest
 
 from atlas import voice_files as vf
+from atlas.claude_runner import ClaudeError
 from atlas.rootguard import RootStatus
 from atlas.server import create_app
+from tests.fakes import FakeRunner
+from tests.test_filing import GOOD_RESULT
 from tests.test_server import MAP, make_runner
 
 APP = Path(__file__).resolve().parents[1]
@@ -154,3 +158,117 @@ async def test_a_readonly_root_has_no_voice(aiohttp_client, paths):
     v = await (await c.get("/api/voice")).json()
     assert v["available"] is False
     assert (await c.post("/api/voice/pause", json={"minutes": 5})).status == 503
+
+
+# -- ATLAS's replies after the one input (VI4) ---------------------------------------------------------
+def _record(app):
+    sent, original = [], app["broadcast"]
+
+    async def record(type_, data):
+        sent.append((type_, data))
+        await original(type_, data)
+    app["broadcast"] = record
+    return sent
+
+
+def _replies(sent):
+    return [d for k, d in sent if k == "atlas.reply"]
+
+
+async def test_a_note_from_the_one_input_gets_a_reply_once_it_is_filed(client, paths, said):
+    _install(paths)
+    app = client.server.app
+    sent = _record(app)
+    r = await client.post("/api/entries", json={"text": "check the wrist servo", "source": "pc", "reply": True})
+    eid = (await r.json())["entry_id"]
+    assert eid in app["worker"].replies
+    await app["worker"].file_entry(eid)
+    (reply,) = _replies(sent)
+    assert reply["kind"] == "tasks" and reply["entry_id"] == eid
+    assert reply["text"].startswith("I pulled out one possible task. ")  # sass is on by default: a quip follows
+    line = _lines(said)[0]
+    assert line["parts"][0] == "I pulled out one possible task." and " ".join(line["parts"]) == reply["text"]
+    assert "wrist servo" not in json.dumps(line)  # never the proposal's text
+    await app["worker"].file_entry(eid)  # a later re-run nobody asked to hear about
+    assert len(_replies(sent)) == 1 and eid not in app["worker"].replies
+
+
+async def test_a_capture_without_the_flag_and_a_restarts_requeue_stay_quiet(client, paths):
+    app = client.server.app
+    sent = _record(app)
+    eid = (await (await client.post("/api/entries", json={"text": "x", "source": "pc"})).json())["entry_id"]
+    await app["worker"].file_entry(eid)
+    assert _replies(sent) == [] and app["worker"].replies == set()
+    assert eid not in await asyncio.to_thread(app["worker"].requeue_unfinished) and app["worker"].replies == set()
+
+
+async def test_retry_replies_and_a_failed_filing_says_the_words_are_safe(client, paths):
+    app = client.server.app
+    sent = _record(app)
+    eid = (await (await client.post("/api/entries", json={"text": "x", "source": "pc"})).json())["entry_id"]
+    app["worker"].runner = FakeRunner(raise_error=ClaudeError("boom"))
+    await app["worker"].file_entry(eid)  # no flag: it fails quietly
+    assert _replies(sent) == []
+    assert (await client.post(f"/api/filings/{eid}/retry", json={})).status == 202
+    await app["worker"].file_entry(eid)
+    assert [(r["kind"], r["text"]) for r in _replies(sent)] == [
+        ("failed", "That one didn't file. Your words are safe in the log.")]
+
+
+async def test_a_filing_with_no_tasks_says_it_is_filed(client, paths):
+    app = client.server.app
+    sent = _record(app)
+    app["worker"].runner = FakeRunner(json_result={**GOOD_RESULT, "items": []})
+    await client.put("/api/settings", json={"voice_sass": False})
+    r = await client.post("/api/entries", json={"text": "a thought", "source": "pc", "reply": True})
+    await app["worker"].file_entry((await r.json())["entry_id"])
+    assert [(r["kind"], r["text"]) for r in _replies(sent)] == [("filed", "Filed it. Nothing to confirm.")]
+
+
+async def test_a_question_from_the_one_input_gets_a_reply_event_and_a_broadcast(client, paths, said):
+    _install(paths)
+    app = client.server.app
+    sent = _record(app)
+    await client.put("/api/settings", json={"voice_sass": False})
+    await client.post("/api/entries", json={"text": "the wrist servo buzzes", "source": "pc"})
+    body = await (await client.get("/api/ask", params={"q": "wrist servo", "reply": "1"})).text()
+    assert body.index("event: delta") < body.index("event: reply") < body.index("event: done")
+    assert 'event: reply\ndata: "I found one entry on that."' in body
+    assert _replies(sent) == [{"kind": "found", "text": "I found one entry on that.", "entry_id": None}]
+    assert _lines(said)[0]["parts"] == ["I found one entry on that."]
+    body = await (await client.get("/api/ask", params={"q": "zebra", "reply": "1"})).text()
+    assert 'event: reply\ndata: "Nothing on that."' in body
+    body = await (await client.get("/api/ask", params={"q": "wrist servo"})).text()  # the old Ask: no reply
+    assert "event: reply" not in body and len(_replies(sent)) == 2
+
+
+async def test_no_reply_after_an_answer_that_failed(aiohttp_client, paths):
+    app = create_app(paths, runner=FakeRunner(raise_error=ClaudeError("boom")), start_workers=False)
+    c = await aiohttp_client(app)
+    await c.post("/api/setup", json={"map": MAP})
+    sent = _record(app)
+    await c.post("/api/entries", json={"text": "the wrist servo buzzes", "source": "pc"})
+    body = await (await c.get("/api/ask", params={"q": "wrist", "reply": "1"})).text()
+    assert "event: error" in body and "event: reply" not in body and _replies(sent) == []
+
+
+async def test_a_read_only_root_still_captions_the_plain_line(client):
+    from atlas.routes import atlas_reply
+    app = client.server.app
+    sent = _record(app)
+    app["voice"] = None
+    assert await atlas_reply(app, "found", 2) == "I found two entries on that."
+    assert _replies(sent) == [{"kind": "found", "text": "I found two entries on that.", "entry_id": None}]
+
+
+async def test_the_page_hears_when_a_line_sounds_and_ends(client, paths):
+    _install(paths)
+    sent = _record(client.server.app)
+    assert (await client.post("/api/voice/sample", json={})).status == 204
+    deadline = time.monotonic() + 15
+    while "voice.quiet" not in [k for k, _ in sent] and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    kinds = [k for k, _ in sent if k.startswith("voice.")]
+    assert kinds[:2] == ["voice.speaking", "voice.quiet"]
+    speaking = next(d for k, d in sent if k == "voice.speaking")
+    assert speaking["frame_ms"] == 40 and len(speaking["env"]) == 50  # the sample's two parts, a second each

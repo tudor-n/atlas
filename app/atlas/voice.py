@@ -1,7 +1,8 @@
 """The voice (phase 4 design §3–§4): when to speak, what, and the queue in front of the worker.
 
 `Announcer` decides. It takes agent transitions (from AgentTracker, in a worker thread), the
-reminder tick (every 30 s) and the tablet's readbacks, runs every line through the gates (on, the
+reminder tick (every 30 s), the tablet's readbacks and the one input's replies (`reply`: the line
+comes back as the screen's caption too), runs every line through the gates (on, the
 files installed, the event ticked, not quiet hours, not paused, not a repeat), merges lines of one
 kind that arrive within a few seconds, adds a quip, and hands the result to `Speaker`.
 
@@ -28,7 +29,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from . import voice_lines as vl
-from .quotes import QuotePicker, load_quotes
+from .quotes import POOLS, QuotePicker, load_quotes
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +254,35 @@ class Announcer:
         with self._lock:
             self._submit("readback", vl.readback_answer(answers), {}, None)
 
+    def reply(self, kind: str, count: int = 0, others: int = 0) -> str:
+        """What ATLAS says after the one input filed a note or answered a question (VI4), spoken
+        through the same gates as every line (on, installed, the `reply` switch, quiet hours,
+        pause). Returns the line as composed, quip and all, whether it was spoken or not: the
+        screen shows it as the caption, so the sass survives a silent voice. At once, never merged."""
+        info = vl.reply_line(kind, count, others)
+        try:
+            with self._lock:
+                s, now = self._settings(), self._now()
+                parts = [info]
+                pool_name = f"reply_{kind}"
+                if s["voice_sass"] and pool_name in POOLS:
+                    pool, _ = load_quotes(self._brain)
+                    values = {"count": vl.number_words(count) if count else None,
+                              "them": ("it" if count == 1 else "them") if kind == "tasks" else None}
+                    quip = self._picker.pick(pool_name, pool.get(pool_name, []), values, now)
+                    self._state.save()
+                    if quip:
+                        parts.append(quip)
+                files = self._files(s)
+                if files is not None and self._gate("reply", s, now):
+                    line = Line("reply", info, {"line": info}, now, parts=parts)
+                    line.request = _request(parts, s, files)
+                    self._speaker.say(line)
+                return " ".join(parts)
+        except Exception:
+            log.exception("voice: the reply failed")
+            return info
+
     def tick(self) -> None:
         """Every TICK_S: speak the reminders whose time fell in (last tick, now]. The first tick of
         a run is the catch-up: what fell due while the hub was off becomes one line."""
@@ -407,12 +437,16 @@ def worker_command(state: Path) -> list[str]:
 
 
 class Speaker:
-    """One thread in front of the worker process: a bounded queue, one line at a time."""
+    """One thread in front of the worker process: a bounded queue, one line at a time.
+
+    on_event(type, data), from this thread: "voice.speaking" {env, frame_ms} as a line starts to
+    sound (its loudness, for the ATLAS dot), "voice.quiet" {} once it has ended, however it ended."""
 
     def __init__(self, state: Path, *, command: Callable[[], list[str]] | None = None,
                  env: dict | None = None, now: Callable[[], datetime] = datetime.now,
-                 idle_s: float = IDLE_S, reply_timeout_s: float = REPLY_TIMEOUT_S):
-        self._state, self._now = Path(state), now
+                 idle_s: float = IDLE_S, reply_timeout_s: float = REPLY_TIMEOUT_S,
+                 on_event: Callable[[str, dict], None] | None = None):
+        self._state, self._now, self._on_event = Path(state), now, on_event
         self._command = command or (lambda: worker_command(self._state))
         self._env, self._idle_s, self._reply_timeout_s = env, idle_s, reply_timeout_s
         self._lines: deque[Line] = deque()
@@ -494,23 +528,43 @@ class Speaker:
         if not sent:
             self._kill()
             raise RuntimeError("the voice worker stopped")
-        while True:
-            try:
-                reply = self._replies.get(timeout=self._reply_timeout_s)
-            except queue.Empty:
-                self._kill()
-                raise RuntimeError("the voice worker didn't answer in time") from None
-            if reply is None:
-                self._kill()
-                raise RuntimeError("the voice worker stopped")
-            if reply.get("id") != rid:
-                continue  # a late reply to a line cut short earlier
-            if reply.get("ok"):
-                self.last_error = None
-                self.spoken += 1
-            else:
-                self.last_error = str(reply.get("error") or "unknown error")
+        speaking = False
+        try:
+            while True:
+                try:
+                    reply = self._replies.get(timeout=self._reply_timeout_s)
+                except queue.Empty:
+                    self._kill()
+                    raise RuntimeError("the voice worker didn't answer in time") from None
+                if reply is None:
+                    self._kill()
+                    raise RuntimeError("the voice worker stopped")
+                if reply.get("id") != rid:
+                    continue  # a late reply to a line cut short earlier
+                if reply.get("event") == "playing" and "ok" not in reply:  # not the end: it starts to sound
+                    env = reply.get("env")
+                    speaking = True
+                    self._emit("voice.speaking", {
+                        "env": [int(x) for x in env if isinstance(x, (int, float))] if isinstance(env, list) else [],
+                        "frame_ms": reply.get("frame_ms") if isinstance(reply.get("frame_ms"), int) else 40})
+                    continue
+                if reply.get("ok"):
+                    self.last_error = None
+                    self.spoken += 1
+                else:
+                    self.last_error = str(reply.get("error") or "unknown error")
+                return
+        finally:
+            if speaking:  # ended, stopped, or the worker gone: the dot settles
+                self._emit("voice.quiet", {})
+
+    def _emit(self, type_: str, data: dict) -> None:
+        if self._on_event is None:
             return
+        try:
+            self._on_event(type_, data)
+        except Exception:
+            log.exception("voice: the %s event failed", type_)
 
     def _ensure_worker(self) -> None:
         if self._proc and self._proc.poll() is None:

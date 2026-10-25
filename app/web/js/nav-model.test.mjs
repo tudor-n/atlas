@@ -20,7 +20,8 @@ test('every route the widget can send parses and lights its tab', () => {
     ['#/project/robotarm', 'project', 'robotarm', 'browse'],
     ['#/project/my-course-2', 'project', 'my-course-2', 'browse'],
     ['#/settings/voice', 'settings', 'voice', 'settings'],
-    ['#/ask', 'ask', null, 'ask'],
+    ['#/atlas', 'atlas', null, 'atlas'],
+    ['#/ask', 'ask', null, 'atlas'],  // the old Ask links open ATLAS
     ['#/journal', 'journal', null, 'journal'],
     ['#/tablet', 'tablet', null, 'tablet'],
     ['#/setup', 'setup', null, null],
@@ -58,9 +59,9 @@ test('parse edge cases match the old router', () => {
 });
 
 test('tabs, keys and Settings', () => {
-  assert.deepEqual(TABS.map((x) => x.id), ['today', 'ask', 'journal', 'browse', 'agents', 'tablet']);
+  assert.deepEqual(TABS.map((x) => x.id), ['today', 'atlas', 'journal', 'browse', 'agents', 'tablet']);
   assert.deepEqual(TABS.map((x) => x.key), ['1', '2', '3', '4', '5', '6']);
-  assert.deepEqual(TABS.map((x) => x.label), ['TODAY', 'ASK', 'JOURNAL', 'BROWSE', 'AGENTS', 'TABLET']);
+  assert.deepEqual(TABS.map((x) => x.label), ['TODAY', 'ATLAS', 'JOURNAL', 'BROWSE', 'AGENTS', 'TABLET']);
   assert.deepEqual(SETTINGS, { id: 'settings', label: 'SETTINGS', key: '0' });
   assert.equal(tabByKey('1'), 'today');
   assert.equal(tabByKey('6'), 'tablet');

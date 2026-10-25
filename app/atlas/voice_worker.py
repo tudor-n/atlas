@@ -4,7 +4,9 @@ Run as `python -m atlas voice-worker --state <dir>`. It speaks JSON lines:
   in:  {"op": "say", "id": "…", "parts": ["info", "quip"], "blend": {"bm_george": 0.7, …},
         "speed": 0.95, "volume": 80, "boost": true, "duck_to": 30, "model": "<model file>", "voices": "<voices file>"}
        {"op": "stop"}   stops the line playing now (a "say" waiting behind it still plays)
-  out: {"id": "…", "ok": true} or {"id": "…", "ok": false, "error": "…"}, one per "say"
+  out: {"id": "…", "event": "playing", "frame_ms": 40, "env": [0, 37, 100, …]} just before a line
+       starts to sound: its loudness, one 0–100 value per frame (the ATLAS dot follows it, VI8);
+       then {"id": "…", "ok": true} or {"id": "…", "ok": false, "error": "…"}, one per "say"
 
 It lives in its own process so its model's memory goes when it exits, and so a crash or a missing
 audio device never takes the hub down. Its stdout carries only the protocol: anything a library
@@ -27,6 +29,7 @@ import wave
 from pathlib import Path
 
 SAMPLE_RATE = 24000
+FRAME_MS = 40  # the loudness envelope's step: 25 values a second
 GAP_S = 0.4  # between the info and the quip: the owner's pick (sample C)
 ESPEAK_PATH_MAX = 159  # espeak-ng keeps its data path in a 160-byte buffer and silently cuts it
 LINUX_PLAYERS = (("pw-play",), ("paplay",), ("aplay", "-q"))
@@ -108,13 +111,17 @@ def soft_limit(x):
     return np.where(a > LIMIT_KNEE, np.sign(x) * bent, x).astype(np.float32)
 
 
-def to_wav(path: Path, samples, volume: int, boosted: bool = False) -> float:
-    """Write mono 16-bit PCM; returns the length in seconds. With `boosted`, the line is first
-    evened out (`boost`); volume 0–100 then scales the samples."""
+def prepare(samples, volume: int, boosted: bool = False):
+    """The samples as they will sound: with `boosted`, first evened out (`boost`); volume 0–100
+    then scales them, clipped to ±1."""
     import numpy as np
     if boosted:
         samples = boost(samples)
-    pcm = np.clip(np.asarray(samples, dtype=np.float32) * (volume / 100.0), -1.0, 1.0)
+    return np.clip(np.asarray(samples, dtype=np.float32) * (volume / 100.0), -1.0, 1.0)
+
+
+def write_wav(path: Path, pcm) -> float:
+    """Write mono 16-bit PCM; returns the length in seconds."""
     data = (pcm * 32767).astype("<i2").tobytes()
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
@@ -122,6 +129,28 @@ def to_wav(path: Path, samples, volume: int, boosted: bool = False) -> float:
         w.setframerate(SAMPLE_RATE)
         w.writeframes(data)
     return len(pcm) / SAMPLE_RATE
+
+
+def to_wav(path: Path, samples, volume: int, boosted: bool = False) -> float:
+    return write_wav(path, prepare(samples, volume, boosted))
+
+
+def envelope(pcm, frame_ms: int = FRAME_MS) -> list[int]:
+    """The line's loudness, one 0–100 value per frame: each frame's RMS against the loudest frame's.
+    Silence (or volume 0) is all zeros. The ATLAS dot grows and shrinks with it (VI8)."""
+    import numpy as np
+    pcm = np.asarray(pcm, dtype=np.float32)
+    n = max(1, SAMPLE_RATE * frame_ms // 1000)
+    frames = -(-len(pcm) // n)
+    if not frames:
+        return []
+    padded = np.zeros(frames * n, dtype=np.float32)
+    padded[:len(pcm)] = pcm
+    rms = np.sqrt(np.mean(padded.reshape(frames, n) ** 2, axis=1))
+    peak = float(rms.max())
+    if not peak > 1e-6:
+        return [0] * frames
+    return [int(v) for v in np.rint(np.clip(rms / peak * 100, 0, 100))]
 
 
 class Ducker:
@@ -429,10 +458,13 @@ def serve(state: Path, inp, out, *, engine=None, player=None, ducker=None) -> in
                     player._req = req
                 if not player.cancelled(gen):
                     samples = engine.synth(req)
-                    seconds = to_wav(wav, samples, int(req.get("volume", 80)), bool(req.get("boost", False)))
+                    pcm = prepare(samples, int(req.get("volume", 80)), bool(req.get("boost", False)))
+                    seconds = write_wav(wav, pcm)
                     if seconds > 0 and not math.isnan(seconds):
                         lowered = ducker.duck(req.get("duck_to", 100))
                         try:
+                            if not player.cancelled(gen):  # the dot moves only for a line that sounds
+                                reply({"id": rid, "event": "playing", "frame_ms": FRAME_MS, "env": envelope(pcm)})
                             player.play(wav, seconds, gen)
                         finally:
                             ducker.restore(lowered)

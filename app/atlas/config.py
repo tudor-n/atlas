@@ -27,7 +27,9 @@ DEFAULT_SETTINGS: dict = {
     # Phase 4: the voice. Inert until the voice files are downloaded (Settings → Voice). The blend,
     # speed and quote styles are the owner's: Atlas's voice (`atlas_jv2`), British English.
     "voice_enabled": True, "voice_sass": True, "voice_sass_readback": False,
-    "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True},
+    # `reply` (voice-input decisions VI4): what ATLAS says after the one input files a note or answers.
+    "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True,
+                     "reply": True},
     "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
     "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
     # Reminders whose text has one of these (whole words, any case) are workouts: "Workout time."
@@ -46,7 +48,7 @@ DEFAULT_SETTINGS: dict = {
     "voice_boost": True, "voice_duck_to": 30,
 }
 
-VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback")
+VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback", "reply")
 VOICE_MODELS: tuple[str, ...] = ("int8", "fp32")
 # The English voices in voices-v1.0.bin (a = American, b = British; f/m): the blend editor's list.
 VOICE_IDS: tuple[str, ...] = (
@@ -228,6 +230,11 @@ def load_settings(paths: Paths, problems: list | None = None) -> dict:
     for key, value in stored.items():
         if key not in DEFAULT_SETTINGS:
             continue
+        if key == "voice_events" and isinstance(value, dict):
+            # Saved by another build (VI5): one from before an event existed lacks its switch, which
+            # starts at its default; one from after has a switch this build doesn't know, which is left
+            # out. Either way the owner's other switches stand, instead of the whole dict failing.
+            value = {**DEFAULT_SETTINGS["voice_events"], **{k: v for k, v in value.items() if k in VOICE_EVENTS}}
         try:
             validate_setting(key, value)
         except ValueError as e:

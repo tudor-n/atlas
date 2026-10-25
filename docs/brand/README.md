@@ -15,6 +15,7 @@ Rules from the handoff, as the code applies them:
   `currentColor`, the knockout parts (`.ks` strokes, `.kf` fills) take `--mk-ground`, which a
   pressed (white) cell sets to white. The tablet's pressed ROBOT tile sets them to `#262626`.
 - **ATLAS blue `#3ec7ff` (`--atlas`) is only ever the centre node.** It is not a UI colour.
+  The ATLAS screen's talking dot is that centre node on its own, without the ring and squares (voice-input decisions VI8).
 - **Top-bar lockup:** the 26 px mark, a 10 px gap, the wordmark in mono 600 13 px tracked .14em,
   with -.14em right margin to cancel the trailing tracking. Below 1100 px the app shows the mark alone.
 - **App icons:** `app/desktop/src-tauri/icons/` are rendered from `atlas-icon-dark.svg` with the

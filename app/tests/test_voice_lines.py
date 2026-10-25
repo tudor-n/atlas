@@ -105,8 +105,28 @@ def test_lines_have_no_colons_or_dashes_between_words():
     lines = [v.agent_waiting_line("ATLAS", "permission_prompt"), v.agent_finished_line("x", 4000),
              v.reminder_line("Pay rent", "2026-10-24T09:00", now), v.catch_up_line(2),
              v.readback_answer({0: "3 mm", 1: "4 mm"})]
+    lines += [v.reply_line(k, n, o) for k in v.REPLY_KINDS for n in (0, 1, 3) for o in (0, 1, 2)]
     for line in lines:
         assert ":" not in line and " - " not in line and "—" not in line
+
+
+def test_reply_lines():
+    """What ATLAS says after the one input (VI4): counts in words, fixed phrases, full stops."""
+    assert v.reply_line("tasks", 1) == "I pulled out one possible task."
+    assert v.reply_line("tasks", 2) == "I pulled out two possible tasks."
+    assert v.reply_line("tasks", 2, 1) == "I pulled out two possible tasks. And one more thing to confirm."
+    assert v.reply_line("tasks", 1, 3) == "I pulled out one possible task. And three more things to confirm."
+    assert v.reply_line("filed", 0) == "Filed it. Nothing to confirm."
+    assert v.reply_line("filed", 1) == "Filed it. One thing to confirm."
+    assert v.reply_line("filed", 3) == "Filed it. Three things to confirm."
+    assert v.reply_line("found", 1) == "I found one entry on that."
+    assert v.reply_line("found", 12) == "I found twelve entries on that."
+    assert v.reply_line("nothing") == "Nothing on that."
+    assert v.reply_line("failed") == "That one didn't file. Your words are safe in the log."
+    for k in v.REPLY_KINDS:
+        assert v.reply_line(k, 2, 2).endswith(".") and not any(c.isdigit() for c in v.reply_line(k, 21, 4))
+    with pytest.raises(ValueError):
+        v.reply_line("bogus")
 
 
 def test_is_workout_matches_whole_words_and_phrases_any_case():

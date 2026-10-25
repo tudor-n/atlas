@@ -33,7 +33,9 @@ body.widget { font: 400 13px/1.35 var(--sans); color: var(--text); overflow: hid
 /* -- the body: capture, status, quiet notes, tiles, popup ---------------------------------- */
 .wbody { border-top: 1px solid var(--line); }
 .wcapbox { padding: 12px 12px 0; }
-#w .wcap { display: block; width: 100%; height: var(--h40); padding: 0 12px; font-size: 14px; }
+.wcaprow { display: flex; gap: 8px; }
+#w .wcap { display: block; flex: 1 1 auto; min-width: 0; width: 100%; height: var(--h40); padding: 0 12px; font-size: 14px; }
+.wcaprow .seg { flex: none; }  /* NOTE | ASK (voice-input decisions VI1) */
 .wstat { min-height: 28px; padding: 7px 0 5px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--green); }
 .wstat.err { color: var(--err); }
 .wnotes { padding-bottom: 10px; font-size: 11px; line-height: 15px; color: var(--dim); overflow-wrap: anywhere; }

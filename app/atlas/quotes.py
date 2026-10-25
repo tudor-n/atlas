@@ -13,8 +13,9 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up")
-PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day")
+POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up",
+                          "reply_tasks", "reply_filed", "reply_found", "reply_nothing")
+PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day", "them")
 COOLDOWN = timedelta(seconds=60)  # after a quip, lines within this play without one
 REL_PATH = "_voice/quotes.md"
 _FIELD = re.compile(r"\{([^{}]*)\}")
@@ -24,11 +25,12 @@ SEED = """\
 #
 # Each "## name" heading starts a pool, one per kind of line:
 #   agent_finished, agent_waiting, reminder, workout (reminders that look like a workout; when it's
-#   empty they use reminder), readback (sass on readbacks is off by default), catch_up
+#   empty they use reminder), readback (sass on readbacks is off by default), catch_up, and the
+#   replies after you write or ask: reply_tasks, reply_filed, reply_found, reply_nothing
 # Then one quote per line. A quote is spoken right after the information, as its own short clip.
 # Lines starting with # are comments. Blank lines don't matter.
 #
-# Placeholders, filled with real values: {project} {duration} {count} {text} {time_of_day}
+# Placeholders, filled with real values: {project} {duration} {count} {text} {time_of_day} {them}
 # A quote whose placeholder has no value for that line is simply skipped.
 #
 # What sounds natural (from the listening test): short sentences that end in a full stop, no colons
@@ -192,6 +194,64 @@ Oh, you're back. Here's what you missed.
 {count} of them. Just saying.
 Don't panic. It's only a few.
 Took your time, didn't you.
+
+# Replies (added 2026-10-25): what ATLAS adds after you write something down or ask it something.
+# reply_tasks follows "I pulled out two possible tasks.", reply_filed "Filed it. Nothing to confirm."
+# (or "… three things to confirm."), reply_found "I found three entries on that.", and reply_nothing
+# "Nothing on that." {count} is the number in words; {them} is "it" for one task and "them" for more.
+## reply_tasks
+# The sarcastic friend
+Look {them} over and pretend you're not gonna procrastinate {them}.
+Confirm {them}. Putting {them} off is a separate step.
+Have a look. Tasks don't do themselves.
+Go on, confirm {them}. I'll act surprised.
+There you go. Something fresh to avoid.
+Look {them} over before someday happens.
+You said it, not me. Go confirm.
+Check {them}. Then actually start.
+More homework. You're welcome.
+That's {count}. No pressure.
+Look {them} over. The procrastinating can wait.
+Have a look. Future you is watching.
+
+## reply_filed
+# The sarcastic friend
+Tidy. I like it.
+Put away where it belongs. Unlike your socks.
+Another one for the archive.
+Filed. I'm basically a librarian now.
+Safe with me. Unlike your keys.
+Done. That was the easy part.
+Shelved. You can stop thinking about it.
+Neat and tidy. Don't get used to it.
+Look at us being organised.
+In the brain. The one that doesn't forget.
+
+## reply_found
+# The sarcastic friend
+Look over it, will you?
+There you go. Your own words, no less.
+You wrote it. I just remembered it.
+Have a look. I'll wait.
+It was right where you left it.
+Your memory, outsourced. Have a read.
+Read it before you argue with yourself.
+See? You did write it down.
+Have a look. Past you was quite chatty.
+Go on, read it. I didn't make it up.
+
+## reply_nothing
+# The sarcastic friend
+Either you never wrote it down, or you're inventing memories.
+Not a word. Did you dream it?
+Maybe write it down next time.
+I looked. Honestly, I did.
+Blank. Like your notes on the subject.
+Nope. Not a thing.
+If you said it, you said it out loud.
+Try other words. Or write it down this time.
+Your past self let you down.
+I've got nothing. And I've got everything you wrote.
 """
 
 
@@ -333,6 +393,28 @@ def ensure_workout_pool(brain: Path) -> bool:
         return False
     with open(path, "a", encoding="utf-8", newline="\n") as f:
         f.write(("" if text.endswith("\n") else "\n") + "\n" + WORKOUT_SECTION.rstrip("\n") + "\n")
+    return True
+
+
+# The replies' section as the seed has it, for a file seeded before it existed (`ensure_reply_pools`).
+REPLIES_MARKER = "# Replies (added 2026-10-25)"
+REPLIES_SECTION = SEED[SEED.index(REPLIES_MARKER):]
+REPLY_POOLS: tuple[str, ...] = ("reply_tasks", "reply_filed", "reply_found", "reply_nothing")
+
+
+def ensure_reply_pools(brain: Path) -> bool:
+    """Append the replies' section once to a quotes file seeded before it (the owner asked for these
+    lines, 2026-10-25: V-S2's say-so). Never when the file already has any `## reply_…` heading or the
+    section's marker comment, never to a file it can't read. True when it wrote."""
+    path = quotes_path(brain)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if REPLIES_MARKER in text or re.search(r"^##\s*reply_\w+\s*$", text, re.M):
+        return False
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write(("" if text.endswith("\n") else "\n") + "\n" + REPLIES_SECTION.rstrip("\n") + "\n")
     return True
 
 

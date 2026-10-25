@@ -289,15 +289,20 @@ def _prepare_worktree(root: Path, m: BrainMap) -> None:
 class FilingWorker:
     def __init__(self, paths: Paths, store: Store, repo: BrainRepo, runner,
                  broadcast: Callable[[str, dict], Awaitable[None]],
-                 on_commit: Callable[[str | None], None]):
+                 on_commit: Callable[[str | None], None],
+                 on_filed: Callable[[str, bool], Awaitable[None]] | None = None):
         """on_commit(sha) runs (in a thread) after every commit this worker lands on main: it
-        re-indexes the notes that commit touched and schedules a backup (store.commit_hook)."""
+        re-indexes the notes that commit touched and schedules a backup (store.commit_hook).
+        on_filed(entry_id, done) runs once a filing the owner is waiting on ends (an id in
+        `replies`): ATLAS's reply (VI4). A restart's requeue never adds to `replies`."""
         self.paths = paths
         self.store = store
         self.repo = repo
         self.runner = runner
         self.broadcast = broadcast
         self.on_commit = on_commit
+        self.on_filed = on_filed
+        self.replies: set[str] = set()  # entry ids whose filing ATLAS replies to when it ends
         self.queue: asyncio.Queue = asyncio.Queue()
         self._lock = asyncio.Lock()  # one filing or correction at a time
         # entry id -> {"started", "step"} while it is being filed: a card opened mid-filing shows
@@ -481,6 +486,19 @@ class FilingWorker:
                 log.exception("could not export proposals")
         if done:  # outside the try: a broadcast error can't turn a done filing into failed
             await self.broadcast("filing.done", {"entry_id": entry_id})
+        await self.reply_to(entry_id, done)
+
+    async def reply_to(self, entry_id: str, done: bool) -> None:
+        """ATLAS replies once to a filing the owner is waiting on (an id in `replies`)."""
+        if entry_id not in self.replies:
+            return
+        self.replies.discard(entry_id)
+        if self.on_filed is None:
+            return
+        try:  # the filing's outcome is recorded: the reply can't change it
+            await self.on_filed(entry_id, done)
+        except Exception:
+            log.exception("the reply to %s failed", entry_id)
 
     async def correct(self, entry_id: str, text: str, *, queued: bool = False) -> None:
         """Re-file with the owner's correction. queued=True: the caller (the /correct route)

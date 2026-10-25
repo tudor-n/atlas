@@ -646,8 +646,25 @@ async def test_startup_adds_missing_voice_quotes_in_its_own_commit_and_keeps_own
     # The owner's lines stay as they are; a file from before the workout pool gets it once, at the
     # end, in a commit of its own (2026-10-24).
     text = path.read_text(encoding="utf-8")
-    assert text.startswith("## readback\nMine.\n") and "## workout" in text
-    assert "add the voice's workout quips" in repo._run("log", "--format=%s").stdout
+    assert text.startswith("## readback\nMine.\n") and "## workout" in text and "## reply_tasks" in text
+    log = repo._run("log", "--format=%s").stdout
+    assert "add the voice's workout quips" in log and "add the voice's reply quips" in log
     assert not repo.is_dirty()
     await _started(aiohttp_client, app_paths)
     assert path.read_text(encoding="utf-8") == text
+
+
+async def test_the_widgets_question_waits_once_for_the_atlas_screen(ready_client, monkeypatch):
+    """The widget opens a view only by name, so its question waits in the hub (voice-input VI1)."""
+    from atlas import routes
+    take = lambda: ready_client.post("/api/atlas/handoff/take", json={})  # noqa: E731
+    assert (await (await take()).json()) == {"text": None}
+    assert (await ready_client.post("/api/atlas/handoff", json={"text": "  what did I say about the servo  "})).status == 202
+    assert (await (await take()).json()) == {"text": "what did I say about the servo"}
+    assert (await (await take()).json()) == {"text": None}  # taken once
+    for bad in ({}, {"text": " "}, {"text": 3}, {"text": "x" * 4001}):
+        assert (await ready_client.post("/api/atlas/handoff", json=bad)).status == 400
+    assert (await ready_client.post("/api/atlas/handoff", data="x")).status == 415
+    await ready_client.post("/api/atlas/handoff", json={"text": "old"})
+    monkeypatch.setattr(routes, "HANDOFF_S", -1)  # gone stale
+    assert (await (await take()).json()) == {"text": None}
