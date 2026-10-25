@@ -19,7 +19,7 @@ function decode(s) {
 
 export const TABS = [
   { id: 'today', label: 'TODAY', key: '1' },
-  { id: 'ask', label: 'ASK', key: '2' },
+  { id: 'atlas', label: 'ATLAS', key: '2' },  // write or ask: it replaced ASK (voice-input VI1)
   { id: 'journal', label: 'JOURNAL', key: '3' },
   { id: 'browse', label: 'BROWSE', key: '4' },
   { id: 'agents', label: 'AGENTS', key: '5' },
@@ -35,7 +35,7 @@ export function tabByKey(key) {
 }
 
 const TAB_OF = {
-  today: 'today', ask: 'ask', journal: 'journal', tablet: 'tablet',
+  today: 'today', atlas: 'atlas', ask: 'atlas', journal: 'journal', tablet: 'tablet',
   agents: 'agents', usage: 'agents',
   browse: 'browse', people: 'browse', deadlines: 'browse', project: 'browse',
   settings: 'settings',

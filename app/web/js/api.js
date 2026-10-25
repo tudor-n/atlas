@@ -75,11 +75,11 @@ export function onEvent(type, fn) {
   return () => listeners.get(type).delete(fn);
 }
 
-// -- Server-sent events (recall). handlers: {hits, delta, error, done}, each gets the parsed data.
-// Returns a close() function.
+// -- Server-sent events (recall). handlers: {hits, delta, reply, error, done}, each gets the parsed
+// data (`reply`: ATLAS's line after the answer, with ?reply=1). Returns a close() function.
 export function sse(path, handlers) {
   const es = new EventSource(path);
-  for (const name of ['hits', 'delta', 'error', 'done']) {
+  for (const name of ['hits', 'delta', 'reply', 'error', 'done']) {
     es.addEventListener(name, (ev) => {
       if (ev.data === undefined) {  // the browser's own connection error, not a server 'error' event
         if (name === 'error') { es.close(); if (handlers.error) handlers.error('Connection lost'); }

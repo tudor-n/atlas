@@ -54,10 +54,11 @@ test('empty is a note', () => {
   assert.deepEqual(guessIntent(undefined), { intent: 'note', reason: 'empty' });
 });
 
-test("the owner's pick wins over the guess until the field is empty", () => {
+test("the owner's pick wins over the guess", () => {
   assert.equal(shownIntent('did I pay the rent', null), 'ask');
   assert.equal(shownIntent('did I pay the rent', 'note'), 'note');
   assert.equal(shownIntent('buy milk', 'ask'), 'ask');
-  assert.equal(shownIntent('', 'ask'), 'note');
+  assert.equal(shownIntent('', 'ask'), 'ask');  // picked before typing
+  assert.equal(shownIntent('', null), 'note');
   assert.equal(shownIntent('buy milk', 'bogus'), 'note');
 });

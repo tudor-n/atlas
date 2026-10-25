@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -308,6 +309,29 @@ async def reply_to_filing(app: web.Application, entry_id: str, done: bool) -> No
         await atlas_reply(app, "tasks", items, others, entry_id=entry_id)
     else:
         await atlas_reply(app, "filed", others, entry_id=entry_id)
+
+
+# The widget opens a main-window view only by name (the shell lets nothing else into a URL), so a
+# question typed there waits here, in memory, for the ATLAS screen to take it (VI1): the latest one,
+# for HANDOFF_S. Nothing is written, so it works on a read-only root too.
+HANDOFF_S = 120
+
+
+async def post_handoff(request: web.Request) -> web.Response:
+    text = (await body_dict(request)).get("text")
+    if not isinstance(text, str) or not text.strip():
+        return err(400, "the question is blank")
+    if len(text) > 4000:
+        return err(400, "the question is too long")
+    request.app["atlas_handoff"].update(text=text.strip(), at=time.monotonic())
+    return web.json_response({"ok": True}, status=202)
+
+
+async def take_handoff(request: web.Request) -> web.Response:
+    held = request.app["atlas_handoff"]
+    text, at = held.pop("text", None), held.pop("at", 0.0)
+    fresh = text is not None and time.monotonic() - at <= HANDOFF_S
+    return web.json_response({"text": text if fresh else None})
 
 
 # -- handlers: capture and filing --------------------------------------------
@@ -889,7 +913,7 @@ async def reduced_widget(request: web.Request) -> web.Response:
 
 
 # Opening a page writes nothing, so it works in every mode (the widget's "Open in ATLAS").
-_HARMLESS_POSTS = ("/api/open",)
+_HARMLESS_POSTS = ("/api/open", "/api/atlas/handoff", "/api/atlas/handoff/take")  # memory only
 _TABLET_CAPTURE = re.compile(r"/api/tablet/notes|/api/tablet/requests/[^/]+/answer")
 _IGNORED_POSTS = ("/api/hooks/event", "/api/usage")
 
@@ -926,6 +950,7 @@ def add_reduced_routes(app: web.Application) -> None:
 
 
 def add_routes(app: web.Application) -> None:
+    app["atlas_handoff"] = {}  # the widget's question for the ATLAS screen (post_handoff)
     app.add_routes([
         web.get("/", index), web.get("/api/state", state), web.post("/api/setup", setup),
         web.get("/api/map", get_map), web.put("/api/map", put_map),
@@ -943,6 +968,7 @@ def add_routes(app: web.Application) -> None:
         web.get("/api/today", get_today),
         web.get("/api/search", search), web.get("/api/notes", get_notes),
         web.get("/api/ask", ask), web.get("/api/ask/deeper", ask_deeper),
+        web.post("/api/atlas/handoff", post_handoff), web.post("/api/atlas/handoff/take", take_handoff),
         web.post("/api/usage", post_usage), web.get("/api/usage", get_usage),
         web.post("/api/hooks/event", post_hook_event), web.get("/api/agents", get_agents),
         web.patch("/api/agents/{session_id}", patch_agent),

@@ -113,7 +113,10 @@ html, body { height: 100%; overflow: hidden; }
   font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); white-space: normal;
 }
 .cap .msg .err:empty, .cap .msg .st:empty { display: none; }
-.cap > .b { flex: none; min-width: 112px; }  /* SAVE: an outline, white (.pr) only while there is text */
+.cap > .seg { flex: none; }  /* NOTE | ASK: the intent as you type (voice-input decisions VI1) */
+.cap > .b { flex: none; min-width: 112px; }  /* SAVE or ASK: an outline, white (.pr) only while there is text */
+/* the ATLAS screen has its own field: the bar steps aside there (app.js oneInput) */
+.shell.one-input > .cap { display: none; }
 @media (max-width: 1099px) { .cap .msg { flex-basis: 180px; } }
 @media (max-width: 759px) {
   .cap { gap: 8px; padding-left: 12px; }

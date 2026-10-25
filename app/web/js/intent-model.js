@@ -34,8 +34,9 @@ function sentences(s) {
   return s.split(/[.!?]+(?:\s+|$)/).filter((x) => x.trim()).length;
 }
 
-// The switch's state: the owner's pick wins until the field is emptied, else the live guess.
+// The switch's state: the owner's pick wins (the input drops it once the field is emptied), else the
+// live guess. A pick before anything is typed holds too.
 export function shownIntent(text, pinned) {
-  if (!String(text || '').trim()) return 'note';
-  return pinned === 'note' || pinned === 'ask' ? pinned : guessIntent(text).intent;
+  if (pinned === 'note' || pinned === 'ask') return pinned;
+  return guessIntent(text).intent;
 }

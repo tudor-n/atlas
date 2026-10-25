@@ -6,6 +6,8 @@ import { get, post, put, onEvent } from './api.js';
 import { el, clear } from './dom.js';
 import { needsYou, barText, attention, statusStrip, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome } from './widget-model.js';
 import { widgetVoice } from './views/voice-model.js';
+import { shownIntent } from './intent-model.js';
+import { seg } from './components/ui.js';
 
 const WIDTH = 520;
 const OFFLINE = 'ATLAS offline · retrying';
@@ -77,7 +79,18 @@ const hideBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Hid
   hidden: !tauriInvoke(window), onclick: hideWidget }, '–');
 const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, dot, synopsis, voiceBtn, expandBtn, hideBtn);
 
-const capture = el('input', { class: 'wcap', type: 'text', placeholder: 'Write something down, Enter to save', 'aria-label': 'Capture', autocomplete: 'off', onkeydown: onCaptureKey, oninput: () => saveDraft(draftStore(), capture.value) });
+// One of the one input's doors (voice-input decisions VI1): NOTE | ASK follows the intent as you type
+// (a press overrides it until the field is emptied). A note saves here; a question opens ATLAS on it.
+const INTENTS = [{ value: 'note', label: 'NOTE' }, { value: 'ask', label: 'ASK' }];
+let pinned = null;
+const capture = el('input', { class: 'wcap', type: 'text', placeholder: 'Write something down or ask, Enter to send', 'aria-label': 'Capture or ask', autocomplete: 'off', onkeydown: onCaptureKey,
+  oninput: () => { if (!capture.value.trim()) pinned = null; syncIntent(); saveDraft(draftStore(), capture.value); } });
+const pick = seg(INTENTS, 'note', (v) => { pinned = v; syncIntent(); capture.focus(); }, { size: 40, label: 'Note or question' });
+const intent = () => shownIntent(capture.value, pinned);
+function syncIntent() {
+  const now = intent();
+  INTENTS.forEach((o, i) => pick.children[i].setAttribute('aria-pressed', o.value === now ? 'true' : 'false'));
+}
 const captureStatus = el('div', { class: 'wstat', role: 'status' });
 const notes = el('div', { class: 'wnotes', hidden: true });  // quiet warnings (time zone, Fast Startup)
 const listCount = el('span', { class: 'm wn' });
@@ -88,7 +101,7 @@ const openErr = el('div', { class: 'wopen-err err', role: 'alert', hidden: true 
 const footer = el('div', { class: 'wfoot' },
   el('button', { class: 'b h40', type: 'button', 'data-focus': 'open', onclick: () => openInApp(null) }, 'OPEN ATLAS ›'));
 const body = el('div', { class: 'wbody', hidden: true },
-  el('div', { class: 'wcapbox' }, capture, captureStatus, notes), listHead, list, strip, openErr, footer);
+  el('div', { class: 'wcapbox' }, el('div', { class: 'wcaprow' }, capture, pick), captureStatus, notes), listHead, list, strip, openErr, footer);
 root.appendChild(el('div', { class: 'wpanel' }, bar, body));
 
 function setExpanded(on) {
@@ -140,9 +153,23 @@ async function onCaptureKey(ev) {
   const text = capture.value;
   if (!text.trim() || saving) return;
   saving = true;
+  if (intent() === 'ask') {
+    try {  // the hub holds it for the ATLAS screen, which opens on it
+      await post('/api/atlas/handoff', { text });
+      if (capture.value === text) { capture.value = ''; pinned = null; syncIntent(); }
+      saveDraft(draftStore(), capture.value);
+      showStatus('ASKING ATLAS', false);
+      openInApp('atlas');
+    } catch (e) {
+      showStatus(e.message || 'Could not ask', true);
+    } finally {
+      saving = false;
+    }
+    return;
+  }
   try {
-    const res = await post('/api/entries', { text, source: 'widget' });
-    if (capture.value === text) capture.value = '';
+    const res = await post('/api/entries', { text, source: 'widget', reply: true });
+    if (capture.value === text) { capture.value = ''; pinned = null; syncIntent(); }
     saveDraft(draftStore(), capture.value); // cleared, or whatever was typed during the save
     showStatus(res && res.held ? 'SAVED · HELD ON THIS OS' : 'SAVED', false);
     if (res && res.held) scheduleRefresh(); // the banner's held count
@@ -340,6 +367,7 @@ setInterval(() => { if (offline) refresh(); }, 5000);
 const draft = loadDraft(draftStore());
 if (draft) {
   capture.value = draft;
+  syncIntent();
   setExpanded(true);
 }
 refresh();

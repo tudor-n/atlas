@@ -68,7 +68,8 @@ function renderBanner(connectionError) {
 // a cleanup function (called when the user leaves the view). A new view is one module + one line here.
 export const views = {
   today: () => import('./views/today.js'),
-  ask: () => import('./views/ask.js'),
+  atlas: () => import('./views/atlas.js'),
+  ask: () => import('./views/atlas.js'),  // Ask became ATLAS: the old links still land
   journal: () => import('./views/journal.js'),
   tablet: () => import('./views/tablet.js'),
   browse: browseView(null),
@@ -104,6 +105,7 @@ function runCleanup() {
 function renderReduced() {
   runCleanup();
   top.setRoute(null);
+  oneInput(false);
   const d = state.drive || {};
   const n = notice(d.message || "ATLAS's data folder can't be used right now.", { title: 'REDUCED MODE' });
   n.append(
@@ -134,6 +136,7 @@ async function route() {
   }
   runCleanup();
   top.setRoute(r.name);
+  oneInput(name === 'atlas' || name === 'ask');
   const container = clear(viewBox());
   container.scrollTop = 0;
   try {
@@ -150,6 +153,12 @@ async function route() {
   }
 }
 
+// The ATLAS screen has its own write-or-ask field: the capture bar steps aside there, so one input
+// shows at a time (voice-input decisions VI1). It stays everywhere else, and in reduced mode.
+function oneInput(on) {
+  document.getElementById('app').classList.toggle('one-input', on);
+}
+
 // -- Keyboard: Alt+1…6 the tabs, Alt+0 Settings, Alt+C capture -----------------------------------
 // Only Alt combinations, so typing in a field is never interrupted. AltGr (Ctrl+Alt on Windows) is
 // left alone: it types ș ț ă î â.
@@ -158,7 +167,8 @@ function onKey(ev, capture) {
   const isC = ev.code ? ev.code === 'KeyC' : /^c$/i.test(ev.key);
   if (isC) {
     ev.preventDefault();
-    capture.focus();
+    const own = document.getElementById('atl-q');  // on the ATLAS screen, its own field
+    if (own) own.focus(); else capture.focus();
     return;
   }
   if (mode() !== 'full') return;
@@ -187,6 +197,13 @@ function showTrayCard(entryId) {
 }
 
 function startTray(capture) {
+  // The ATLAS screen hands its note over when it moves on (a new note, or the owner leaves).
+  document.addEventListener('atlas:tray', (ev) => {
+    const { entryId, text } = ev.detail || {};
+    if (!entryId) return;
+    mine.set(entryId, text);
+    showTrayCard(entryId);
+  });
   api.onEvent('filing.done', ({ data }) => {
     if (!mine.has(data.entry_id)) return;
     capture.setStatus('Filed');
@@ -208,6 +225,8 @@ async function boot() {
       if (held) refreshState().then(() => { if (reduced()) renderReduced(); });  // the held count
       else showTrayCard(entryId);  // at once: it shows the filing's live progress, then the review
     },
+    // A question typed in the bar: the ATLAS screen answers it (voice-input decisions VI1).
+    onAsk: (text) => { location.hash = `#/atlas?q=${encodeURIComponent(text)}`; },
   });
   startTray(capture);
   document.addEventListener('keydown', (ev) => onKey(ev, capture));

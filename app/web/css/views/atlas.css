@@ -1,0 +1,76 @@
+/* ATLAS view (voice-input decisions VI1–VI9; it replaced Ask, phase 4.5 design §4). The top: the
+   ATLAS dot and its caption, then the write-or-ask bar (a growing field, NOTE | ASK, SAVE or ASK);
+   then a line naming what was done, with the other way; then the body: a note's confirm card, or a
+   question's 360px MATCHES rail and ANSWER pane. The hit rows, citations and note text are styled in
+   journal.css (shared with Journal and Browse); the card in today.css. */
+.vw.atl { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+/* -- the dot and what ATLAS said --------------------------------------------------------------- */
+.atl-top { flex: none; border-bottom: 1px solid var(--line); }
+.atl-me { display: flex; align-items: center; gap: 20px; min-height: 120px; padding: 16px 20px 0; }
+.atl-dot { display: block; flex: none; width: 88px; height: 88px; }
+.atl-dot .hub { fill: var(--atlas); }  /* the logo's centre node on its own: ATLAS blue (brand README) */
+.atl-say { margin: 0; overflow-wrap: anywhere; }
+
+/* -- the write-or-ask bar ---------------------------------------------------------------------- */
+.atl-bar { display: flex; align-items: flex-end; gap: 12px; padding: 16px 20px; }
+.atl-bar textarea {
+  flex: 1 1 auto; min-width: 0; min-height: var(--h56); padding: 16px; font-size: 16px; line-height: 22px;
+  resize: none; overflow-y: auto;
+}
+.atl-bar textarea[rows="1"] { overflow-y: hidden; }
+.atl-bar .seg { flex: none; height: var(--h56); }
+.atl-bar .b.atl-go { flex: none; height: var(--h56); line-height: 54px; min-width: 112px; }
+.atl-err { margin: -8px 20px 12px; font-size: 15px; line-height: 21px; }
+.atl-err:empty { display: none; }
+
+/* -- what was done, and the other way ---------------------------------------------------------- */
+.atl-was {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; min-height: var(--h56);
+  padding: 8px 20px; border-bottom: 1px solid var(--line);
+}
+.atl-hint { font-size: 13px; line-height: 18px; }
+
+/* -- the body ---------------------------------------------------------------------------------- */
+.atl-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.atl-idle { flex: none; }
+.atl-note { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* -- the split below it ---------------------------------------------------------------------- */
+.vw.split.ask-split { flex: 1 1 auto; height: auto; min-height: 0; }
+.ask-split > .rail.ask-rail { width: 360px; }
+.ask-split > .main { display: flex; flex-direction: column; }
+.ask-answer, .ask-note { flex: none; }
+
+/* the section header's right side: the stream's status, a dot and mono 12 dim */
+.ask-st:empty { display: none; }
+
+.ask-a { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-a:empty { display: none; }
+.ask-err { font-size: 15px; line-height: 21px; max-width: 72ch; }
+.ask-err:empty { display: none; }
+.ask-a + .ask-err:not(:empty) { margin-top: 12px; }
+
+/* DIG DEEPER / RETRY and the cost note */
+.ask-act { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.ask-act:empty { display: none; }
+.ask-a:not(:empty) ~ .ask-act, .ask-err:not(:empty) ~ .ask-act { margin-top: 20px; }
+.ask-cost { font-size: 13px; line-height: 18px; }
+
+.ask-deeper { border-top: 1px solid var(--line); }
+
+/* -- the note viewer: ‹ BACK and the ref, then the note ------------------------------------- */
+.ask-note-h {
+  position: sticky; top: 0; display: flex; align-items: center; gap: 16px; min-height: var(--h56);
+  padding: 8px 20px; border-bottom: 1px solid var(--line); background: var(--ground);
+}
+.ask-ref {
+  min-width: 0; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1099px) {
+  .atl-me { min-height: 96px; padding-top: 12px; }
+  .atl-dot { width: 64px; height: 64px; }
+  .atl-bar { padding: 12px 20px; }
+}

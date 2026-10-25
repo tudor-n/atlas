@@ -1,6 +1,6 @@
 """Guard for the phase 4.5 instrument-panel language (design §2, §5) and rule 6: hex colours only (no
 named colours), no shadows, gradients, filters, blending or translucency, nothing loaded from outside
-(CSS, HTML or JS), no motion but the switch knob, no inline styles from HTML or JS, no HTML sinks in
+(CSS, HTML or JS), no motion but the switch knob and the ATLAS dot, no inline styles from HTML or JS, no HTML sinks in
 JS, every /static/ link resolves, and the bundled fonts are served as font/woff2. Each scanner has a
 self-test (test_guard_catches_*) feeding it synthetic violations."""
 import re
@@ -382,6 +382,60 @@ def test_guard_catches_style_writes():
     assert _style_writes("a\nb\n  n.style.top = y") == [(3, "style write")]
 
 
+# -- Motion from JS (phase 4.5 §2, amended by voice-input decisions VI8) ----------------------------
+# Besides the switch knob, one thing moves: the ATLAS dot, which follows the voice while ATLAS speaks.
+# Only its module runs an animation loop, and the only attribute it changes is the circle's radius (the
+# rest is the SVG's one-time setup). The widget's single frame waits for layout before it measures the
+# panel; nothing moves there.
+DOT_JS = "js/components/atlas-dot.js"
+DOT_ATTRS = {"viewBox", "class", "aria-hidden", "focusable", "cx", "cy", "r"}
+FRAME_ALLOW = {DOT_JS: "the ATLAS dot's loop (VI8)",
+               "js/widget.js": "one frame to let layout settle before measuring the panel, not motion"}
+JS_MOTION = [(name, re.compile(p)) for name, p in (
+    ("animation frame", r"\brequestAnimationFrame\b"),
+    ("Web Animations", r"\.\s*animate\s*\(|\bnew\s+(?:Animation|KeyframeEffect)\b|\bgetAnimations\s*\("),
+    ("SVG animation", rf"\bcreateElementNS\s*\([^)]*{_Q}(?:animate\w*|set){_Q}|\bbeginElement\w*\s*\("),
+)]
+
+
+def _js_motion(rel: str, src: str) -> list[tuple[int, str]]:
+    return [(ln, name) for ln, name in _find(JS_MOTION, _strip_js_comments(src))
+            if not (name == "animation frame" and rel in FRAME_ALLOW)]
+
+
+@pytest.mark.parametrize("f", _js_params({}))
+def test_nothing_moves_from_js_but_the_atlas_dot(f):
+    bad = [f"{_rel(f)}:{ln} {name}" for ln, name in _js_motion(_rel(f), f.read_text(encoding="utf-8"))]
+    assert not bad, bad
+
+
+def test_the_atlas_dot_changes_only_its_radius():
+    """The allowance above must have something to allow, and no more: the dot's loop sets r, and its
+    setup only the SVG's static attributes. Its colour is the ATLAS blue, from CSS."""
+    code = _strip_js_comments((WEB / DOT_JS).read_text(encoding="utf-8"))
+    assert "requestAnimationFrame" in code
+    names = (re.findall(rf"\bsetAttribute\s*\(\s*{_Q}([\w:-]+){_Q}", code)
+             + re.findall(rf"\bsetAttributeNS\s*\([^,()]*,\s*{_Q}([\w:-]+){_Q}", code))
+    assert names and set(names) <= DOT_ATTRS, names
+    assert not re.search(r"\bsetAttribute(?:NS)?\s*\(\s*[^'\"`\s]", code)  # no computed attribute names
+    assert "reduced-motion" in code  # it stays still for those who asked
+    css = (WEB / "css" / "views" / "atlas.css").read_text(encoding="utf-8")
+    assert ".atl-dot .hub { fill: var(--atlas); }" in css
+
+
+def test_guard_catches_js_motion():
+    for src in ("requestAnimationFrame(loop)", "window.requestAnimationFrame(f)", "n.animate([{opacity: 0}], 300)",
+                "new KeyframeEffect(n, k, 1)", "new Animation(e)", "n.getAnimations()",
+                "document.createElementNS(SVG, 'animate')", "createElementNS(ns, \"animateTransform\")",
+                "createElementNS(ns, 'set')", "a.beginElement()"):
+        assert _js_motion("js/x.js", src), src
+    for src in ("// requestAnimationFrame(f)", "const animated = false;", "api.post('/api/settings', s)",
+                "createElementNS(ns, 'circle')", "m.set('k', 1)"):
+        assert not _js_motion("js/x.js", src), src
+    assert not _js_motion(DOT_JS, "requestAnimationFrame(tick)")
+    assert _js_motion(DOT_JS, "n.animate([], 1)")  # the dot gets frames, not the other APIs
+
+
 # -- HTML sinks (rule 6): text enters the page only through el()/textContent -------------------------
 HTML_SINKS = [(name, re.compile(p)) for name, p in (
     ("HTML property", r"\b(?:innerHTML|outerHTML|insertAdjacentHTML|createContextualFragment|setHTMLUnsafe|"
@@ -459,6 +513,7 @@ def test_html_loads_nothing_from_outside(f):
 # text as written; nothing here may sit on a line that fetches, imports, connects or assigns src/href.
 JS_URL_ALLOW = {
     ("js/widget.js", "http://www.w3.org/2000/svg"): "SVG namespace for createElementNS",
+    (DOT_JS, "http://www.w3.org/2000/svg"): "SVG namespace for createElementNS",
     ("js/views/tablet-model.js", "http://${s.listening}:${s.port}/tablet"):
         "status text telling the owner the tablet's LAN address; shown, never fetched",
     ("js/views/setup.js", "https://github.com/you/atlas-backup.git"): "placeholder hint in the backup-remote field",
