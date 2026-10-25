@@ -84,12 +84,15 @@ export function mountCapture(root, { onSaved, onAsk }) {
     const text = input.value;
     if (saving || !text.trim()) return;
     if (intent() === 'ask' && onAsk) {
+      error.textContent = '';
+      status.textContent = '';
+      if (onAsk(text.trim()) === false) {  // no ATLAS screen right now (reduced mode): keep the text
+        error.textContent = "Can't ask while ATLAS's data folder is unavailable. Your text is still here; press NOTE to save it.";
+        return;
+      }
       input.value = '';
       pinned = null;
       fit();
-      error.textContent = '';
-      status.textContent = '';
-      onAsk(text.trim());
       return;
     }
     saving = true;

@@ -226,7 +226,12 @@ async function boot() {
       else showTrayCard(entryId);  // at once: it shows the filing's live progress, then the review
     },
     // A question typed in the bar: the ATLAS screen answers it (voice-input decisions VI1).
-    onAsk: (text) => { location.hash = `#/atlas?q=${encodeURIComponent(text)}`; },
+    // In reduced mode there is no ATLAS screen: false keeps the text in the bar.
+    onAsk: (text) => {
+      if (mode() !== 'full') return false;
+      location.hash = `#/atlas?q=${encodeURIComponent(text)}`;
+      return true;
+    },
   });
   startTray(capture);
   document.addEventListener('keydown', (ev) => onKey(ev, capture));
