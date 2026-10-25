@@ -203,7 +203,8 @@ async def watch_lan(app: web.Application) -> None:
 class TabletFeed:
     """A version number the tablet long-polls. Every hub broadcast that changes what it shows bumps
     it (create_app's broadcast); a waiter wakes at once and fetches the new state."""
-    QUIET = ("filing.progress", "filing.started", "entry.saved", "voice.changed")
+    QUIET = ("filing.progress", "filing.started", "entry.saved", "voice.changed",
+             "atlas.reply", "voice.speaking", "voice.quiet")  # the PC's ATLAS screen only (VI4, VI8)
 
     def __init__(self):
         self.version = 1

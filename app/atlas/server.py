@@ -26,7 +26,7 @@ from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
 from .routes import (add_reduced_routes, add_routes, errors, local_only, readonly_guard, record_usage,
-                     repair_legacy_integration, setup_done)
+                     repair_legacy_integration, reply_to_filing, setup_done)
 from .store import SchemaTooNew, Store, commit_hook
 from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
 from .tablet_routes import add_tablet_routes
@@ -401,7 +401,8 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     # Every hub commit (owner edits, filing, revert, confirm, edit, setup, map edit) reports
     # here: the notes it touched are re-indexed, then a backup is scheduled.
     app["on_commit"] = commit_hook(store, paths.brain, repo, backup.notify_commit)
-    app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"])
+    app["worker"] = FilingWorker(paths, store, repo, app["runner"], broadcast, app["on_commit"],
+                                 on_filed=lambda eid, done: reply_to_filing(app, eid, done))
     app["reviewer"] = Reviewer(paths, store, repo, app["on_commit"])
     app["claude_settings_path"] = Path(claude_settings_path) if claude_settings_path else default_settings_path()
     # Phase 4: the voice (None on a read-only root). It hears the agents' status changes.
