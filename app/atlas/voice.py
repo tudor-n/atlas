@@ -175,7 +175,7 @@ class Announcer:
         self._state = VoiceState(state_path)
         self._picker = QuotePicker(self._state.data["quotes"], rng)
         self._lines = QuotePicker(self._state.data["lines"], rng)  # the info lines' wordings (lines.md)
-        self._waited: dict[str, datetime] = {}  # session -> when its last waiting line was submitted
+        self._waited: dict[str, tuple[datetime, str | None]] = {}  # session -> (when, kind) of its last waiting line
         self._pending: dict[str, list[Line]] = {}
         self._timers: dict[str, threading.Timer] = {}
         self._turn_start: dict[str, datetime] = {}
@@ -279,10 +279,11 @@ class Announcer:
         project, kind = t.get("project_name"), t.get("kind")
         values = {"project": vl.spoken_project(project)}
         last = self._waited.get(sid)
-        self._waited[sid] = at
+        self._waited[sid] = (at, kind)
         if len(self._waited) > 500:
             self._waited = dict(list(self._waited.items())[-250:])
-        if last is not None and timedelta(0) <= at - last < timedelta(seconds=AGAIN_S):
+        # The short form only for the same kind again: a permission after a finished turn says so.
+        if last is not None and last[1] == kind and timedelta(0) <= at - last[0] < timedelta(seconds=AGAIN_S):
             pool = "agent_waiting.again"
         else:
             sub = self._WAIT_POOLS.get(kind or "")

@@ -124,6 +124,14 @@ def test_no_repeat_until_the_pool_cycles(env):
     assert sorted(said[:3]) == ["A", "B", "C"] and sorted(said[3:]) == ["A", "B", "C"]
 
 
+def test_the_short_form_is_for_the_same_kind_again(env):
+    write(env, "## agent_waiting.idle\n{project} is done.\n## agent_waiting.permission\n{project} wants permission.\n"
+               "## agent_waiting.again\n{project} again.\n")
+    env.a.agent_transition(_tr("s9", "running", "waiting", T0, kind="idle_prompt"))
+    env.a.agent_transition(_tr("s9", "running", "waiting", T0 + timedelta(minutes=2), kind="permission_prompt"))
+    assert info(env) == "Robot arm wants permission."  # another kind: it says what it wants
+
+
 def test_the_same_session_again_soon_gets_the_short_form(env):
     write(env, "## agent_waiting.permission\n{project} wants permission.\n## agent_waiting.again\n{project} again.\n")
     env.a.agent_transition(_tr("s1", "running", "waiting", T0, kind="permission_prompt"))

@@ -119,6 +119,13 @@ Four specialised reviews ran on the PRs: backend correctness, safety and the pro
   - ATLAS'S WEEK keeps an armed ✕;
   - the recent lines aren't re-read by screen readers.
 - **CH30 Wording edits from the review:** the weakest lines were rewritten, and "Fine." and "Bold" were thinned out. Event names read naturally ("teases", "remarks about myself").
+- **CH31 From the live test:**
+  - the short form is only for the same kind of wait again (a permission after a finished turn says what it wants);
+  - "N times today" comes at 3, 5 and 10 only;
+  - one waiting nudge per project, however many of its sessions wait;
+  - the evening digest names what's still due and says "nothing left hanging" only when it's true;
+  - `fact_free` catches "today's" and allows more plain openers for B;
+  - a B joke that fails the check shows in Settings (`last_error`).
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.
@@ -147,3 +154,21 @@ Four specialised reviews ran on the PRs: backend correctness, safety and the pro
   - a restart within 3 minutes said nothing;
   - a start after an hour said "Back so soon. I'm flattered.";
   - its quit said "Bye. Everything's saved. Go relax.".
+- **Live test (2026-10-26, after review).** A scratch hub on port 8097 with temp state, config, shared and bin folders, and the voice downloaded into the temp root. A stand-in `pw-play` saved each clip, and a do-nothing `pactl` with ducking at 100 % meant nothing sounded and no music was touched. The real Claude login was used with the real config folder.
+  - **Hook events:**
+    - real hook events gave a kind-specific line each (done, question, error), with others counted;
+    - this run found the short-form and callback issues in CH31.
+  - **Very high Try it now:** every kind of line fired, worded from `lines.md`.
+  - **Clips:** 29 real ones, 1.7–7.5 s at −17 dBFS, none silent.
+  - **The patterns, with real `claude -p` (Haiku):**
+    - A wrote 37 fact-free quips in 11 s;
+    - B's joke passed for one sheet and was refused for another (found the opener issue);
+    - C wrote an accurate week with one sensible suggestion in 7 s.
+  - **Quit and restart:**
+    - SIGTERM: the goodbye played, and the hub exited in 0.9 s;
+    - a restart after a faked two hours: Very high dropped back to Medium, and a hello played.
+  - **Headless Chrome (a throwaway profile):** Settings → Voice at Very high and the ATLAS screen with ATLAS'S WEEK rendered correctly.
+  - **Afterwards:**
+    - `~/.claude/settings.json` hash unchanged;
+    - no new `~/.claude/projects` folder;
+    - the scratch folders deleted.

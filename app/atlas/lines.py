@@ -59,6 +59,7 @@ _pool("fact.reminders", "reminders")
 _pool("fact.due", "count closest")
 _pool("fact.due_one", "text")
 _pool("fact.usage", "percent")
+_pool("fact.due_left", "things")
 _pool("fact.filed", "notes")
 _pool("fact.unconfirmed", "suggestions")
 _pool("due_today.repeat", "count closest")
@@ -314,6 +315,10 @@ You missed {reminders}.
 ## fact.due_one
 Due today. {text}
 One thing due today. {text}
+
+## fact.due_left
+Still due today. {things}.
+{things} still open for today.
 
 ## fact.usage
 You're at {percent} percent of your window.

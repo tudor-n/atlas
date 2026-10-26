@@ -213,8 +213,13 @@ export function subLine(sub) {
   const last = sub.last;
   if (typeof last === 'string' && last) bits.push(`last ${last}`);
   else if (last && typeof last === 'object') {
-    const vals = Object.values(last).filter((x) => ['string', 'number', 'boolean'].includes(typeof x)).map(String);
-    if (vals.length) bits.push(`last ${vals.join(' ')}`);
+    // {quips, briefings, review: ISO time} -> "last A 20:48 · B 20:50 · C 20:48"; anything else as given
+    const NAMES = { quips: 'A', briefings: 'B', review: 'C' };
+    const vals = Object.entries(last).filter(([, x]) => ['string', 'number', 'boolean'].includes(typeof x)).map(([k, x]) => {
+      const m = /T(\d\d:\d\d)/.exec(String(x));
+      return NAMES[k] ? `${NAMES[k]} ${m ? m[1] : x}` : String(x);
+    });
+    if (vals.length) bits.push(`last ${vals.join(' · ')}`);
   }
   return bits.length ? `Subscription: ${bits.join(', ')}.` : '';
 }

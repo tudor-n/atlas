@@ -556,3 +556,30 @@ def test_an_unspoken_tease_waits_a_cadence_instead_of_recaptioning_every_tick(en
         env.c.tick()
         env.now.t += timedelta(seconds=30)
     assert sum("intent" in x for x in said(env)) == 1
+
+
+def test_the_times_today_callback_only_at_milestones(env):
+    for i in range(6):
+        env.c.agent_transition({"session_id": f"s{i}", "before": "running", "after": "waiting",
+                                "at": (T0 + timedelta(minutes=i)).isoformat(), "project_name": "RobotArm"})
+    assert [x for x in said(env) if "times today" in x] == ["That's three times today for Robot Arm.",
+                                                           "That's five times today for Robot Arm."]
+
+
+def test_the_evening_says_whats_still_due_never_nothing_left(env):
+    env.items = [item("a", "Order servos", due=T0.date().isoformat())]
+    env.c.tick()
+    env.now.t = T0.replace(hour=18, minute=1)
+    env.c.presence.seen()
+    env.c.tick()
+    evening = [x for x in said(env) if x.startswith("Evening.")]
+    assert evening == ["Evening. Still due today. One thing."]
+
+
+def test_one_nudge_per_project_however_many_of_its_sessions_wait(env):
+    env.c.tick()
+    since = (env.now.t - timedelta(minutes=12)).isoformat()
+    env.agents = [{"session_id": f"s{i}", "status": "waiting", "ended_at": None, "project_name": "RobotArm",
+                   "status_since": since} for i in range(3)]
+    env.c.tick()
+    assert sum("has been waiting" in x for x in said(env)) == 1
