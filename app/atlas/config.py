@@ -53,6 +53,9 @@ DEFAULT_SETTINGS: dict = {
     # loudness; duck_to is the share (%) of their loudness other apps keep while ATLAS speaks
     # (amplitude: 50 = -6 dB, slightly dulled; 100 = off). 2026-10-26: 30 → 50, see V-L4.
     "voice_boost": True, "voice_duck_to": 50,
+    # Silence before each line, so an output waking from suspend doesn't eat the first word (owner,
+    # 2026-10-26). Bluetooth headphones may want more.
+    "voice_lead_in_ms": 350,
     # Chatter (chatter spec §2, owner 2026-10-26). How talkative ATLAS is unprompted: mute, low, medium,
     # high, or debug (Very high: no waiting anywhere, drops back by itself). per_hour overrides the
     # level's cap (null = the level's). The subscription switch turns off every claude -p run chatter
@@ -91,7 +94,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "backup_debounce_s": (0, 86400),
     "usage_warn_pct": (1, 100), "agents_end_linger_s": (0, 3600), "agents_stale_h": (1, 168),
     "voice_finish_min_s": (0, 3600), "voice_volume": (0, 100), "voice_duck_to": (0, 100),
-    "voice_sub_max_pct": (1, 100),
+    "voice_sub_max_pct": (1, 100), "voice_lead_in_ms": (0, 1500),
 }
 
 

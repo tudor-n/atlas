@@ -35,6 +35,7 @@ SETTLE_S = 5.0  # a burst of settings saves becomes one line, this long after th
 APPROACH = (timedelta(hours=2), timedelta(hours=1), timedelta(minutes=15))
 SLOT_WORDS = {APPROACH[0]: "in two hours", APPROACH[1]: "in an hour", APPROACH[2]: "in fifteen minutes"}
 SESSION_LINE_GAP = timedelta(hours=1)
+ATLAS_ITEM_GAP = timedelta(minutes=2)  # tasks about ATLAS confirmed this close together: one spoken line
 CALLBACK_AT = (3, 5, 10)  # "That's three times today for Robot Arm": at these counts only
 RESTART_GAP = timedelta(minutes=3)  # alive this recently: a restart (update, crash, drive back), not a hello
 GOODBYE_WAIT_S = 7.0  # the shell gives the hub 10 s after SIGTERM
@@ -716,15 +717,23 @@ class Chatter:
             if all_of_card and len(items) >= 2:
                 self.react("confirm_all", len(items))
             slug = self.atlas_project()
-            for it in items:
-                if str(getattr(it, "source_entry", "") or "").startswith(WEEK_SOURCE):
-                    continue  # the week's suggestion: a model wrote it
-                if slug and getattr(it, "project", None) == slug:
-                    text = vl.reminder_text(it.text)
-                    self.v.chat("self", "self.atlas_item", {"text": text},
-                                f"You've put me on your to-do list. {text}", key=("atlas_item", it.id),
-                                why="a task about me")
-                    return
+            mine = [it for it in items if slug and getattr(it, "project", None) == slug
+                    and not str(getattr(it, "source_entry", "") or "").startswith(WEEK_SOURCE)]  # not the week's
+            if not mine:
+                return
+            now = self._now()
+            last = _parse(self._st.get("atlas_item_at"))
+            again = last is not None and timedelta(0) <= now - last < ATLAS_ITEM_GAP
+            self._st["atlas_item_at"] = _iso(now)
+            self.v.save_state()
+            if len(mine) == 1:  # one line for the lot, and a second batch close behind is shown, not said
+                text = vl.reminder_text(mine[0].text)
+                self.v.chat("self", "self.atlas_item", {"text": text}, f"You've put me on your to-do list. {text}",
+                            key=("atlas_item", mine[0].id), why="a task about me", speak=not again)
+            else:
+                tasks = vl.things(len(mine), "task", "tasks")
+                self.v.chat("self", "self.atlas_items", {"tasks": tasks}, f"{tasks.capitalize()} about me. I'm flattered.",
+                            key=("atlas_items", mine[0].id), why="tasks about me", speak=not again)
         except Exception:
             log.exception("chatter: on confirm failed")
 

@@ -45,7 +45,7 @@ async def client(aiohttp_client, paths, said):
     # These tests check the plumbing with the fixed lines; the varied wordings are test_lines.py's.
     (paths.brain / "_voice" / "lines.md").unlink()
     # no quiet hours: these tests speak whatever the clock says (CI runs at any hour, in UTC)
-    assert (await c.put("/api/settings", json={"quiet_hours": ["00:00", "00:00"]})).status == 200
+    assert (await c.put("/api/settings", json={"quiet_hours": ["00:00", "00:00"], "voice_lead_in_ms": 0})).status == 200
     return c
 
 
@@ -114,11 +114,11 @@ async def test_tablet_note_and_answer_are_read_back(client, paths, said):
     rid = (await r.json())["request"]["id"]
     r = await client.post(f"/api/tablet/requests/{rid}/answer", json={"answers": {"0": "1200 mm"}})
     assert r.status == 201
-    _lines(said, 2)
+    _lines(said, 1)
     time.sleep(0.5)
-    got = _lines(said, 2)
-    # the resend that had already landed is not read twice
-    assert [x["parts"] for x in got] == [["Note saved. buy m3 screws."], ["1200 millimetres. Saved."]]
+    got = _lines(said, 1)
+    # the resend that had already landed is not read twice; the two came together, so one clip
+    assert [x["parts"] for x in got] == [["Note saved. buy m3 screws.", "1200 millimetres. Saved."]]
 
 
 async def test_pause_resume_and_bad_bodies(client):

@@ -323,7 +323,7 @@ def test_the_request_carries_the_voice_settings(env):
     env.a.readback_note("x")
     req = env.sink.lines[0].request
     assert req == {"op": "say", "parts": ["Note saved. x."], "blend": {"af_heart": 1}, "speed": 1.1, "volume": 40,
-                   "boost": False, "duck_to": 55, "model": "/m/fp32.onnx", "voices": "/m/v.bin"}
+                   "boost": False, "duck_to": 55, "lead_ms": 350, "model": "/m/fp32.onnx", "voices": "/m/v.bin"}
 
 
 def test_sample_ignores_quiet_pause_and_off_but_needs_the_files(env):
@@ -423,13 +423,14 @@ def test_a_broken_state_file_is_ignored(env):
 def _speaker(tmp_path, **kw):
     env = {**os.environ, "ATLAS_VOICE_TRACE": "1", "ATLAS_VOICE_FAKE": str(tmp_path / "said.jsonl"), "PYTHONPATH": str(APP),
            "ATLAS_VOICE_FAKE_DELAY": kw.pop("delay", "0")}
+    kw.setdefault("join_s", 0)  # these check one line at a time; joining has its own test
     return v.Speaker(tmp_path / "state", env=env, **kw)
 
 
 def _line(text, created=None):
     ln = v.Line("readback", text, {}, created or datetime.now(), parts=[text])
     ln.request = {"op": "say", "parts": [text], "blend": {"bm_george": 1}, "speed": 1, "volume": 80,
-                  "model": "m", "voices": "v"}
+                  "model": "m", "voices": "v", "lead_ms": 0}
     return ln
 
 
@@ -698,3 +699,25 @@ def test_workout_words_come_from_settings_and_the_reminder_switch_still_rules(en
     env.now.t = T0 + timedelta(seconds=200)
     env.a.tick()
     assert len(env.sink.said) == 1  # the reminder switch silences workouts too
+
+
+def test_lines_that_come_together_are_said_as_one(tmp_path):
+    """Owner, 2026-10-26: two remarks from one moment came out as two jarring clips."""
+    sp = _speaker(tmp_path, join_s=0.3)
+    try:
+        now = datetime.now()
+        req = {"op": "say", "blend": {"bm_george": 1}, "speed": 1, "volume": 80, "boost": False, "duck_to": 100,
+               "lead_ms": 0, "model": "m", "voices": "v"}
+        for parts in (["A reminder. x."], ["Two tasks about me."], ["A quip."]):
+            ln = v.Line("x", parts[0], {}, now, parts=parts)
+            ln.request = {**req, "parts": parts}
+            sp.say(ln)
+        sample = v.Line("sample", "s", {}, now, parts=["Sample."])
+        sample.request = {**req, "parts": ["Sample."]}
+        assert sp.wait_quiet(10)
+        sp.say(sample)
+        assert sp.wait_quiet(10)
+        said = [json.loads(x) for x in (tmp_path / "said.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert [s["parts"] for s in said] == [["A reminder. x.", "Two tasks about me.", "A quip."], ["Sample."]]
+    finally:
+        sp.close()

@@ -130,6 +130,10 @@ Four specialised reviews ran on the PRs: backend correctness, safety and the pro
   - **The cause:** the owner quit and restarted ATLAS within seconds, three times. The 3-minute rule took each start for a restart and stayed quiet. It also turned out the installed app runs from a runtime slot, which isn't a git repo, so the update line could never fire.
   - **The quit mark:** a clean stop (the shell's SIGTERM, anything but EXIT_RESTART) leaves `quit_at` in `voice.json`. The next start always says hello, then clears the mark. A crash or a drive-back restart leaves no mark, so those stay quiet.
   - **The update line:** the running commit comes from the runtime's `current.json`, and commits are counted in the live copy (read-only git).
+- **CH33 Smoother speech (owner, 2026-10-26: "lines go over one another non-fluidly", "the first word gets cut off").**
+  - **Start padding:** every clip starts with silence, `voice_lead_in_ms` (default 350 ms, 0–1500, Settings → Voice → START PADDING). An output waking from PipeWire's suspend loses the first few hundred ms of a stream; now that's silence, not the first word. The dot's envelope starts with the same silence, so it waits too.
+  - **One clip for lines that come together:** the Speaker waits `JOIN_S` (0.6 s) for a line's companions, then says every queued line with the same voice settings as one clip, up to 8 parts, with the usual 0.4 s gaps. The sample is never joined.
+  - **ATLAS tasks:** several confirmed together get one line ("Two tasks about me. I'm flattered."). A second batch within 2 minutes is shown, not said again (`chat(speak=False)`).
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.
