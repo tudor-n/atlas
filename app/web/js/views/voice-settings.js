@@ -232,7 +232,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
         prefRow('Even loudness', boost, { forId: boost.id, cls: 'pf-t',
           hint: 'Brings every line up to a steady, clear loudness, so it carries over music.' }),
         prefRow('OTHER SOUNDS WHILE SPEAKING', el('div', { class: 'pair' }, duck, duckOut), { forId: 'voice-duck',
-          hint: 'Music and other apps play at this share of their volume while ATLAS speaks, then come back. 100 % leaves them alone. Linux.' }),
+          hint: 'Music and other apps play at this share of their level while ATLAS speaks, then come back: 50 % is a little quieter (−6 dB), 100 % leaves them alone. Linux.' }),
         prefRow('MODEL', selectBox(model), { forId: 'voice-model' }))),
       el('section', { class: 'st-grp' }, groupHead('LISTEN'), el('div', { class: 'pfs' },
         prefRow('SAMPLE', el('div', { class: 'pair' },

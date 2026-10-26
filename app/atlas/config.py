@@ -50,12 +50,13 @@ DEFAULT_SETTINGS: dict = {
                             "bouldering", "boxing", "strength training", "weight training", "exercise",
                             "exercises", "physio"],
     # Owner, 2026-10-24: the voice was lost under music. Boost evens every line out to a steady
-    # loudness; duck_to is the share (%) of their volume other apps keep while ATLAS speaks (100 = off).
-    "voice_boost": True, "voice_duck_to": 30,
+    # loudness; duck_to is the share (%) of their loudness other apps keep while ATLAS speaks
+    # (amplitude: 50 = -6 dB, slightly dulled; 100 = off). 2026-10-26: 30 → 50, see V-L4.
+    "voice_boost": True, "voice_duck_to": 50,
     # Chatter (chatter spec §2, owner 2026-10-26). How talkative ATLAS is unprompted: mute, low, medium,
     # high, or debug (Very high: no waiting anywhere, drops back by itself). per_hour overrides the
     # level's cap (null = the level's). The subscription switch turns off every claude -p run chatter
-    # makes (filing and recall aren't chatter); A quips, B briefings, C the weekly self-review.
+    # makes (filing and recall aren't chatter); A quips, B the welcome back's joke, C the weekly self-review.
     "voice_chattiness": "medium", "voice_chatter_per_hour": None,
     "voice_subscription": True, "voice_sub_quips": True, "voice_sub_briefings": True, "voice_sub_review": True,
     "voice_sub_max_pct": 80, "voice_last_call": "18:00", "voice_atlas_project": "",
