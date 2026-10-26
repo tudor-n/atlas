@@ -26,6 +26,7 @@ from .voice import in_quiet_hours, morning_time, reminder_times
 log = logging.getLogger(__name__)
 
 NUDGE_WAIT = timedelta(minutes=10)  # an agent waiting this long gets one nudge per stretch
+MORNING_FOR = timedelta(hours=4)  # the morning digest plays within this of the end of quiet hours, or not that day
 QUIET_FOR_MUSING = timedelta(minutes=30)  # nothing said for this long before a musing (not at debug)
 REACT_GAP = timedelta(minutes=1)
 SETTLE_S = 5.0  # a burst of settings saves becomes one line, this long after the last
@@ -293,7 +294,10 @@ class Chatter:
         evening = datetime.combine(today, time.fromisoformat(s["voice_last_call"]))
         if lvl.name == "mute":
             return
-        if "morning" not in d and (lvl.debug or (now >= morning and now < evening and self._present())):
+        if "morning" not in d and not lvl.debug and now >= min(morning + MORNING_FOR, evening):
+            d["morning"] = "skipped"  # too late for "good morning": the first due-today repeat is the roll call
+            self.v.save_state()
+        if "morning" not in d and (lvl.debug or (now >= morning and self._present())):
             d["morning"] = _iso(now)
             self.v.save_state()
             facts = self.facts(None)
@@ -382,11 +386,12 @@ class Chatter:
         last_repeat = _parse(b.get("repeat_at"))
         if not due or (last_repeat is not None and now - last_repeat < lvl.due_every):
             return
-        if last_repeat is None and not lvl.debug and "morning" not in self._day_bucket("digest"):
+        morning = self._day_bucket("digest").get("morning")
+        if last_repeat is None and not lvl.debug and morning is None:
             return  # the morning digest is the day's first roll call
         if not lvl.debug and self.presence is not None and self.presence.state() == "away":
             return
-        if last_repeat is None and not lvl.debug:
+        if last_repeat is None and not lvl.debug and morning != "skipped":
             b["repeat_at"] = _iso(now)  # the digest just named them: the first repeat is one cadence later
             self.v.save_state()
             return
@@ -596,6 +601,8 @@ class Chatter:
                 self.presence.seen("app")
             if kind in ("correction", "retry", "flip_ask", "flip_note"):
                 self._tally(kind)
+            if kind == "pause":
+                self._announce_restraint()
             if lvl.reactions == "off" or (lvl.reactions == "mistakes" and kind not in ("correction", "flip_ask", "flip_note")):
                 return None
             now = self._now()
@@ -611,6 +618,14 @@ class Chatter:
             return None
 
     @_locked
+    def _announce_restraint(self) -> None:
+        """Once, when shushing just made an event restrained (CH: learned restraint)."""
+        event = self.v.take_restraint_hit()
+        if event:
+            what = EVENT_WORDS.get(event, event)
+            self.v.chat("self", "self.restraint", {"what": what}, f"Noted. I'll keep the {what} to myself.",
+                        budgeted=False, why="you keep shushing me")
+
     def _tally(self, kind: str) -> None:
         """Counts per day for ATLAS's week (pattern C), kept for two weeks."""
         today = self._now().date()
@@ -665,11 +680,8 @@ class Chatter:
                     self.v.save_state()
             dropped = ch.rank(a_lvl or "medium") < ch.rank(b_lvl or "medium")
             if (before.get("voice_enabled") and not after.get("voice_enabled")) or dropped:
-                event = self.v.shh()
-                if event:
-                    self.v.chat("self", "self.restraint", {"what": EVENT_WORDS.get(event, event)},
-                                f"Noted. I'll keep the {EVENT_WORDS.get(event, event)} to myself.", budgeted=False,
-                                why="you keep shushing me")
+                self.v.shh()
+                self._announce_restraint()
             with self._lock:
                 first = self._pending_settings[0] if self._pending_settings else before
                 self._pending_settings = (first, after)

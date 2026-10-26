@@ -168,6 +168,7 @@ class Announcer:
         self._last_budgeted: tuple[str, datetime] | None = None
         self._chat_n = 0
         self._restrained: dict[str, int] = {}
+        self._restraint_hit: str | None = None
         self._speaker, self._now, self._merge_s = speaker, now, merge_s
         self._lock = threading.RLock()
         self._state = VoiceState(state_path)
@@ -604,7 +605,15 @@ class Announcer:
             stamps = [x for x in shh.get(event, []) if _fresh(x, now, SHH_DAYS)] + [now.isoformat(timespec="seconds")]
             shh[event] = stamps
             self._state.save()
-            return event if len(stamps) == SHH_LIMIT else None
+            hit = event if len(stamps) == SHH_LIMIT else None
+            self._restraint_hit = hit or self._restraint_hit
+            return hit
+
+    def take_restraint_hit(self) -> str | None:
+        """The event a shh just made restrained, once (Chatter announces it)."""
+        with self._lock:
+            hit, self._restraint_hit = self._restraint_hit, None
+            return hit
 
     def restrained(self, event: str, now: datetime | None = None) -> bool:
         now = now or self._now()

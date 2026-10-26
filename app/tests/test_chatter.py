@@ -187,6 +187,8 @@ def test_every_phase_four_line_is_captioned_too(env):
 
 # -- due today --------------------------------------------------------------------------------------
 def test_due_today_waits_for_the_morning_digest_then_repeats_at_the_cadence(env):
+    env.now.t = T0.replace(hour=9)
+    env.c.presence.seen()
     env.items = [item("a", "Send the lab report", due=T0.date().isoformat())]
     env.c.tick()
     assert said(env)[0].startswith("Good morning.") and "Send the lab report" in said(env)[0]
@@ -408,3 +410,24 @@ def test_try_it_now(env):
     assert len(said(env)) >= 5
     with pytest.raises(ValueError):
         env.c.try_now("nope")
+
+
+def test_no_good_morning_in_the_afternoon_the_first_repeat_is_the_roll_call(env):
+    env.items = [item("a", "Send the lab report", due=T0.date().isoformat())]
+    env.c.tick()
+    assert said(env) == ["Still due today. Send the lab report."]
+    assert env.a.chatter_state()["digest"]["morning"] == "skipped"
+
+
+def test_shushed_three_times_by_pausing_is_announced_once(env):
+    env.settings["voice_chatter_per_hour"] = 60
+    for i in range(3):
+        env.a.resume()
+        env.a.chat("tease", "tease", {}, "Tease.", key=("x", i))
+        env.now.t += timedelta(seconds=5)
+        env.a.pause(1)
+        env.c.react("pause")
+        env.now.t += timedelta(minutes=2)
+    restraint = [x for x in env.lines if "to myself" in x["text"]]
+    assert len(restraint) == 1 and restraint[0]["text"] == "Noted. I'll keep the teasing to myself."
+    assert restraint[0]["spoken"] is False  # paused: captioned
