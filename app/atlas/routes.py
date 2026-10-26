@@ -23,6 +23,7 @@ from . import runtime
 from .claude_runner import ClaudeError
 from .config import load_settings, save_settings, validate_setting
 from .filing import _prepare_worktree
+from .lines import ensure_lines
 from .quotes import ensure_quotes
 from .rawlog import append_entry
 from .recall import NOTHING, deeper_answer, quick_answer, search_hits
@@ -164,6 +165,7 @@ async def setup(request: web.Request) -> web.Response:
     await t(app["repo"].init)
     await t(app["repo"].ensure_gitattributes)  # committed with setup: line endings stay as written
     await t(ensure_quotes, paths.brain)  # the voice's quote file (phase 4), the owner's to edit
+    await t(ensure_lines, paths.brain)  # and its info lines' wordings (chatter)
     sha = await t(app["repo"].commit_all, "setup")
     if remote:
         await t(save_settings, paths, {"backup_remote": remote})

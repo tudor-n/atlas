@@ -10,6 +10,7 @@ import pytest
 from atlas import voice_files as vf
 from atlas.claude_runner import ClaudeError
 from atlas.rootguard import RootStatus
+from atlas.lines import ensure_lines
 from atlas.server import create_app
 from tests.fakes import FakeRunner
 from tests.test_filing import GOOD_RESULT
@@ -41,6 +42,8 @@ async def client(aiohttp_client, paths, said):
     app["opened"] = opened
     c = await aiohttp_client(app)
     assert (await c.post("/api/setup", json={"map": MAP, "backup_remote": None})).status == 200
+    # These tests check the plumbing with the fixed lines; the varied wordings are test_lines.py's.
+    (paths.brain / "_voice" / "lines.md").unlink()
     # no quiet hours: these tests speak whatever the clock says (CI runs at any hour, in UTC)
     assert (await c.put("/api/settings", json={"quiet_hours": ["00:00", "00:00"]})).status == 200
     return c
@@ -135,7 +138,9 @@ async def test_stop_and_edit_quotes_want_json(client, paths):
     assert (await client.post("/api/voice/stop", data="x")).status == 415
     assert (await client.post("/api/voice/edit-quotes", json={})).status == 204
     assert client.server.app["opened"] == [paths.brain / "_voice" / "quotes.md"]
-    assert (await client.post("/api/voice/edit-lines", json={})).status == 204  # seeded at start
+    assert (await client.post("/api/voice/edit-lines", json={})).status == 404  # the fixture removed it
+    ensure_lines(paths.brain)
+    assert (await client.post("/api/voice/edit-lines", json={})).status == 204
     assert client.server.app["opened"][-1] == paths.brain / "_voice" / "lines.md"
 
 

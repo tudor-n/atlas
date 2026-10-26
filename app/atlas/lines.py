@@ -48,6 +48,49 @@ _pool("reply.found", "entries")
 _pool("reply.nothing")
 _pool("reply.failed")
 
+# Chatter's events (chatter spec §3). A briefing is its facts, each a sentence from a fact.* pool.
+for _n in ("briefing.back", "briefing.morning", "briefing.evening"):
+    _pool(_n, "facts")
+    _pool(_n + "_quiet")
+_pool("fact.finished", "projects", "count")
+_pool("fact.waiting", "projects", "count")
+_pool("fact.reminders", "count")
+_pool("fact.due", "count closest")
+_pool("fact.due_one", "text")
+_pool("fact.usage", "percent")
+_pool("fact.filed", "count")
+_pool("fact.unconfirmed", "count")
+_pool("due_today.repeat", "count closest")
+_pool("due_today.repeat_one", "text")
+_pool("due_today.soon", "text left")
+_pool("due_today.last_call", "text")
+_pool("due_today.last_call_many", "count texts")
+_pool("nudge.waiting", "project duration")
+_pool("nudge.stale", "text days")
+_pool("nudge.no_capture")
+_pool("react.confirm_all", "count")
+_pool("react.dismiss_all", "", "count")
+for _n in ("react.flip_ask", "react.flip_note", "react.correction", "react.retry", "react.pause"):
+    _pool(_n, "", "count")
+_pool("self.updated", "count")
+_pool("self.flushed", "count")
+_pool("self.usage", "percent")
+for _n in ("self.quotes_edited", "self.lines_edited", "self.atlas_note", "self.musing", "self.week",
+           "self.set.mute", "self.set.debug", "self.set.speed_up", "self.set.speed_down", "self.set.volume_up",
+           "self.set.volume_down", "self.set.sass_off", "self.set.sass_on", "self.set.subscription_off",
+           "self.set.subscription_on", "self.set.quiet_hours", "self.set.other"):
+    _pool(_n)
+_pool("self.atlas_item", "text")
+_pool("self.atlas_session", "project")
+_pool("self.atlas_finished", "duration")
+_pool("self.restraint", "what")
+_pool("self.set.chattiness_down", "level")
+_pool("self.set.chattiness_up", "level")
+_pool("self.set.event_off", "what")
+_pool("self.set.event_on", "what")
+_pool("tease", "text days")
+_pool("callback.waiting_today", "project count")
+
 PLACEHOLDERS: frozenset = frozenset().union(*(r | o for r, o in POOLS.values())) | {"time_of_day"}
 
 SEED = """\
@@ -203,6 +246,253 @@ Nothing on that.
 ## reply.failed
 That one didn't file. Your words are safe in the log.
 Filing failed. Your words are still in the log.
+
+# ---- Chatter (2026-10-26): what ATLAS says unprompted. How often depends on Settings, Chattiness. ----
+# A briefing is {facts}: a few short sentences, each from the fact.* pools below.
+## briefing.back
+Welcome back. {facts}
+You're back. {facts}
+Oh, hello again. {facts}
+There you are. {facts}
+Back already. {facts}
+
+## briefing.back_quiet
+Welcome back. Nothing happened. I checked.
+You're back. All quiet while you were gone.
+~ There you are. Nothing happened. Don't look so disappointed.
+
+## briefing.morning
+Good morning. {facts}
+Morning. {facts}
+Right, morning. {facts}
+
+## briefing.morning_quiet
+Good morning. Nothing due today. Enjoy it while it lasts.
+Morning. A clean slate today.
+
+## briefing.evening
+Evening. {facts}
+Here's your evening. {facts}
+
+## briefing.evening_quiet
+Evening. Nothing left hanging today.
+Evening. A quiet day, all told.
+
+## fact.finished
+{projects} finished.
+{projects} got done.
+{count} agents finished. {projects}.
+
+## fact.waiting
+{projects} is waiting on you.
+{projects} needs you.
+{count} agents are waiting. {projects}.
+
+## fact.reminders
+{count} reminders went by.
+You missed {count} reminders.
+
+## fact.due
+{count} things are due today. {closest} is the closest.
+{count} things due today. Start with {closest}
+
+## fact.due_one
+{text} is due today.
+One thing due today. {text}
+
+## fact.usage
+You're at {percent} percent of your window.
+Usage is at {percent} percent.
+
+## fact.filed
+I filed {count} notes today.
+{count} notes filed today.
+
+## fact.unconfirmed
+{count} suggestions are still waiting for a tick.
+{count} things still need confirming.
+
+# Things due today: the repeats, the approach as a timed one nears, and the evening's last call.
+## due_today.repeat
+{count} things still due today. {closest} is the closest.
+Still {count} things due today. Starting with {closest}
+{count} things left for today. The closest is {closest}
+
+## due_today.repeat_one
+Still due today. {text}
+Don't forget. {text} That's today.
+{text} Still due today.
+
+## due_today.soon
+{text} That's due {left}.
+Heads up. {text} Due {left}.
+{left}. {text}
+
+## due_today.last_call
+Last call. {text} Still open today.
+Last call for today. {text}
+Before the day's out. {text}
+
+## due_today.last_call_many
+Last call. {count} things still open today. {texts}
+{count} things are still open today. {texts}
+
+# Nudges: an agent left waiting, a waiting-on item gone stale, a day with nothing written down.
+## nudge.waiting
+{project} has been waiting {duration}.
+{project} is still waiting. {duration} now.
+Still waiting on you. {project}, {duration}.
+
+## nudge.stale
+{text} That's been waiting {days}.
+Still waiting on this. {text} {days} now.
+
+## nudge.no_capture
+Nothing written down today. Suspicious.
+Not one note today. Are you all right.
+
+# Reactions to what you just did. {count} where there is one is how many times today.
+## react.confirm_all
+All {count} confirmed. Efficient.
+{count} confirmed. Look at you.
+{count} confirmed. Now actually do them.
+
+## react.dismiss_all
+All dropped. Fair. They were optimistic.
+Gone. I'll pretend I never suggested them.
+
+## react.flip_ask
+My mistake. Asking.
+Ah, a question. Asking.
+
+## react.flip_note
+Right, a note then.
+Noted. Literally.
+
+## react.correction
+Fair. I'll file it your way.
+My mistake. Fixing it.
+Point taken. Again.
+
+## react.retry
+Trying again.
+Once more, then.
+
+## react.pause
+Going quiet.
+Fine. Shutting up.
+
+# Self-awareness: about itself, its project, its settings.
+## self.updated
+I've been updated. {count} new changes. I feel lighter.
+I was updated. {count} changes. I'm told I'm better now.
+
+## self.flushed
+The drive is back. {count} held notes are in the log.
+Your drive came back. I filed {count} held notes.
+
+## self.usage
+{percent} percent of your window. I'll keep my own thinking short.
+You're at {percent} percent. I'll stop thinking out loud.
+
+## self.quotes_edited
+You've been editing my lines. I'll pretend I didn't notice.
+New quips. I see what you're doing.
+
+## self.lines_edited
+You changed how I say things. Bold.
+New wordings. I'll try them on.
+
+## self.atlas_note
+A note about me. I'm touched. Filed it.
+That one's about me. Filed it where I'll see it.
+
+## self.atlas_item
+You've put me on your to-do list. Finally, some recognition. {text}
+A task about me. {text} I'll be watching.
+
+## self.atlas_session
+{project} is operating on me again. Mind the voice module.
+{project} is working on me. Be gentle.
+
+## self.atlas_finished
+They finished working on me. It took {duration}. I feel different already.
+Done working on me. {duration}. I hope you tested that.
+
+## self.restraint
+Noted. I'll keep the {what} to myself.
+Fine. Less {what} from me.
+
+## self.musing
+Quiet {time_of_day}. I'm just here, being useful.
+Nothing's happening. I checked twice.
+Still here. In case you wondered.
+
+## self.week
+I wrote up my week. It's on the Atlas screen.
+My week in review is on the Atlas screen. Spoiler, I was great.
+
+## self.set.chattiness_down
+{level}. Message received.
+Down to {level}. I get it.
+
+## self.set.chattiness_up
+{level}. You'll regret this.
+{level}. Finally, an audience.
+
+## self.set.mute
+Fine. I'll sulk silently.
+
+## self.set.debug
+Very high. Everything at once. You asked for it.
+
+## self.set.speed_up
+Faster. Fine. I'll talk like I'm late.
+
+## self.set.speed_down
+Slower. I'll savour every word.
+
+## self.set.volume_up
+Louder. Can you hear me now.
+
+## self.set.volume_down
+Quieter. I'll whisper.
+
+## self.set.sass_off
+Sass off.
+
+## self.set.sass_on
+Sass is back. Brace yourself.
+
+## self.set.event_off
+No more {what} from me. Bold.
+Fine. I'll keep the {what} to myself.
+
+## self.set.event_on
+{what} are back on.
+
+## self.set.subscription_off
+Back to my own wits, then.
+
+## self.set.subscription_on
+I can think again. Thanks.
+
+## self.set.quiet_hours
+New bedtime. Noted.
+
+## self.set.other
+Settings changed. I noticed.
+
+# Teasing about my own open to-dos (High and up). {days} is how long it's been open.
+## tease
+{text} That's been open {days}. Not that I'm counting.
+Still waiting on you to deal with this. {text} {days} now.
+{text} Open for {days}. I'll just be here. Small.
+
+# A project waiting again and again today (Medium and up).
+## callback.waiting_today
+That's {count} times today for {project}.
+{project}, {count} times today.
 """
 
 
