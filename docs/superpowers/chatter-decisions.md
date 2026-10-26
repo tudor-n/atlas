@@ -57,9 +57,29 @@ The owner asked on 2026-10-26 for "a level of self awareness and chattiness" in 
   - C's first review waits a week from the first start;
   - B words at most 6 briefings a day, only while away, and only when the facts changed.
 - **CH16 "Confirm all" / "dismiss all"** means the call took the last pending proposals of the cards it touched, and at least two of them.
+- **CH18 No "good morning" after midday.** The morning digest plays within 4 h of the end of quiet hours, or not at all that day. When it's skipped, the first due-today repeat is the day's roll call.
+- **CH19 The widget's DEBUG CHATTER tag** reads `chattiness` from `GET /api/voice` (`Announcer.view`).
 - **CH17 Settings saved by another build** keep working as VI5 rules: the six new `voice_events` keys start on.
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.
 - **The level numbers are untested on the owner:** the per-level numbers and the cadences in spec §3–§4 are the approved proposal. Tune them from a week at Medium.
 - **No real `claude -p` run of patterns A, B or C has been made yet.** The prompts are checked against a fake runner only, and the first real runs are the owner's check (`TODO.md` step 10).
+
+## Checked by hand (2026-10-26)
+- **The setup:** a scratch hub on port 8098, with:
+  - a temp root, state and Claude folders;
+  - stand-in voice files with the fake voice worker (`ATLAS_VOICE_FAKE`), so nothing played;
+  - a fake `claude` on `PATH`, so no plan usage was spent.
+- **The checks:**
+  - setup seeded `lines.md`;
+  - Very high announced itself;
+  - every Try it now fired: briefing, the morning and evening digests, musing, self, react, and teasing once ATLAS had a to-do;
+  - each line showed its origin (`_voice/lines.md:<n>` or fixed) and whether it was spoken;
+  - pattern A wrote and committed `generated.md`;
+  - pattern B's worded briefing passed the honesty check and was spoken;
+  - pattern C wrote `data/chatter/week.json`;
+  - ✓ on its suggestion made an open task in ATLAS's project, committed as "confirm: 1 item (ATLAS's week)".
+- **What it caught:** Try it now's self line said "zero percent" with no usage reading (fixed).
+- **Afterwards:** the hub (only its own PID) was stopped, and the folders deleted.
+- **In a browser:** the UI was checked in headless Chrome by the subagent that built it.
