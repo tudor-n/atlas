@@ -21,6 +21,7 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
+from .lines import ensure_lines
 from .quotes import ensure_quotes, ensure_reply_pools, ensure_workout_pool
 from .rawlog import read_log
 from .review import Reviewer
@@ -83,7 +84,11 @@ def _ensure_gitattributes(app: web.Application) -> None:
 
 
 def _ensure_quotes(app: web.Application) -> None:
-    """Brains set up before phase 4 get the voice's quote file, in a commit of its own."""
+    """Brains set up before phase 4 get the voice's quote file, and before chatter its info lines, each in a
+    commit of its own."""
+    if ensure_lines(app["paths"].brain):  # the info lines' wordings (chatter, 2026-10-26)
+        app["repo"].commit_all("add the voice's info lines")
+        app["backup"].notify_commit()
     if ensure_quotes(app["paths"].brain):
         app["repo"].commit_all("add the voice quotes")
         app["backup"].notify_commit()

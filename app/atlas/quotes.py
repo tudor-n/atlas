@@ -307,34 +307,46 @@ class QuotePicker:
     def __init__(self, state: dict, rng: random.Random | None = None):
         self.state = state
         self._rng = rng or random.Random()
+        self.last_index: int | None = None
 
-    def pick(self, pool: str, quotes: list[str], values: dict, now: datetime) -> str | None:
+    def pick(self, pool: str, quotes: list[str], values: dict, now: datetime, *, cooldown: bool = True,
+             in_order: bool = False) -> str | None:
+        """A quote with its placeholders filled, or None. `cooldown=False` skips the one-minute
+        quiet after a quip (info lines, the Very high level); `in_order` walks the pool in file
+        order instead of a shuffle (the Very high level shows every line once). `last_index` is the
+        picked quote's index in `quotes` (for the caption's origin)."""
+        self.last_index = None
         last = self.state.get("last_quip")
         try:
-            if last and now - datetime.fromisoformat(last) < COOLDOWN:
+            if cooldown and last and now - datetime.fromisoformat(last) < COOLDOWN:
                 return None
         except (TypeError, ValueError):
             pass
         if not quotes:
             return None
         values = {"time_of_day": time_of_day(now), **{k: v for k, v in values.items() if v is not None}}
-        key = hashlib.sha256("\n".join(quotes).encode()).hexdigest()[:16]
+        key = hashlib.sha256("\n".join(quotes).encode()).hexdigest()[:16] + ("o" if in_order else "")
         st = self.state.setdefault("pools", {}).get(pool)
         if not isinstance(st, dict) or st.get("key") != key or not self._valid(st, len(quotes)):
-            st = {"key": key, "order": self._shuffled(len(quotes), None, quotes), "pos": 0}
+            st = {"key": key, "order": self._order(len(quotes), None, quotes, in_order), "pos": 0}
         for _ in range(len(quotes)):
             if st["pos"] >= len(st["order"]):
                 prev = quotes[st["order"][-1]] if st["order"] else None
-                st["order"], st["pos"] = self._shuffled(len(quotes), prev, quotes), 0
-            quote = quotes[st["order"][st["pos"]]]
+                st["order"], st["pos"] = self._order(len(quotes), prev, quotes, in_order), 0
+            index = st["order"][st["pos"]]
             st["pos"] += 1
-            filled = _fill(quote, values)
+            filled = _fill(quotes[index], values)
             if filled is not None:
                 self.state["pools"][pool] = st
-                self.state["last_quip"] = now.isoformat(timespec="seconds")
+                if cooldown:
+                    self.state["last_quip"] = now.isoformat(timespec="seconds")
+                self.last_index = index
                 return filled
         self.state["pools"][pool] = st
         return None
+
+    def _order(self, n: int, prev: str | None, quotes: list[str], in_order: bool) -> list[int]:
+        return list(range(n)) if in_order else self._shuffled(n, prev, quotes)
 
     @staticmethod
     def _valid(st: dict, n: int) -> bool:

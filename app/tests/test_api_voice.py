@@ -135,6 +135,8 @@ async def test_stop_and_edit_quotes_want_json(client, paths):
     assert (await client.post("/api/voice/stop", data="x")).status == 415
     assert (await client.post("/api/voice/edit-quotes", json={})).status == 204
     assert client.server.app["opened"] == [paths.brain / "_voice" / "quotes.md"]
+    assert (await client.post("/api/voice/edit-lines", json={})).status == 204  # seeded at start
+    assert client.server.app["opened"][-1] == paths.brain / "_voice" / "lines.md"
 
 
 async def test_switching_the_voice_off_stops_it(client):

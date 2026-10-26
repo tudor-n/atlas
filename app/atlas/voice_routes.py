@@ -17,6 +17,7 @@ from aiohttp import web
 from . import osdirs
 from . import voice_files as vf
 from .config import VOICE_IDS, load_settings, validate_setting
+from .lines import lines_path
 from .quotes import quotes_path
 from .routes import body_dict
 from .voice import TICK_S, Announcer, Speaker
@@ -45,7 +46,9 @@ def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> Non
     app["voice"] = Announcer(
         settings=lambda: load_settings(paths), brain=paths.brain, state_path=state / "voice.json",
         files=lambda s: vf.files(paths.data, s["voice_model"]),
-        items=lambda: app["store"].list_items(status=["open", "snoozed"]), speaker=app["voice_speaker"])
+        items=lambda: app["store"].list_items(status=["open", "snoozed"]), speaker=app["voice_speaker"],
+        # The store's rows, not the tracker's: the tracker calls the voice under its own lock.
+        agents=lambda: app["store"].list_agents())
 
 
 async def voice_tick(app: web.Application) -> None:
@@ -154,6 +157,16 @@ async def post_edit_quotes(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def post_edit_lines(request: web.Request) -> web.Response:
+    _voice(request)
+    await body_dict(request)
+    path = lines_path(request.app["paths"].brain)
+    if not path.is_file():
+        raise web.HTTPNotFound(reason="the info lines file isn't there yet: it's made when ATLAS next starts")
+    await t(request.app.get("file_opener", _open_file), path)
+    return web.Response(status=204)
+
+
 def add_voice_routes(app: web.Application) -> None:
     app.router.add_get("/api/voice", get_voice)
     app.router.add_post("/api/voice/download", post_download)
@@ -161,3 +174,4 @@ def add_voice_routes(app: web.Application) -> None:
     app.router.add_post("/api/voice/pause", post_pause)
     app.router.add_post("/api/voice/stop", post_stop)
     app.router.add_post("/api/voice/edit-quotes", post_edit_quotes)
+    app.router.add_post("/api/voice/edit-lines", post_edit_lines)
