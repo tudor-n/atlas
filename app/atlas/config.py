@@ -44,8 +44,9 @@ DEFAULT_SETTINGS: dict = {
                             "bouldering", "boxing", "strength training", "weight training", "exercise",
                             "exercises", "physio"],
     # Owner, 2026-10-24: the voice was lost under music. Boost evens every line out to a steady
-    # loudness; duck_to is the share (%) of their volume other apps keep while ATLAS speaks (100 = off).
-    "voice_boost": True, "voice_duck_to": 30,
+    # loudness; duck_to is the share (%) of their loudness other apps keep while ATLAS speaks
+    # (amplitude: 50 = -6 dB, slightly dulled; 100 = off). 2026-10-26: 30 → 50, see V-L4.
+    "voice_boost": True, "voice_duck_to": 50,
 }
 
 VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback", "reply")

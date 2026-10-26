@@ -54,7 +54,7 @@ Tell Claude about anything that fails.
   - an agent that works for 2 minutes or more ("… has finished. It took …");
   - a reminder due a minute ahead;
   - a tablet note ("Note saved. …").
-- [ ] **Over music** (2026-10-24): play Spotify loud, then press Settings → Voice → **Play sample**. The voice should carry, and the music should dip while it speaks and come back after. Tune **Volume** and **Other sounds while speaking** to taste.
+- [ ] **Over music** (2026-10-24): play Spotify loud, then press Settings → Voice → **Play sample**. The voice should carry, and the music should dip while it speaks and come back after. Tune **Volume** and **Other sounds while speaking** to taste. Since 2026-10-26 (PR #22) the music only dulls instead of nearly vanishing; if Settings → Voice shows 30 there (saved before), move it to 50 for the lighter dip.
 - [ ] **Workouts** (2026-10-24): add a reminder like "Leg day" a minute ahead. It should say "Workout time. Leg day." and a gym quip. Read the `## workout` section in Settings → Voice → **Edit quotes** and change what doesn't land; add your own words under **Workout words**.
 - [ ] Tray → **Pause voice** → For 1 hour: nothing is spoken. Then **Resume**.
 - [ ] The widget's speaker icon switches the voice off and on.

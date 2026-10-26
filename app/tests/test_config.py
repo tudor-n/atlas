@@ -185,6 +185,12 @@ def test_voice_defaults(paths):
     assert s["voice_blend"] == {"bm_george": 0.7, "bm_fable": 0.3}  # Atlas's voice (owner)
     assert s["voice_speed"] == 0.95 and s["voice_volume"] == 80 and s["voice_model"] == "int8"
     assert s["voice_finish_min_s"] == 120
+    assert s["voice_boost"] is True and s["voice_duck_to"] == 50  # slightly dulled, -6 dB (V-L4)
+
+
+def test_a_saved_duck_level_is_kept(paths):
+    save_settings(paths, {"voice_duck_to": 30})
+    assert load_settings(paths)["voice_duck_to"] == 30
 
 
 def test_voice_events_validation(paths):
