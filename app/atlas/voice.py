@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from . import chattiness as ch
 from . import lines as ln
 from . import voice_lines as vl
 from .quotes import POOLS, QuotePicker, load_quotes
@@ -41,6 +42,10 @@ STALE_S = 60  # a line older than this when its turn comes is dropped
 IDLE_S = 600  # the worker exits after this long with nothing to say
 REPLY_TIMEOUT_S = 120
 LOG_MAX = 1_000_000  # bytes of voice-worker.log before it's rotated
+SHH_S = 30  # a pause or a voice-off this soon after an unprompted line is a shh for its event
+SHH_DAYS = 7
+SHH_LIMIT = 3  # this many shhs in SHH_DAYS halve that event's lines (learned restraint)
+RECENT_MAX = 20
 AGAIN_S = 600  # the same session waiting again within this gets the short form
 CATCH_UP_MAX = timedelta(hours=24)
 CATCH_UP_GAP = timedelta(minutes=5)  # a tick this late means the laptop slept: treat it as a start  # more missed than this counts as none: Today's Overdue has them
@@ -126,7 +131,7 @@ class VoiceState:
             self.data = data if isinstance(data, dict) else {}
         except (OSError, ValueError):
             self.data = {}
-        for key in ("quotes", "lines"):
+        for key in ("quotes", "lines", "chatter"):
             if not isinstance(self.data.get(key), dict):
                 self.data[key] = {}
 
@@ -153,9 +158,16 @@ class Announcer:
     def __init__(self, *, settings: Callable[[], dict], brain: Path, state_path: Path,
                  files: Callable[[dict], dict | None], items: Callable[[], list],
                  speaker: "Speaker", now: Callable[[], datetime] = datetime.now,
-                 merge_s: float = MERGE_S, rng=None, agents: Callable[[], list[dict]] | None = None):
+                 merge_s: float = MERGE_S, rng=None, agents: Callable[[], list[dict]] | None = None,
+                 presence=None, on_line: Callable[[dict], None] | None = None):
         self._settings, self._brain, self._files, self._items = settings, Path(brain), files, items
-        self._agents = agents
+        self._agents, self.presence, self.on_line = agents, presence, on_line
+        self.busy: Callable[[], bool] | None = None  # set by Chatter: the mood (no quips when it's hectic)
+        self.recent: deque[dict] = deque(maxlen=RECENT_MAX)  # what was said or captioned, for the debug panel
+        self._budget: deque[datetime] = deque()  # when each budgeted line was spoken, the last hour
+        self._last_budgeted: tuple[str, datetime] | None = None
+        self._chat_n = 0
+        self._restrained: dict[str, int] = {}
         self._speaker, self._now, self._merge_s = speaker, now, merge_s
         self._lock = threading.RLock()
         self._state = VoiceState(state_path)
@@ -190,6 +202,7 @@ class Announcer:
         until = next_morning(now, self._settings()["quiet_hours"]) if until_morning else now + timedelta(minutes=minutes or 60)
         with self._lock:
             self._state.set_time("paused_until", until)
+            self.shh()
             self._state.save()
             self._drop_pending()
         self._speaker.stop()
@@ -281,14 +294,15 @@ class Announcer:
         """Caller holds the lock. (line, meta): a wording from lines.md with the facts filled in,
         else the fixed line. meta says where it came from and whether it carries its own quip."""
         try:
-            pools, nums, _ = ln.load_lines(self._brain)
+            pools, nums, _ = ln.load_all(self._brain)
             wordings = pools.get(pool) or []
             filled = self._lines.pick(pool, wordings, values, self._now(), cooldown=False,
                                       in_order=self._settings().get("voice_chattiness") == "debug")
             if filled is not None:
                 text, fused = ln.unfuse(filled)
                 self._state.save()
-                origin = f"{ln.REL_PATH}:{nums[pool][self._lines.last_index]}"
+                n = nums[pool][self._lines.last_index]
+                origin = n if isinstance(n, str) else f"{ln.REL_PATH}:{n}"
                 return text[:1].upper() + text[1:], {"fused": fused, "origin": origin}
         except Exception:
             log.exception("voice: the %s wording failed", pool)
@@ -327,10 +341,12 @@ class Announcer:
                     if quip:
                         parts.append(quip)
                 files = self._files(s)
-                if files is not None and self._gate("reply", s, now):
+                spoken = files is not None and self._gate("reply", s, now)
+                if spoken:
                     line = Line("reply", info, {**meta, "line": info}, now, parts=parts)
                     line.request = _request(parts, s, files)
                     self._speaker.say(line)
+                self._emit_line("reply", " ".join(parts), meta["origin"], spoken, kind)
                 return " ".join(parts)
         except Exception:
             log.exception("voice: the reply failed")
@@ -412,7 +428,7 @@ class Announcer:
         kind = "reminder" if event == "catch_up" else event
         if not s["voice_events"].get(kind, False):
             return False
-        if in_quiet_hours(now, s["quiet_hours"]):
+        if in_quiet_hours(now, s["quiet_hours"]) and not ch.level(s).debug:
             return False
         until = self._state.get_time("paused_until")
         return not (until and until > now)
@@ -488,6 +504,137 @@ class Announcer:
         line = Line(event, info, lines[0].meta, lines[0].created, parts=parts)
         line.request = _request(parts, s, files)
         self._speaker.say(line)
+        self._emit_line(event, " ".join(parts), lines[0].meta.get("origin", "fixed"), True, "")
+
+    # -- chatter: what ATLAS says unprompted (chatter spec §3–§4) -------------------------------
+    def word(self, pool: str, values: dict, fallback: str) -> tuple[str, dict]:
+        """A wording from lines.md (or the fallback), for a part of a line Chatter puts together."""
+        with self._lock:
+            return self._info(pool, values, fallback)
+
+    def chat(self, event: str, pool: str, values: dict, fallback: str, *, key: tuple | None = None,
+             why: str = "", budgeted: bool = True, force: bool = False, quip: bool = True,
+             text: str | None = None) -> dict | None:
+        """One of chatter's lines: worded (or `text` as given), then spoken when the gates, the
+        chattiness level, the hourly budget, presence and learned restraint allow, else only
+        captioned. `force` (the debug panel's Try it now) skips the level, the budget, presence and
+        restraint, but never the voice switch or a pause. Returns what was said or captioned, None
+        for a repeat of `key`. Never raises."""
+        try:
+            with self._lock:
+                s, now = self._settings(), self._now()
+                if key is not None:
+                    if key in self._spoken:
+                        return None
+                    self._spoken.add(key)
+                lvl = ch.level(s)
+                if text is None:
+                    info, meta = self._info(pool, values, fallback)
+                else:
+                    info, meta = text, {"fused": False, "origin": "fixed"}
+                spoken, reason = self._may_chat(event, s, lvl, now, budgeted, force)
+                parts = [info]
+                self._chat_n += 1
+                if (quip and s["voice_sass"] and not meta["fused"] and lvl.quip_every
+                        and (force or self._chat_n % lvl.quip_every == 0) and not (budgeted and self._hectic(lvl))):
+                    pool_name = "self" if event == "musing" else event
+                    quotes, _ = load_quotes(self._brain)
+                    q = self._picker.pick(pool_name, quotes.get(pool_name, []), {k: v for k, v in values.items()
+                                          if isinstance(v, str)}, now, cooldown=lvl.cooldown, in_order=lvl.debug)
+                    if q:
+                        parts.append(q)
+                if spoken:
+                    files = self._files(s)
+                    line = Line(event, info, {**meta, "line": info}, now, parts=parts)
+                    line.request = _request(parts, s, files)
+                    self._speaker.say(line)
+                    if budgeted:
+                        self._budget.append(now)
+                        self._last_budgeted = (event, now)
+                self._state.save()
+                said = " ".join(parts)
+                self._emit_line(event, said, meta["origin"], spoken, why if spoken else f"{why} ({reason})".strip())
+                return {"text": said, "spoken": spoken, "origin": meta["origin"], "why": reason or why}
+        except Exception:
+            log.exception("voice: the %s line failed", event)
+            return None
+
+    def _may_chat(self, event: str, s: dict, lvl, now: datetime, budgeted: bool, force: bool) -> tuple[bool, str]:
+        """Caller holds the lock: (speak it?, why not)."""
+        gate_event = "self" if event == "musing" else event
+        if not self._gate(gate_event, s, now):
+            return False, "voice off, paused, quiet hours or switched off"
+        if force:
+            return True, ""
+        if lvl.name == "mute":
+            return False, "chattiness is mute"
+        if not budgeted:
+            return True, ""
+        while self._budget and now - self._budget[0] > timedelta(hours=1):
+            self._budget.popleft()
+        if lvl.per_hour is not None and len(self._budget) >= lvl.per_hour:
+            return False, "over this hour's budget"
+        if not lvl.debug and self.presence is not None and self.presence.state() != "present":
+            return False, "you're not at the PC"
+        if not lvl.debug and self.restrained(event, now):
+            n = self._restrained.get(event, 0) + 1
+            self._restrained[event] = n
+            if n % 2:
+                return False, "learned restraint"
+        return True, ""
+
+    def _hectic(self, lvl) -> bool:
+        if not lvl.callbacks or self.busy is None:
+            return False
+        try:
+            return bool(self.busy())
+        except Exception:
+            return False
+
+    def shh(self) -> str | None:
+        """A pause, a voice-off or a chattiness drop: a shh for the unprompted line just said, if
+        any within SHH_S. Returns the event when this shh made it restrained (announce it once)."""
+        with self._lock:
+            last, self._last_budgeted = self._last_budgeted, None
+            now = self._now()
+            if last is None or (now - last[1]).total_seconds() > SHH_S:
+                return None
+            event = last[0]
+            shh = self._state.data["chatter"].setdefault("shh", {})
+            stamps = [x for x in shh.get(event, []) if _fresh(x, now, SHH_DAYS)] + [now.isoformat(timespec="seconds")]
+            shh[event] = stamps
+            self._state.save()
+            return event if len(stamps) == SHH_LIMIT else None
+
+    def restrained(self, event: str, now: datetime | None = None) -> bool:
+        now = now or self._now()
+        stamps = self._state.data["chatter"].get("shh", {}).get(event, [])
+        return sum(1 for x in stamps if _fresh(x, now, SHH_DAYS)) >= SHH_LIMIT
+
+    def reset_restraint(self) -> None:
+        """A new chattiness level starts with a clean slate."""
+        with self._lock:
+            self._state.data["chatter"]["shh"] = {}
+            self._restrained.clear()
+            self._state.save()
+
+    def chatter_state(self) -> dict:
+        """Chatter's own per-OS memory in voice.json (caller-owned keys; save with save_state)."""
+        return self._state.data["chatter"]
+
+    def save_state(self) -> None:
+        with self._lock:
+            self._state.save()
+
+    def _emit_line(self, event: str, text: str, origin: str, spoken: bool, why: str) -> None:
+        entry = {"event": event, "text": text, "origin": origin, "spoken": spoken, "why": why,
+                 "at": self._now().isoformat(timespec="seconds")}
+        self.recent.append(entry)
+        if self.on_line is not None:
+            try:
+                self.on_line(entry)
+            except Exception:
+                log.exception("voice: the line broadcast failed")
 
     def _merged(self, event: str, lines: list[Line]) -> tuple[str, dict]:
         """Caller holds the lock: several lines of one kind that arrived together, as one."""
@@ -528,6 +675,11 @@ class Announcer:
 def _tod(now: datetime) -> str:
     from .quotes import time_of_day
     return time_of_day(now)
+
+
+def _fresh(stamp, now: datetime, days: int) -> bool:
+    t = _parse(stamp)
+    return t is not None and timedelta(0) <= now - t <= timedelta(days=days)
 
 
 def _parse(s) -> datetime | None:

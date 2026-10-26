@@ -82,6 +82,15 @@ class Reviewer:
         self.store.export_items(self.paths.brain)
         self.on_commit(self.repo.commit_all(message))
 
+    @_serialized
+    def add_task(self, text: str, *, project: str | None, area: str, source: str) -> Item:
+        """A task the owner confirmed outside a filing card (ATLAS's weekly self-review: chatter
+        pattern C). The owner's ✓ is the confirmation (rule 2); exported and committed like any."""
+        item = self.store.create_item(kind="task", text=text, area=area, project=project,
+                                      source_entry=source, status="open")
+        self._finish("confirm: 1 item (ATLAS's week)")
+        return item
+
     # -- proposals -----------------------------------------------------------
     @_serialized
     def confirm(self, ids: list[str]) -> list[Item]:

@@ -279,3 +279,33 @@ async def test_the_page_hears_when_a_line_sounds_and_ends(client, paths):
     assert kinds[:2] == ["voice.speaking", "voice.quiet"]
     speaking = next(d for k, d in sent if k == "voice.speaking")
     assert speaking["frame_ms"] == 40 and len(speaking["env"]) == 50  # the sample's two parts, a second each
+
+
+# -- chatter (2026-10-26) ---------------------------------------------------------------------------
+async def test_chatter_endpoints(client, paths):
+    _install(paths)
+    app = client.server.app
+    assert (await client.post("/api/presence", json={})).status == 204
+    assert app["presence"].state() == "present"
+    view = await (await client.get("/api/chatter")).json()
+    assert view["available"] and view["level"] == "medium" and view["per_hour"] == 4
+    assert view["presence"]["state"] == "present" and isinstance(view["recent"], list)
+    r = await client.post("/api/chatter/react", json={"kind": "flip_ask"})
+    assert r.status == 200 and (await r.json())["said"]["text"]
+    assert (await client.post("/api/chatter/react", json={"kind": "nope"})).status == 400
+    assert (await client.post("/api/chatter/try", json={"what": "musing"})).status == 409  # only at Very high
+    assert (await client.put("/api/settings", json={"voice_chattiness": "debug"})).status == 200
+    assert app["voice"].chatter_state()["debug"]["before"] == "medium"
+    r = await client.post("/api/chatter/try", json={"what": "musing"})
+    assert r.status == 200 and (await r.json())["said"]["spoken"] is True
+    assert (await client.post("/api/chatter/try", json={"what": "nope"})).status == 400
+
+
+async def test_a_pc_write_is_the_owner_and_a_hook_is_not(client):
+    app = client.server.app
+    seen = []
+    app["presence"].seen = seen.append
+    await client.post("/api/hooks/event", json={"session_id": "s", "hook_event_name": "Stop", "cwd": "/tmp"})
+    assert seen == []
+    await client.put("/api/settings", json={"voice_volume": 40})
+    assert seen == ["app"]

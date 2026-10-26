@@ -523,4 +523,8 @@ def load_quotes(brain: Path) -> tuple[dict[str, list[str]], list[str]]:
         return {p: [] for p in POOLS}, []
     except (OSError, UnicodeDecodeError) as e:
         return {p: [] for p in POOLS}, [f"{REL_PATH} can't be read ({e})"]
-    return parse(text)
+    pools, problems = parse(text)
+    from .lines import load_generated  # the overnight batch's quips (chatter pattern A), merged in
+    for pool, extra in load_generated(brain)[0].items():
+        pools[pool] = pools[pool] + [q for q, _ in extra if q not in pools[pool]]
+    return pools, problems

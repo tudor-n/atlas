@@ -270,6 +270,7 @@ async def put_settings(request: web.Request) -> web.Response:
     if request.app.get("voice") is not None:
         if before["voice_enabled"] and not saved["voice_enabled"]:
             await t(request.app["voice"].stop)  # switched off: silent now, mid-sentence included
+        await t(request.app["chatter"].settings_changed, before, saved)  # ATLAS notices (chatter §3.5)
         await request.app["broadcast"]("voice.changed", {})
     return web.json_response(saved)
 
@@ -304,6 +305,9 @@ async def reply_to_filing(app: web.Application, entry_id: str, done: bool) -> No
     if not done:
         await atlas_reply(app, "failed", entry_id=entry_id)
         return
+    filing = await t(app["store"].get_filing, entry_id)
+    if filing is not None and app.get("chatter") is not None:
+        await t(app["chatter"].on_filed, list(filing.files or []))  # a note about ATLAS itself
     proposals = await t(app["store"].list_proposals, entry_id=entry_id)
     items = sum(1 for p in proposals if p.ptype == "item")
     others = len(proposals) - items
@@ -428,6 +432,7 @@ async def retry_filing(request: web.Request) -> web.Response:
     await t(app["worker"].mark_queued, eid)
     app["worker"].replies.add(eid)  # the owner pressed RETRY: they're waiting on it
     app["worker"].queue.put_nowait(eid)
+    await _react(app, "retry")
     return web.json_response({"ok": True}, status=202)
 
 
@@ -454,7 +459,28 @@ async def correct_filing(request: web.Request) -> web.Response:
     task = asyncio.create_task(run())
     app["background"].add(task)
     task.add_done_callback(app["background"].discard)
+    await _react(app, "correction")
     return web.json_response({"ok": True}, status=202)
+
+
+async def _react(app: web.Application, kind: str, count: int = 0) -> None:
+    """ATLAS reacts to what the owner just did (chatter §3), never failing the request."""
+    if app.get("chatter") is None:
+        return
+    try:
+        await t(app["chatter"].react, kind, count)
+    except Exception:
+        log.exception("chatter: the %s reaction failed", kind)
+
+
+async def _whole_cards(app: web.Application, ids: list[str]):
+    """The entries these proposal ids belong to, read before a confirm or dismiss."""
+    return {p.entry_id for p in await t(app["store"].list_proposals) if p.id in set(ids)}
+
+
+async def _cards_done(app: web.Application, entries: set) -> bool:
+    left = await t(app["store"].list_proposals)
+    return bool(entries) and not any(p.entry_id in entries for p in left)
 
 
 # -- handlers: review --------------------------------------------------------
@@ -480,16 +506,27 @@ async def patch_proposal(request: web.Request) -> web.Response:
 
 async def confirm(request: web.Request) -> web.Response:
     app = request.app
-    items = await t(app["reviewer"].confirm, ids_from(await body_dict(request)))
+    ids = ids_from(await body_dict(request))
+    cards = await _whole_cards(app, ids)
+    items = await t(app["reviewer"].confirm, ids)
     await app["broadcast"]("items.changed", {})
     await app["broadcast"]("map.changed", {})
+    if app.get("chatter") is not None:
+        try:
+            await t(app["chatter"].on_confirmed, items, await _cards_done(app, cards))
+        except Exception:
+            log.exception("chatter: on confirm failed")
     return web.json_response([asdict(i) for i in items])
 
 
 async def dismiss(request: web.Request) -> web.Response:
     app = request.app
-    await t(app["reviewer"].dismiss, ids_from(await body_dict(request)))
+    ids = ids_from(await body_dict(request))
+    cards = await _whole_cards(app, ids)
+    await t(app["reviewer"].dismiss, ids)
     await app["broadcast"]("items.changed", {})
+    if len(ids) >= 2 and await _cards_done(app, cards):
+        await _react(app, "dismiss_all", len(ids))
     return web.json_response({"ok": True})
 
 

@@ -32,7 +32,7 @@ from .store import SchemaTooNew, Store, commit_hook
 from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
 from .tablet_routes import add_tablet_routes
 from .usage import UsageStore, rate_limits_from_event
-from .voice_routes import add_voice_routes, close_voice, setup_voice, voice_tick
+from .voice_routes import add_voice_routes, agent_transition, close_voice, setup_voice, voice_tick
 from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ def _flush_held(app: web.Application) -> None:
     Captures held for another ATLAS folder (this OS's state folder is shared by every hub on
     it) stay held, in one line of startup_errors."""
     done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
+    app["held_flushed"] = sum(1 for e in done.appended if e not in done.tablet)
     for entry_id in done.appended:
         if entry_id not in done.tablet:  # tablet notes are kept, never filed automatically (phase 3)
             app["worker"].mark_queued(entry_id)
@@ -254,6 +255,7 @@ async def on_startup(app: web.Application) -> None:
                          asyncio.create_task(app["backup"].run_forever()),
                          asyncio.create_task(_prune_agents(app))]
         if app.get("voice") is not None:
+            await t(app["chatter"].startup, app.get("held_flushed", 0))  # an update, held notes flushed
             app["tasks"].append(asyncio.create_task(voice_tick(app)))
 
 
@@ -416,7 +418,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     # Phase 4: the voice (None on a read-only root). It hears the agents' status changes.
     setup_voice(app, speaker_env=voice_env)
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths),
-                                 on_transition=app["voice"].agent_transition if app["voice"] else None)
+                                 on_transition=agent_transition(app) if app["voice"] else None)
 
     app["arm"] = ArmProbe()
     # The port the hub listens on: run_server sets the bound one; default to the settings port.

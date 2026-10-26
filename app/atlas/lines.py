@@ -72,7 +72,7 @@ _pool("react.confirm_all", "count")
 _pool("react.dismiss_all", "", "count")
 for _n in ("react.flip_ask", "react.flip_note", "react.correction", "react.retry", "react.pause"):
     _pool(_n, "", "count")
-_pool("self.updated", "count")
+_pool("self.updated", "", "count")
 _pool("self.flushed", "count")
 _pool("self.usage", "percent")
 for _n in ("self.quotes_edited", "self.lines_edited", "self.atlas_note", "self.musing", "self.week",
@@ -386,6 +386,7 @@ Fine. Shutting up.
 ## self.updated
 I've been updated. {count} new changes. I feel lighter.
 I was updated. {count} changes. I'm told I'm better now.
+I've been updated. I feel different. Better, probably.
 
 ## self.flushed
 The drive is back. {count} held notes are in the log.
@@ -564,6 +565,56 @@ def load_lines(brain: Path) -> tuple[dict[str, list[str]], dict[str, list[int]],
     except (OSError, UnicodeDecodeError) as e:
         return {p: [] for p in POOLS}, {p: [] for p in POOLS}, [f"{REL_PATH} can't be read ({e})"]
     return parse(text)
+
+
+def load_all(brain: Path) -> tuple[dict[str, list[str]], dict[str, list], list[str]]:
+    """The owner's wordings plus the overnight batch's: origins are line numbers in lines.md, or
+    "generated.md:<n>" strings for the batch's."""
+    pools, nums, problems = load_lines(brain)
+    pools = {k: list(v) for k, v in pools.items()}
+    nums = {k: list(v) for k, v in nums.items()}
+    for pool, extra in load_generated(brain)[1].items():
+        for line, n in extra:
+            pools[pool].append(line)
+            nums[pool].append(f"generated.md:{n}")
+    return pools, nums, problems
+
+
+GENERATED_PATH = "_voice/generated.md"  # pattern A's overnight batch (chatter spec §6): the hub's, replaced per batch
+
+
+def generated_path(brain: Path) -> Path:
+    return Path(brain) / GENERATED_PATH
+
+
+def load_generated(brain: Path) -> tuple[dict[str, list[tuple[str, int]]], dict[str, list[tuple[str, int]]]]:
+    """(quips, wordings) from generated.md, each pool's lines with their line numbers. A line that
+    breaks its pool's rules is left out, as in the owner's files; a missing file is empty."""
+    from .quotes import POOLS as QUIP_POOLS, parse as parse_quips
+    quips: dict[str, list[tuple[str, int]]] = {}
+    wordings: dict[str, list[tuple[str, int]]] = {}
+    try:
+        text = generated_path(brain).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return quips, wordings
+    kind = pool = None
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or (line.startswith("#") and not line.startswith("##")):
+            continue
+        if line.startswith("##"):
+            parts = line.lstrip("#").split()
+            kind, pool = (parts[0], parts[1]) if len(parts) == 2 else (None, None)
+            continue
+        if kind == "quips" and pool in QUIP_POOLS:
+            got, problems = parse_quips(f"## {pool}\n{line}\n")
+            if not problems and got[pool]:
+                quips.setdefault(pool, []).append((line, n))
+        elif kind == "lines" and pool in POOLS:
+            got, _, problems = parse(f"## {pool}\n{line}\n")
+            if not problems and got[pool]:
+                wordings.setdefault(pool, []).append((line, n))
+    return quips, wordings
 
 
 def unfuse(wording: str) -> tuple[str, bool]:
