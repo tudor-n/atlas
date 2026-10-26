@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import subprocess
 import threading
 from collections.abc import Callable
@@ -32,8 +33,11 @@ REACT_GAP = timedelta(minutes=1)
 SETTLE_S = 5.0  # a burst of settings saves becomes one line, this long after the last
 APPROACH = (timedelta(hours=2), timedelta(hours=1), timedelta(minutes=15))
 SLOT_WORDS = {APPROACH[0]: "in two hours", APPROACH[1]: "in an hour", APPROACH[2]: "in fifteen minutes"}
-SESSION_LINE_GAP = timedelta(hours=1)  # an ATLAS session starting a turn: one line per session an hour
-EVENT_WORDS = {"agent_waiting": "agents waiting", "agent_finished": "agents finishing", "reminder": "reminders",
+SESSION_LINE_GAP = timedelta(hours=1)
+RESTART_GAP = timedelta(minutes=3)  # alive this recently: a restart (update, crash, drive back), not a hello
+GOODBYE_WAIT_S = 7.0  # the shell gives the hub 10 s after SIGTERM
+_DAYS_OF_WEEK = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")  # an ATLAS session starting a turn: one line per session an hour
+EVENT_WORDS = {"greet": "hellos and goodbyes", "agent_waiting": "agents waiting", "agent_finished": "agents finishing", "reminder": "reminders",
                "readback": "readbacks", "reply": "replies", "briefing": "briefings", "self": "remarks about me",
                "nudge": "nudges", "react": "reactions", "due_today": "due today reminders", "tease": "teasing"}
 
@@ -89,6 +93,8 @@ class Chatter:
         self._now, self._save_settings, self._roots, self._load_map = now, save_settings, roots, load_map
         self._commit, self._count_commits, self._settle_s = commit, count_commits, settle_s
         self.sub = None  # the subscription's patterns (chatter_sub.Sub), when wired
+        self._rng = random.Random()
+        self._started: datetime | None = None
         self._lock = voice._lock  # one lock for voice.json: the Announcer's
         self._away_log: dict = {"finished": [], "since": None}
         self._pending_settings: tuple[dict, dict] | None = None
@@ -203,6 +209,7 @@ class Chatter:
             s = self._settings()
             if s.get("voice_chattiness") == "debug":
                 self._leave_debug((self._st.get("debug") or {}).get("before") or "medium")
+            self.greet()
             commit = self._commit()
             with self._lock:
                 old = self._st.get("commit")
@@ -220,6 +227,32 @@ class Chatter:
                             why="held notes flushed")
         except Exception:
             log.exception("chatter: the start failed")
+
+    # -- hello and goodbye (owner, 2026-10-26) ---------------------------------------------------
+    def greet(self) -> dict | None:
+        """Once per real start, not after a restart (an update, a crash, the drive coming back)."""
+        now = self._now()
+        self._started = now
+        last = self.v.last_alive()
+        if last is not None and timedelta(0) <= now - last < RESTART_GAP:
+            return None
+        pool, values = greeting(now, last, self._rng)
+        return self.v.chat("greet", pool, values, "Hello.", budgeted=False, quip=False, quiet_ok=True,
+                           why="ATLAS started")
+
+    def goodbye(self, wait_s: float = GOODBYE_WAIT_S) -> dict | None:
+        """When the owner quits ATLAS: one line, said before the hub goes (at most `wait_s`)."""
+        try:
+            now = self._now()
+            pool, values = farewell(now, self._started, self._rng)
+            said = self.v.chat("greet", pool, values, "Bye.", budgeted=False, quip=False, quiet_ok=True,
+                               why="ATLAS is closing")
+            if said and said["spoken"]:
+                self.v.wait_quiet(wait_s)
+            return said
+        except Exception:
+            log.exception("chatter: the goodbye failed")
+            return None
 
     # -- briefings --------------------------------------------------------------------------------
     def facts(self, since: datetime | None = None) -> list[tuple[str, dict, str]]:
@@ -769,6 +802,63 @@ class Chatter:
             self._last_react = None
             return self.v.chat("react", "react.correction", {"count": "one"}, "Noted.", force=True, why="try it now")
         raise ValueError(f"unknown: {what}")
+
+
+def _slot(hour: int) -> str:
+    if 5 <= hour < 8:
+        return "early"
+    if 8 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    return "evening" if 17 <= hour < 22 else "late"
+
+
+def greeting(now: datetime, last_alive: datetime | None, rng: random.Random) -> tuple[str, dict]:
+    """(pool, values) for a hello: something special about today half the time it applies (back
+    after days away, back again today, Monday morning, Friday afternoon, the weekend), else the time
+    of day."""
+    day = _DAYS_OF_WEEK[now.weekday()]
+    values = {"day": day}
+    slot = _slot(now.hour)
+    special: list[tuple[str, dict]] = []
+    if last_alive is not None:
+        away = now.date() - last_alive.date()
+        if away.days >= 2:
+            special.append(("greeting.back_days", {**values, "days": _days(away.days)}))
+        elif away.days == 0 and now - last_alive < timedelta(hours=3):
+            special.append(("greeting.again", values))
+    if now.weekday() == 0 and slot in ("early", "morning"):
+        special.append(("greeting.monday", values))
+    if now.weekday() == 4 and slot in ("afternoon", "evening"):
+        special.append(("greeting.friday", values))
+    if now.weekday() >= 5 and slot != "late":
+        special.append(("greeting.weekend", values))
+    if special and (special[0][0] == "greeting.back_days" or rng.random() < 0.5):
+        return special[0] if special[0][0] == "greeting.back_days" else rng.choice(special)
+    return f"greeting.{slot}", values
+
+
+def farewell(now: datetime, started: datetime | None, rng: random.Random) -> tuple[str, dict]:
+    """(pool, values) for a goodbye: a very short or very long run half the time, Friday or the
+    weekend half the time, else the time of day."""
+    day = _DAYS_OF_WEEK[now.weekday()]
+    values = {"day": day}
+    slot = _slot(now.hour)
+    special: list[tuple[str, dict]] = []
+    if started is not None:
+        ran = now - started
+        if timedelta(minutes=2) <= ran < timedelta(minutes=15):
+            special.append(("goodbye.short", {"duration": vl.duration_words(ran.total_seconds())}))
+        elif ran >= timedelta(hours=6):
+            special.append(("goodbye.long", {"duration": vl.duration_words(ran.total_seconds())}))
+    if now.weekday() == 4 and now.hour >= 15:
+        special.append(("goodbye.friday", values))
+    if now.weekday() >= 5 and slot != "late":
+        special.append(("goodbye.weekend", values))
+    if special and rng.random() < 0.5:
+        return rng.choice(special)
+    return f"goodbye.{'morning' if slot == 'early' else slot}", values
 
 
 def settings_remark(before: dict, after: dict) -> tuple[str, dict, str] | None:

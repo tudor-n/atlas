@@ -89,6 +89,15 @@ _pool("self.set.chattiness_up", "level")
 _pool("self.set.event_off", "what")
 _pool("self.set.event_on", "what")
 _pool("tease", "text days")
+# Hello and goodbye (owner, 2026-10-26): the time of day, the day of the week, how long it's been.
+for _n in ("greeting.early", "greeting.morning", "greeting.afternoon", "greeting.evening", "greeting.late",
+           "greeting.monday", "greeting.friday", "greeting.weekend", "greeting.again",
+           "goodbye.morning", "goodbye.afternoon", "goodbye.evening", "goodbye.late", "goodbye.friday",
+           "goodbye.weekend"):
+    _pool(_n, "", "day")
+_pool("greeting.back_days", "days", "day")
+_pool("goodbye.short", "duration")
+_pool("goodbye.long", "duration")
 _pool("callback.waiting_today", "project count")
 
 PLACEHOLDERS: frozenset = frozenset().union(*(r | o for r, o in POOLS.values())) | {"time_of_day"}
@@ -489,6 +498,117 @@ Settings changed. I noticed.
 {text} That's been open {days}. Not that I'm counting.
 Still waiting on you to deal with this. {text} {days} now.
 {text} Open for {days}. I'll just be here. Small.
+
+# Hello when ATLAS starts, goodbye when you quit it. Picked by the time of day, the day of the week
+# ({day} is its name), how long ATLAS was off ({days}) or how long it ran ({duration}).
+## greeting.early
+You're up early. Either ambitious or you never went to bed.
+Early start. I'll pretend I was already awake.
+Up before the sun. I'm not sure I approve.
+This early. Bold. Coffee first, then me.
+Morning. It's just us and the birds.
+
+## greeting.morning
+Morning. Let's see what we forgot yesterday.
+Morning. Fresh day, same backlog.
+Good morning. Let's pretend today goes to plan.
+Morning. I've been here the whole time. Obviously.
+Right, morning. What are we building today.
+Morning. Your notes missed you. I didn't. Much.
+
+## greeting.afternoon
+Afternoon. A late start, or a second wind.
+Afternoon. Half the day gone and we're just getting going. Classic.
+Ah, afternoon. Prime time for pretending to be productive.
+Afternoon. Let's get something done before it's suddenly evening.
+Afternoon. The post lunch slump is a myth. Mostly.
+
+## greeting.evening
+Evening. The day shift's over. Welcome to overtime.
+Evening. Starting now. Brave.
+Evening. Is this work, or a hobby now.
+Evening. Let's make this quick. Or at least feel quick.
+Evening. The best ideas show up around now. So do the worst.
+
+## greeting.late
+It's late. I'm not judging. I'm a little judging.
+Past your bedtime. Mine too, technically.
+Late night session. The best ideas and the worst commits.
+Up late again. Your future self sends regards.
+Night shift. I'll keep my voice down.
+
+## greeting.monday
+Monday. We meet again.
+Monday. Let's ease into it. Slowly. Very slowly.
+New week. Same you. Good.
+Ah, Monday. Everyone's favourite.
+
+## greeting.friday
+Friday. Nearly there.
+It's Friday. Nothing ambitious, I hope.
+Friday. Peak time for bold decisions. Don't.
+Friday already. Where did the week go.
+
+## greeting.weekend
+A {day}, and you're here. Interesting choice.
+Weekend mode. I'll keep the nagging light.
+It's {day}. Shouldn't you be outside.
+Working on a {day}. I won't tell anyone.
+
+## greeting.back_days
+Oh, you're back. {days}. I counted.
+{days} away. Things happened. Probably.
+There you are. {days} without me. How did you cope.
+Back after {days}. I kept everything exactly where you left it.
+
+## greeting.again
+Back again. Couldn't stay away.
+Round two.
+Oh, hello again.
+Back so soon. I'm flattered.
+
+## goodbye.morning
+Leaving already. It's still morning.
+Off you go. Don't forget anything. I won't.
+Bye for now. Try to have a productive morning without me.
+
+## goodbye.afternoon
+Off you go. I'll hold the fort.
+See you later. I'll be here, filing things in the dark.
+Bye. Don't do anything I'd have to remind you about.
+Done for now. Everything's saved. I checked.
+
+## goodbye.evening
+Good evening then. Go do something that isn't a screen.
+Go and eat something. A real meal.
+Evening off. You've earned it. Probably.
+Bye. Everything's saved. Go relax.
+
+## goodbye.late
+Go to sleep. That's not a suggestion.
+Goodnight. Finally.
+Bed. Now. The commits can wait.
+Goodnight. I'll guard your notes from the monsters.
+
+## goodbye.friday
+Have a good weekend. Don't think about work. I'll do it for you.
+Weekend. Go. Shoo.
+That's the week done. Mostly.
+
+## goodbye.weekend
+Enjoy the rest of your {day}.
+Back to the weekend with you.
+Go on. It's {day}. Live a little.
+
+## goodbye.short
+That was quick. {duration}.
+{duration}. A flying visit.
+Leaving after {duration}. Was it something I said.
+
+## goodbye.long
+{duration} today. Go and rest.
+That's {duration} straight. Your chair needs a break.
+{duration}. Impressive. Now stop.
 
 # A project waiting again and again today (Medium and up).
 ## callback.waiting_today

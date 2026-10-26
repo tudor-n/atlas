@@ -67,7 +67,7 @@ test('workoutWords: commas, trimmed, deduplicated, bounded', async () => {
 test('the event switches cover every voice_events key, the chatter ones included', async () => {
   const { EVENT_LABELS } = await import('./voice-model.js');
   assert.deepEqual(EVENT_LABELS.map(([k]) => k), ['agent_waiting', 'agent_finished', 'reminder', 'readback', 'reply',
-    'briefing', 'self', 'nudge', 'react', 'due_today', 'tease']);
+    'briefing', 'self', 'nudge', 'react', 'due_today', 'tease', 'greet']);
 });
 
 test('the level preview follows the table, and the owner cap where it counts', async () => {

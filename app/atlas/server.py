@@ -269,6 +269,8 @@ async def on_cleanup(app: web.Application) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    if app.get("chatter") is not None and app["start_workers"] and app["exit_code"] != EXIT_RESTART:
+        await t(app["chatter"].goodbye)  # the owner quit ATLAS: one line before the voice goes
     await t(close_voice, app)  # the worker (and whatever it's playing) goes with the hub
     if "store" in app:  # the reduced app has none
         app["store"].close()

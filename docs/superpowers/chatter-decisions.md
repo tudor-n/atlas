@@ -59,7 +59,18 @@ The owner asked on 2026-10-26 for "a level of self awareness and chattiness" in 
 - **CH16 "Confirm all" / "dismiss all"** means the call took the last pending proposals of the cards it touched, and at least two of them.
 - **CH18 No "good morning" after midday.** The morning digest plays within 4 h of the end of quiet hours, or not at all that day. When it's skipped, the first due-today repeat is the day's roll call.
 - **CH19 The widget's DEBUG CHATTER tag** reads `chattiness` from `GET /api/voice` (`Announcer.view`).
-- **CH17 Settings saved by another build** keep working as VI5 rules: the six new `voice_events` keys start on.
+- **CH20 Hello and goodbye (owner, 2026-10-26).**
+  - **The switch:** a seventh switch, `greet`.
+  - **When a hello plays:** at a real start only. A start within 3 minutes of the last run's tick is a restart (an update, a crash, the drive coming back), and stays silent.
+  - **When a goodbye plays:** when the hub stops for any reason except `EXIT_RESTART`. It waits up to 7 s for the line to finish, inside the shell's 10 s grace after SIGTERM.
+  - **The gates:** both ignore quiet hours, because they answer the owner's own action. Mute captions them, and a pause or the voice switch silences them.
+- **CH21 How the line is picked:**
+  - **The base:** the time of day (early, morning, afternoon, evening, late).
+  - **Back after two or more days:** always said.
+  - **Back again within 3 hours:** half the time.
+  - **Other specials, half the time:** Monday morning, Friday afternoon, the weekend, a run shorter than 15 minutes or longer than 6 hours.
+  - **The wordings:** pools in `lines.md` (`greeting.*`, `goodbye.*`), with no quip after them: they are the joke.
+- **CH17 Settings saved by another build** keep working as VI5 rules: the seven new `voice_events` keys start on.
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.
@@ -83,3 +94,8 @@ The owner asked on 2026-10-26 for "a level of self awareness and chattiness" in 
 - **What it caught:** Try it now's self line said "zero percent" with no usage reading (fixed).
 - **Afterwards:** the hub (only its own PID) was stopped, and the folders deleted.
 - **In a browser:** the UI was checked in headless Chrome by the subagent that built it.
+- **Hello and goodbye, checked by hand (2026-10-26):** on a scratch hub with the fake voice worker, stopped with SIGTERM as the shell does:
+  - a quit said "Go and eat something. A real meal.";
+  - a restart within 3 minutes said nothing;
+  - a start after an hour said "Back so soon. I'm flattered.";
+  - its quit said "Bye. Everything's saved. Go relax.".

@@ -7,7 +7,7 @@ import pytest
 
 from atlas import chattiness as ch
 from atlas import voice as v
-from atlas.chatter import Chatter, settings_remark
+from atlas.chatter import Chatter, farewell, greeting, settings_remark
 from atlas.config import DEFAULT_SETTINGS
 from atlas.presence import Presence
 
@@ -32,6 +32,10 @@ class Sink:
 
     def stop(self):
         pass
+
+    def wait_quiet(self, timeout):
+        self.waited = timeout
+        return True
 
 
 def item(id_, text="Pay rent", status="open", due=None, kind="task", project=None, created=None,
@@ -335,7 +339,7 @@ def test_the_atlas_project_comes_from_settings_the_map_or_the_slug(env):
 
 def test_startup_says_it_was_updated_and_drops_out_of_debug(env):
     env.c.startup()
-    assert said(env) == []  # the first start: nothing to compare
+    assert said(env) == ["Hello."]  # the first start: a hello, no update to compare
     env.commit = "c2"
     env.settings["voice_chattiness"] = "debug"
     env.a.chatter_state()["debug"] = {"since": T0.isoformat(), "before": "low"}
@@ -438,3 +442,75 @@ def test_try_self_never_makes_up_a_percentage(env):
     assert "percent" not in env.c.try_now("self")["text"]
     env.usage = {"five_hour": {"used": 42}}
     assert "forty-two percent" in env.c.try_now("self")["text"]
+
+
+# -- hello and goodbye (owner, 2026-10-26) ---------------------------------------------------------------
+class Coin:
+    def __init__(self, heads):
+        self.heads = heads
+
+    def random(self):
+        return 0.0 if self.heads else 0.99
+
+    def choice(self, xs):
+        return xs[0]
+
+
+@pytest.mark.parametrize("hour,pool", [(6, "greeting.early"), (9, "greeting.morning"), (14, "greeting.afternoon"),
+                                       (19, "greeting.evening"), (23, "greeting.late"), (2, "greeting.late")])
+def test_a_hello_follows_the_time_of_day(hour, pool):
+    tuesday = datetime(2026, 10, 27, hour, 0)
+    assert greeting(tuesday, tuesday - timedelta(days=1), Coin(True))[0] == pool
+
+
+def test_a_hello_notices_the_day_and_how_long_it_has_been():
+    monday9, friday15, saturday11 = datetime(2026, 10, 26, 9), datetime(2026, 10, 30, 15), datetime(2026, 10, 31, 11)
+    assert greeting(monday9, monday9 - timedelta(days=1), Coin(True))[0] == "greeting.monday"
+    assert greeting(monday9, monday9 - timedelta(days=1), Coin(False))[0] == "greeting.morning"  # half the time
+    assert greeting(friday15, friday15 - timedelta(days=1), Coin(True))[0] == "greeting.friday"
+    assert greeting(saturday11, saturday11 - timedelta(days=1), Coin(True)) == ("greeting.weekend", {"day": "Saturday"})
+    back = greeting(monday9, monday9 - timedelta(days=4), Coin(False))
+    assert back == ("greeting.back_days", {"day": "Monday", "days": "four days"})  # always said
+    assert greeting(friday15, friday15 - timedelta(hours=1), Coin(True))[0] == "greeting.again"
+
+
+def test_a_goodbye_notices_a_short_or_long_run_and_the_weekend():
+    t = datetime(2026, 10, 27, 20)
+    assert farewell(t, t - timedelta(hours=2), Coin(True)) == ("goodbye.evening", {"day": "Tuesday"})
+    assert farewell(t, t - timedelta(minutes=8), Coin(True)) == ("goodbye.short", {"duration": "eight minutes"})
+    assert farewell(t, t - timedelta(hours=7), Coin(True))[0] == "goodbye.long"
+    assert farewell(datetime(2026, 10, 30, 17), None, Coin(True))[0] == "goodbye.friday"
+    assert farewell(datetime(2026, 10, 27, 6), None, Coin(True))[0] == "goodbye.morning"
+    assert farewell(datetime(2026, 10, 27, 1), None, Coin(True))[0] == "goodbye.late"
+
+
+def test_hello_on_a_real_start_never_after_a_restart(env):
+    env.a.tick()  # this run is alive: last_tick saved
+    a2, c2 = env.make()
+    env.now.t += timedelta(minutes=1)
+    assert c2.greet() is None  # a restart
+    env.now.t += timedelta(hours=1)
+    a3, c3 = env.make()
+    said3 = c3.greet()
+    assert said3["spoken"] and said3["why"] == "ATLAS started"
+
+
+def test_hello_and_goodbye_ignore_quiet_hours_but_not_mute_or_pause(env):
+    from atlas.lines import ensure_lines
+    ensure_lines(env.brain)
+    env.now.t = T0.replace(hour=23, minute=30)
+    assert env.c.greet()["spoken"] is True
+    said = env.c.goodbye()
+    assert said["spoken"] is True and env.sink.waited == 7.0
+    env.settings["voice_chattiness"] = "mute"
+    assert env.c.goodbye()["spoken"] is False
+    env.settings["voice_chattiness"] = "medium"
+    env.a.pause(10)
+    assert env.c.goodbye()["spoken"] is False
+
+
+def test_the_seeded_hellos_follow_the_wording_rules():
+    from atlas.lines import POOLS, SEED, parse
+    pools, _, problems = parse(SEED)
+    hello = [p for p in POOLS if p.startswith(("greeting.", "goodbye."))]
+    assert problems == [] and len(hello) == 18 and all(len(pools[p]) >= 3 for p in hello)

@@ -22,6 +22,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time as time_mod
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -424,13 +425,13 @@ class Announcer:
                 self._submit("reminder", line, meta, ("reminder", item.id, raw))
 
     # -- the gates, the merge, the quip ---------------------------------------------------------
-    def _gate(self, event: str, s: dict, now: datetime) -> bool:
+    def _gate(self, event: str, s: dict, now: datetime, quiet_ok: bool = False) -> bool:
         if not s["voice_enabled"] or self._files(s) is None:
             return False
         kind = "reminder" if event == "catch_up" else event
         if not s["voice_events"].get(kind, False):
             return False
-        if in_quiet_hours(now, s["quiet_hours"]) and not ch.level(s).debug:
+        if in_quiet_hours(now, s["quiet_hours"]) and not ch.level(s).debug and not quiet_ok:
             return False
         until = self._state.get_time("paused_until")
         return not (until and until > now)
@@ -516,7 +517,7 @@ class Announcer:
 
     def chat(self, event: str, pool: str, values: dict, fallback: str, *, key: tuple | None = None,
              why: str = "", budgeted: bool = True, force: bool = False, quip: bool = True,
-             text: str | None = None) -> dict | None:
+             text: str | None = None, quiet_ok: bool = False) -> dict | None:
         """One of chatter's lines: worded (or `text` as given), then spoken when the gates, the
         chattiness level, the hourly budget, presence and learned restraint allow, else only
         captioned. `force` (the debug panel's Try it now) skips the level, the budget, presence and
@@ -534,7 +535,7 @@ class Announcer:
                     info, meta = self._info(pool, values, fallback)
                 else:
                     info, meta = text, {"fused": False, "origin": "fixed"}
-                spoken, reason = self._may_chat(event, s, lvl, now, budgeted, force)
+                spoken, reason = self._may_chat(event, s, lvl, now, budgeted, force, quiet_ok)
                 parts = [info]
                 self._chat_n += 1
                 if (quip and s["voice_sass"] and not meta["fused"] and lvl.quip_every
@@ -561,10 +562,12 @@ class Announcer:
             log.exception("voice: the %s line failed", event)
             return None
 
-    def _may_chat(self, event: str, s: dict, lvl, now: datetime, budgeted: bool, force: bool) -> tuple[bool, str]:
-        """Caller holds the lock: (speak it?, why not)."""
+    def _may_chat(self, event: str, s: dict, lvl, now: datetime, budgeted: bool, force: bool,
+                  quiet_ok: bool = False) -> tuple[bool, str]:
+        """Caller holds the lock: (speak it?, why not). `quiet_ok`: the owner's own action (starting or
+        quitting ATLAS), so quiet hours don't apply."""
         gate_event = "self" if event == "musing" else event
-        if not self._gate(gate_event, s, now):
+        if not self._gate(gate_event, s, now, quiet_ok):
             return False, "voice off, paused, quiet hours or switched off"
         if force:
             return True, ""
@@ -627,6 +630,15 @@ class Announcer:
             self._state.data["chatter"]["shh"] = {}
             self._restrained.clear()
             self._state.save()
+
+    def last_alive(self) -> datetime | None:
+        """The last reminder tick of a previous run (read at start, before this run's first tick)."""
+        with self._lock:
+            return self._state.get_time("last_tick")
+
+    def wait_quiet(self, timeout: float) -> bool:
+        """Until what's queued has been said (the goodbye before the hub exits), at most `timeout`."""
+        return self._speaker.wait_quiet(timeout)
 
     def chatter_state(self) -> dict:
         """Chatter's own per-OS memory in voice.json (caller-owned keys; save with save_state)."""
@@ -732,6 +744,7 @@ class Speaker:
         self._stops = 0  # bumped by stop(): a line taken off the queue before it is never sent
         self.last_error: str | None = None
         self.spoken = 0
+        self._speaking = False
         self._thread: threading.Thread | None = None  # started on the first line
 
     def say(self, line: Line) -> bool:
@@ -763,6 +776,16 @@ class Speaker:
         if self._thread is not None:
             self._thread.join(timeout=5)
 
+    def wait_quiet(self, timeout: float) -> bool:
+        """True once nothing is queued or playing; False when `timeout` ran out first."""
+        deadline = time_mod.monotonic() + timeout
+        while time_mod.monotonic() < deadline:
+            with self._cv:
+                if not self._lines and not self._speaking:
+                    return True
+            time_mod.sleep(0.05)
+        return False
+
     def busy(self) -> bool:
         with self._cv:
             return bool(self._lines)
@@ -787,10 +810,13 @@ class Speaker:
             if (self._now() - line.created).total_seconds() > STALE_S:
                 continue
             try:
+                self._speaking = True
                 self._speak(line, gen)
             except Exception as e:
                 self.last_error = str(e) or type(e).__name__
                 log.warning("voice: %s", self.last_error)
+            finally:
+                self._speaking = False
 
     def _speak(self, line: Line, gen: int) -> None:
         self._ensure_worker()

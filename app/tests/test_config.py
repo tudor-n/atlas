@@ -187,7 +187,8 @@ def test_voice_defaults(paths):
     assert s["voice_finish_min_s"] == 120
 
 
-CHATTER_EVENTS = {"briefing": True, "self": True, "nudge": True, "react": True, "due_today": True, "tease": True}
+CHATTER_EVENTS = {"briefing": True, "self": True, "nudge": True, "react": True, "due_today": True, "tease": True,
+                  "greet": True}
 
 
 def test_chatter_settings(paths):
