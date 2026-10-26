@@ -18,6 +18,7 @@ from . import osdirs
 from . import voice_files as vf
 from .brainmap import load_map
 from .chatter import Chatter, git_commit, git_count
+from .chatter_sub import Sub
 from .chattiness import level
 from .config import VOICE_IDS, load_settings, save_settings, validate_setting
 from .presence import Presence
@@ -64,6 +65,17 @@ def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> Non
         presence=app["presence"], save_settings=lambda patch: _save_and_tell(app, patch),
         roots=(paths.root, code), load_map=lambda: load_map(paths.brain),
         commit=lambda: git_commit(code), count_commits=lambda a, b: git_count(code, a, b))
+    app["chatter"].sub = Sub(
+        runner=app["runner"], settings=lambda: load_settings(paths), paths=paths,
+        usage=lambda: app["usage"].view(load_settings(paths)["usage_warn_pct"], ""), presence=app["presence"],
+        chatter=app["chatter"], voice=app["voice"], commit=lambda message: _commit(app, message),
+        reviewer=app["reviewer"], store=store)
+
+
+def _commit(app: web.Application, message: str) -> None:
+    """Pattern A's generated.md, committed like the hub's other brain writes."""
+    sha = app["repo"].commit_all(message)
+    app["on_commit"](sha)
 
 
 def _save_and_tell(app: web.Application, patch: dict) -> dict:
@@ -88,6 +100,7 @@ async def voice_tick(app: web.Application) -> None:
     while True:
         await t(app["voice"].tick)
         await t(app["chatter"].tick)
+        await app["chatter"].sub.tick()  # on the loop: its runs are async, never on a line's path
         await asyncio.sleep(TICK_S)
 
 
@@ -271,8 +284,25 @@ async def _owner_was_here(request: web.Request, response: web.StreamResponse) ->
     presence.seen("app")
 
 
+async def get_week(request: web.Request) -> web.Response:
+    """ATLAS's week (pattern C), for the ATLAS screen; null until the first one is written."""
+    chatter = request.app.get("chatter")
+    return web.json_response({"week": await t(chatter.sub.week) if chatter is not None else None})
+
+
+async def post_week_decision(request: web.Request) -> web.Response:
+    _voice(request)
+    await body_dict(request)
+    sub = request.app["chatter"].sub
+    week = await t(sub.decide, request.match_info["id"], request.match_info["decision"] == "confirm")
+    await request.app["broadcast"]("items.changed", {})
+    return web.json_response({"week": week})
+
+
 def add_voice_routes(app: web.Application) -> None:
     app.on_response_prepare.append(_owner_was_here)
+    app.router.add_get("/api/chatter/week", get_week)
+    app.router.add_post("/api/chatter/week/{id}/{decision:confirm|dismiss}", post_week_decision)
     app.router.add_get("/api/voice", get_voice)
     app.router.add_post("/api/voice/download", post_download)
     app.router.add_post("/api/voice/sample", post_sample)

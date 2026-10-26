@@ -309,3 +309,9 @@ async def test_a_pc_write_is_the_owner_and_a_hook_is_not(client):
     assert seen == []
     await client.put("/api/settings", json={"voice_volume": 40})
     assert seen == ["app"]
+
+
+async def test_the_week_endpoints(client):
+    assert await (await client.get("/api/chatter/week")).json() == {"week": None}
+    assert (await client.post("/api/chatter/week/w-1/confirm", json={})).status == 400
+    assert (await client.post("/api/chatter/week/w-1/maybe", json={})).status in (404, 405)

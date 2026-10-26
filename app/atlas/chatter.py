@@ -594,6 +594,8 @@ class Chatter:
             lvl = self._lvl()
             if self.presence is not None and kind != "pause":
                 self.presence.seen("app")
+            if kind in ("correction", "retry", "flip_ask", "flip_note"):
+                self._tally(kind)
             if lvl.reactions == "off" or (lvl.reactions == "mistakes" and kind not in ("correction", "flip_ask", "flip_note")):
                 return None
             now = self._now()
@@ -607,6 +609,17 @@ class Chatter:
         except Exception:
             log.exception("chatter: the reaction failed")
             return None
+
+    @_locked
+    def _tally(self, kind: str) -> None:
+        """Counts per day for ATLAS's week (pattern C), kept for two weeks."""
+        today = self._now().date()
+        tally = self._st.setdefault("tally", {})
+        day = tally.setdefault(today.isoformat(), {})
+        day[kind] = day.get(kind, 0) + 1
+        for d in [d for d in tally if d < (today - timedelta(days=14)).isoformat()]:
+            tally.pop(d, None)
+        self.v.save_state()
 
     @_locked
     def on_confirmed(self, items: list, all_of_card: bool) -> None:

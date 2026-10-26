@@ -240,3 +240,9 @@ def test_concurrent_confirms_of_one_proposal_create_one_item(rv, monkeypatch):
     threads = [threading.Thread(target=go) for _ in range(2)]
     [t.start() for t in threads]; [t.join(10) for t in threads]
     assert sorted(outcomes) == ["ok", "refused"] and len(rv.store.list_items()) == 1
+
+
+def test_add_task_from_atlas_week_is_an_open_task_committed(rv):
+    item = rv.add_task("Lower chattiness on weekdays", project="robotarm", area="projects", source="atlas-week-2026-10-26")
+    assert (item.kind, item.status, item.project, item.source_entry) == ("task", "open", "robotarm", "atlas-week-2026-10-26")
+    assert rv.store.get_item(item.id) is not None and not rv.repo.is_dirty() and rv.commits == [1]
