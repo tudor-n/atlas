@@ -124,6 +124,17 @@ ATLAS replaced the ASK tab: one field to write something down or ask, and ATLAS 
 - [ ] Settings → Voice → **Edit quotes**: the new `reply_…` pools are at the end of the file. Change or delete what doesn't land.
 - [ ] Tell Claude about any sentence ATLAS got wrong (a note it took for a question, or the other way round).
 
+### 10. Chatter: a chattier, self-aware ATLAS (after its PR is merged)
+ATLAS varies how it says things, talks a little on its own, notices things about itself, and keeps what's due today in your ear. Details: `docs/superpowers/specs/2026-10-26-atlas-chatter-design.md`, decisions `docs/superpowers/chatter-decisions.md` (CH1…).
+- [ ] **Varied lines first:** let an agent finish its turn and wait for you a few times. Each time it should be worded differently ("Robot Arm is done. Your move.", "Your turn on Robot Arm."), a permission prompt differently from a question, and a second time within ten minutes short ("Robot Arm again."). Settings → Voice → **Edit info lines** opens `brain/_voice/lines.md`: change any wording you don't like.
+- [ ] **Very high, to see everything without waiting:** Settings → Voice → Chattiness → **VERY HIGH**. ATLAS says so, the morning and evening digests play, and **Try it now** fires each kind of line. The recent-lines list says where each one came from (which line of which file) and whether it was spoken or only captioned. It drops back to your previous level after two hours, or when ATLAS restarts.
+- [ ] **Pick your everyday level** (Medium is the default, 4 unprompted lines an hour). Live with it for a few days and tell Claude what got annoying and what you missed.
+- [ ] **Due today:** add a task due today at a time two hours ahead. You should hear it two hours, one hour and fifteen minutes before, and in the repeats; a date-only one gets the last call at 18:00 (Settings → Voice → Last call).
+- [ ] **Welcome back:** lock the screen for 20 minutes while an agent works, then unlock: ATLAS says what happened. (Presence comes from the lock screen and what you do in ATLAS and Claude Code; KDE doesn't tell apps your idle time, so sitting at the PC doing something else for 20 minutes also counts as away.)
+- [ ] **Self-awareness:** change a few settings (speed, sass, chattiness): one remark after you stop. Write a note about ATLAS, confirm a task in ATLAS's project, start a Claude Code session in the ATLAS repo. At **High**, ATLAS teases you about its own open to-dos.
+- [ ] **The subscription** (Settings → Voice → SUBSCRIPTION): on Very high press **Try it now** for the three patterns. **A** writes `brain/_voice/generated.md` (fresh quips; delete what you don't like). **B** words a welcome back from the facts. **C** writes ATLAS's week on the ATLAS screen with up to two suggestions to ✓. Check the usage meter afterwards; turn any of them, or the whole switch, off if it isn't worth it.
+- [ ] **Shushing:** pause the voice right after an unprompted line, three times in a week for the same kind: ATLAS says it'll keep that kind to itself, and halves it.
+
 ## Later
 - [ ] **Windows (on hold):** the Windows half of the dual-boot checks, claude-sync, the Windows rollout, and the Windows half of the tablet (allow `python.exe` on private networks; update both OSes together because of schema 3).
 - [ ] **Phases 5 (Google Calendar) and 6 (phone) are on hold** until the phases so far prove useful (your call, 2026-10-24).

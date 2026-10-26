@@ -6,6 +6,14 @@ A short pointer, updated 2026-10-25. It is no longer the only thing carried betw
 Everything waiting on the owner lives in **`TODO.md`** at the repo root. Keep every check or step on their side there, and tick items as they land.
 
 ## Where things stand
+- **Chatter (2026-10-26), on branch `atlas-chatter` (worktree `~/dev/BrainHub-chatter`):**
+  - varied info lines (`brain/_voice/lines.md`);
+  - chattiness levels, Mute to Very high (debug);
+  - presence from the lock screen and the owner's activity (no mic);
+  - briefings, due-today reminders, nudges, teasing, self-awareness and reactions;
+  - the subscription's patterns A, B and C behind their switches.
+
+  Spec `docs/superpowers/specs/2026-10-26-atlas-chatter-design.md`, decisions `chatter-decisions.md` (CH1…). The owner merges it, then `TODO.md` step 10. Owner's standing picks: no hearing, no API key, no local model; the sarcastic friend.
 - **One input and ATLAS's replies (2026-10-25), on branch `atlas-voice-input`:** the ASK tab became the **ATLAS** screen (one write-or-ask field whose intent is guessed as you type, NOTE | ASK to overrule it), the capture bar and the widget guess the intent too, and after a note is filed or a question answered ATLAS says so (`reply` voice event, sass pools `reply_*`), shown as a caption beside a blue dot that follows the voice. Decisions: `docs/superpowers/voice-input-decisions.md` (VI1…). The owner merges it, then `TODO.md` step 9.
 - **The rename to ATLAS (was BrainHub), 2026-10-24:** built on branch `atlas`, a PR on top of #7 (phase 4.5). Every name changed: the package `app/atlas/`, `python -m atlas`, `atlas-request`, the `ATLAS_*` env vars, the app id `dev.atlas.desktop`, the per-OS folders and the shared root `/mnt/data/ATLAS` = `D:\ATLAS`. The first start moves the old folders and repairs the Claude Code hooks by itself; the owner renames the data folder and rebuilds (`TODO.md` step 8). Spec: `docs/superpowers/specs/2026-10-24-atlas-rename-design.md`; decisions: `docs/superpowers/atlas-rename-decisions.md`. Until the owner's cut-over, the real folders still have their old names: the paths below are the new ones.
 - **Phases 1 and 2 and the dual-boot port** (plan Tasks 1–12, PR #3) are merged into `master` (2026-10-22). CI runs on Ubuntu and Windows.
