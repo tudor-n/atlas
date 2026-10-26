@@ -134,6 +134,7 @@ ATLAS varies how it says things, talks a little on its own, notices things about
 - [ ] **Self-awareness:** change a few settings (speed, sass, chattiness): one remark after you stop. Write a note about ATLAS, confirm a task in ATLAS's project, start a Claude Code session in the ATLAS repo. At **High**, ATLAS teases you about its own open to-dos.
 - [ ] **The subscription** (Settings → Voice → SUBSCRIPTION): on Very high press **Try it now** for the three patterns. **A** writes `brain/_voice/generated.md` (fresh quips; delete what you don't like). **B** words a welcome back from the facts. **C** writes ATLAS's week on the ATLAS screen with up to two suggestions to ✓. Check the usage meter afterwards; turn any of them, or the whole switch, off if it isn't worth it.
 - [ ] **Hello and goodbye:** quit ATLAS and start it again a few minutes later: a goodbye, then a hello that fits the time of day (or the day: Monday morning, Friday afternoon, the weekend, back after days away). A restart for an update or a crash stays quiet. Edit the `greeting.*` and `goodbye.*` pools in `lines.md` if any line makes you wince.
+- [ ] **Measurement requests:** run `atlas-request` from a Claude Code session (or ask an agent to). ATLAS says which project wants how many measurements; left unanswered for ten minutes, it reminds you once.
 - [ ] **Shushing:** pause the voice right after an unprompted line, three times in a week for the same kind: ATLAS says it'll keep that kind to itself, and halves it.
 
 ## Later

@@ -14,6 +14,7 @@ export const EVENT_LABELS = [
   ['due_today', 'Keep reminding me about things due today'],
   ['tease', "Tease me about ATLAS's own to-dos (High and up)"],
   ['greet', 'Say hello when ATLAS starts and goodbye when I quit it'],
+  ['request', 'Tell me when an agent asks for measurements on the tablet'],
 ];
 
 export const mb = (bytes) => `${Math.max(1, Math.round(bytes / 1e6))} MB`;

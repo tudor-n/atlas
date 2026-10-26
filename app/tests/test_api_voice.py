@@ -341,3 +341,12 @@ def test_the_running_commit_comes_from_the_runtime_slot(monkeypatch, tmp_path):
     monkeypatch.setattr(vr.runtime, "hub_view", lambda state: None)
     monkeypatch.setattr(vr, "git_commit", lambda code: "dev456")
     assert vr._running_commit(tmp_path) == "dev456" and vr._code_repo(paths, tmp_path / "code") == tmp_path / "code"
+
+
+async def test_a_measurement_request_is_said_aloud(client, paths, said):
+    _install(paths)
+    r = await client.post("/api/requests", json={"title": "Desk", "items": ["Width of the desk", "Height"]})
+    assert r.status == 201
+    got = _lines(said, 1)
+    assert got[0]["parts"][0] in ("An agent wants two measurements. They're on the tablet.",)
+    assert "Width" not in " ".join(got[0]["parts"])  # the labels are the agent's: never read
