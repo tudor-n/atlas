@@ -832,7 +832,11 @@ class Speaker:
                     line = None
                 else:
                     idle = False
-                    self._gather()
+                    self._gather()  # waits without the lock: stop() or close() may empty the queue
+                    if self._closed:
+                        return
+                    if not self._lines:
+                        continue
                     line = self._lines.popleft()
                     while self._join_s > 0 and self._lines and _joinable(line, self._lines[0]):  # one clip
                         line = _join(line, self._lines.popleft())
