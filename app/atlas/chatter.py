@@ -13,6 +13,7 @@ import hashlib
 import logging
 import random
 import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
@@ -37,9 +38,11 @@ SESSION_LINE_GAP = timedelta(hours=1)
 RESTART_GAP = timedelta(minutes=3)  # alive this recently: a restart (update, crash, drive back), not a hello
 GOODBYE_WAIT_S = 7.0  # the shell gives the hub 10 s after SIGTERM
 _DAYS_OF_WEEK = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")  # an ATLAS session starting a turn: one line per session an hour
-EVENT_WORDS = {"greet": "hellos and goodbyes", "agent_waiting": "agents waiting", "agent_finished": "agents finishing", "reminder": "reminders",
-               "readback": "readbacks", "reply": "replies", "briefing": "briefings", "self": "remarks about me",
-               "nudge": "nudges", "react": "reactions", "due_today": "due today reminders", "tease": "teasing"}
+EVENT_WORDS = {"greet": "hellos and goodbyes", "agent_waiting": "calls about waiting agents",
+               "agent_finished": "calls about finished agents", "reminder": "reminders", "readback": "readbacks",
+               "reply": "replies", "briefing": "briefings", "self": "remarks about myself", "nudge": "nudges",
+               "react": "reactions", "due_today": "due today reminders", "tease": "teases"}
+WEEK_SOURCE = "atlas-week-"  # tasks from ATLAS's week: a model wrote their text, so it is never read aloud
 
 
 def _iso(t: datetime) -> str:
@@ -218,13 +221,15 @@ class Chatter:
                 self.v.save_state()
             if commit and old and commit != old:
                 n = self._count_commits(old, commit)
-                values = {"count": vl.number_words(n)} if n else {}
+                values = {"changes": vl.things(n, "new change", "new changes")} if n else {}
+                # Not budgeted: at a start nobody has been seen yet, and the line would be lost.
                 self.v.chat("self", "self.updated", values, "I've been updated.", key=("updated", commit),
-                            why="an update since the last start")
+                            why="an update since the last start", budgeted=False)
             if flushed:
-                self.v.chat("self", "self.flushed", {"count": vl.number_words(flushed)},
-                            f"The drive is back. {vl.number_words(flushed).capitalize()} held notes are in the log.",
-                            why="held notes flushed")
+                notes = vl.things(flushed, "note", "notes")
+                self.v.chat("self", "self.flushed", {"notes": notes},
+                            f"The drive is back. I filed {notes} I was holding.", why="held notes flushed",
+                            budgeted=False)
         except Exception:
             log.exception("chatter: the start failed")
 
@@ -261,28 +266,28 @@ class Chatter:
         out: list[tuple[str, dict, str]] = []
         waiting = [r for r in self._agents() if r.get("status") == "waiting" and not r.get("ended_at")]
         if waiting:
-            names = vl.and_list([vl.spoken_project(r.get("project_name")) for r in waiting])
-            out.append(("fact.waiting", {"projects": names, "count": vl.number_words(len(waiting))},
-                        f"{names} {'is' if len(waiting) == 1 else 'are'} waiting on you."))
+            spoken = [vl.spoken_project(r.get("project_name")) for r in waiting]
+            names, many = vl.and_list(spoken), len(set(spoken)) > 1  # and_list says a name once
+            out.append(("fact.waiting_many" if many else "fact.waiting", {"projects": names},
+                        f"{names} {'are' if many else 'is'} waiting on you."))
         finished = [f for f in self._away_log["finished"] if since is None or f[0] >= since]
         if finished:
             names = vl.and_list([vl.spoken_project(p) for _, p in finished])
-            out.append(("fact.finished", {"projects": names, "count": vl.number_words(len(finished))},
-                        f"{names} finished."))
+            out.append(("fact.finished", {"projects": names}, f"{names} finished while you were out."))
         due = self._due_items(now)
         if len(due) == 1:
             text = vl.reminder_text(due[0].text)
-            out.append(("fact.due_one", {"text": text}, f"{text} is due today."))
+            out.append(("fact.due_one", {"text": text}, f"Due today. {text}"))
         elif due:
             closest = vl.reminder_text(due[0].text)
             out.append(("fact.due", {"count": vl.number_words(len(due)), "closest": closest},
-                        f"{vl.number_words(len(due)).capitalize()} things are due today. {closest}"))
+                        f"{vl.number_words(len(due)).capitalize()} things are due today. The closest is {closest}"))
         if since is not None:
             quiet = self._settings()["quiet_hours"]
             n = sum(1 for it in self._items() for _, when in reminder_times(it, quiet) if since < when <= now)
             if n:
-                out.append(("fact.reminders", {"count": vl.number_words(n)},
-                            f"{vl.number_words(n).capitalize()} reminders went by."))
+                reminders = vl.things(n, "reminder", "reminders")
+                out.append(("fact.reminders", {"reminders": reminders}, f"{reminders.capitalize()} went by."))
         return out[:3]
 
     def _compose(self, facts: list[tuple[str, dict, str]]) -> str:
@@ -296,14 +301,13 @@ class Chatter:
             if in_quiet_hours(self._now(), s["quiet_hours"]) and not lvl.debug:
                 return
             facts = self.facts(away_since)
-            text = None
-            if self.sub is not None and facts:
-                text = self.sub.briefing_for(self.fact_sheet(away_since))
             if facts:
-                body = text or self._compose(facts)
+                body = self._compose(facts)
+                tail = self.sub.quip_for(self.fact_sheet(away_since)) if self.sub is not None else None
                 self.v.chat("briefing", "briefing.back", {"facts": body}, f"Welcome back. {body}",
-                            key=("back", _iso(away_since)), why="you came back",
-                            text=None if text is None else f"Welcome back. {text}")
+                            key=("back", _iso(away_since)), why="you came back", quip=tail is None,
+                            text=None if tail is None else f"{self.v.word('briefing.back', {'facts': body}, 'Welcome back. ' + body)[0]} {tail}")
+                self._morning_done_by_welcome()
             elif lvl.callbacks:
                 self.v.chat("briefing", "briefing.back_quiet", {}, "Welcome back. Nothing happened.",
                             key=("back", _iso(away_since)), why="you came back")
@@ -312,13 +316,20 @@ class Chatter:
             log.exception("chatter: the welcome back failed")
 
     def fact_sheet(self, since: datetime | None) -> dict:
-        """The welcome back's facts as data, for pattern B: names and numbers only, no agent text."""
+        """What happened while the owner was away, as counts only, for pattern B's joke: no names, no
+        item text, nothing an agent chose (a folder name is the agent's choice)."""
         now = self._now()
-        waiting = [vl.spoken_project(r.get("project_name")) for r in self._agents()
-                   if r.get("status") == "waiting" and not r.get("ended_at")]
-        finished = [vl.spoken_project(p) for t, p in self._away_log["finished"] if since is None or t >= since]
-        due = [vl.reminder_text(i.text) for i in self._due_items(now)]
-        return {"waiting": waiting, "finished": finished, "due_today": due[:3], "due_count": len(due)}
+        waiting = sum(1 for r in self._agents() if r.get("status") == "waiting" and not r.get("ended_at"))
+        finished = sum(1 for t, _ in self._away_log["finished"] if since is None or t >= since)
+        return {"waiting": waiting, "finished": finished, "due_today": len(self._due_items(now))}
+
+    def _morning_done_by_welcome(self) -> None:
+        """A welcome back in the morning has said what the morning digest would: it stands in for it."""
+        s, now = self._settings(), self._now()
+        d = self._day_bucket("digest")
+        if "morning" not in d and now >= datetime.combine(now.date(), morning_time(s["quiet_hours"])):
+            d["morning"] = "welcome"
+            self.v.save_state()
 
     def _digests(self, now: datetime, s: dict, lvl: ch.Level) -> None:
         d = self._day_bucket("digest")
@@ -346,11 +357,12 @@ class Chatter:
             facts: list[tuple[str, dict, str]] = []
             filed = self._entries_today(today.isoformat())
             if filed:
-                facts.append(("fact.filed", {"count": vl.number_words(filed)}, f"I filed {vl.number_words(filed)} notes today."))
+                notes = vl.things(filed, "note", "notes")
+                facts.append(("fact.filed", {"notes": notes}, f"I filed {notes} today."))
             pending = self._unconfirmed()
             if pending:
-                facts.append(("fact.unconfirmed", {"count": vl.number_words(pending)},
-                              f"{vl.number_words(pending).capitalize()} suggestions are still waiting for a tick."))
+                sugg = vl.things(pending, "suggestion", "suggestions")
+                facts.append(("fact.unconfirmed", {"suggestions": sugg}, f"Still waiting for a tick. {sugg}."))
             if facts:
                 body = self._compose(facts)
                 self.v.chat("briefing", "briefing.evening", {"facts": body}, f"Evening. {body}", why="the evening digest")
@@ -402,6 +414,10 @@ class Chatter:
                     if at <= now and not fire:
                         spoken.append(key)  # passed while ATLAS was off or quiet: never said late
                         continue
+                    if fire and any(abs(when_r - at) <= timedelta(minutes=5)
+                                    for _, when_r in reminder_times(it, s["quiet_hours"])):
+                        spoken.append(key)  # its own reminder speaks in this window: never both
+                        continue
                 if not fire:
                     continue
                 spoken.append(key)
@@ -437,7 +453,7 @@ class Chatter:
         else:
             closest = vl.reminder_text(due[0].text)
             self.v.chat("due_today", "due_today.repeat", {"count": vl.number_words(len(due)), "closest": closest},
-                        f"{vl.number_words(len(due)).capitalize()} things still due today. {closest}",
+                        f"{vl.number_words(len(due)).capitalize()} things still due today. Next up is {closest}",
                         budgeted=False, why="due today")
 
     def _last_call(self, now: datetime, s: dict, lvl: ch.Level) -> None:
@@ -482,12 +498,11 @@ class Chatter:
                 continue
             days = (now - _parse(it.created)).days
             text = vl.reminder_text(it.text)
-            said = self.v.chat("nudge", "nudge.stale", {"text": text, "days": _days(days)},
-                               f"{text} That's been waiting {_days(days)}.", why="waiting on someone for a while")
-            if said and said["spoken"]:
-                b["items"].append(it.id)
-                b["done"] = True
-                self.v.save_state()
+            self.v.chat("nudge", "nudge.stale", {"text": text, "days": _days(days)},
+                        f"{text} That's been waiting {_days(days)}.", why="waiting on someone for a while")
+            b["items"].append(it.id)  # tried, spoken or captioned: never again today
+            b["done"] = True
+            self.v.save_state()
             return
 
     def _tease(self, now: datetime, s: dict, lvl: ch.Level) -> None:
@@ -503,13 +518,14 @@ class Chatter:
         if lvl.tease_max is not None and b.get("count", 0) >= lvl.tease_max:
             return
         today = now.date()
-        mine = sorted((it for it in self._items() if it.status == "open" and it.project == slug
-                       and _due_on(it, today) is None and it.id not in b.get("items", [])),
+        def teasable(it) -> bool:
+            return (it.status == "open" and it.project == slug and _due_on(it, today) is None
+                    and not str(getattr(it, "source_entry", "") or "").startswith(WEEK_SOURCE))
+        mine = sorted((it for it in self._items() if teasable(it) and it.id not in b.get("items", [])),
                       key=lambda it: it.created)
         if lvl.debug and not mine:
             b["items"] = []
-            mine = sorted((it for it in self._items() if it.status == "open" and it.project == slug
-                           and _due_on(it, today) is None), key=lambda it: it.created)
+            mine = sorted((it for it in self._items() if teasable(it)), key=lambda it: it.created)
         if not mine:
             return
         it = mine[0]
@@ -517,10 +533,11 @@ class Chatter:
         text = vl.reminder_text(it.text)
         said = self.v.chat("tease", "tease", {"text": text, "days": _days(days)}, f"{text} That's been open {_days(days)}.",
                            why="one of my own to-dos")
+        b["at"] = _iso(now)  # tried: the next try is a cadence later, spoken or not
         if said and said["spoken"]:
-            b["at"], b["count"] = _iso(now), b.get("count", 0) + 1
+            b["count"] = b.get("count", 0) + 1
             b.setdefault("items", []).append(it.id)
-            self.v.save_state()
+        self.v.save_state()
 
     def _musing(self, now: datetime, lvl: ch.Level) -> None:
         if lvl.musing_every is None:
@@ -570,7 +587,8 @@ class Chatter:
             return
         for name in ("quotes", "lines"):
             if old.get(name) and now_hashes.get(name) and old[name] != now_hashes[name]:
-                self.v.chat("self", f"self.{name}_edited", {}, "You've been editing my lines.", why=f"{name}.md changed")
+                self.v.chat("self", f"self.{name}_edited", {}, "You've been editing my lines.", why=f"{name}.md changed",
+                            quip=False)
                 return
 
     # -- agents -----------------------------------------------------------------------------------
@@ -645,7 +663,8 @@ class Chatter:
             b = self._day_bucket("reacts")
             b[kind] = b.get(kind, 0) + 1
             values = {"count": vl.number_words(count or b[kind])}
-            return self.v.chat("react", f"react.{kind}", values, "Noted.", budgeted=False, why=kind.replace("_", " "))
+            return self.v.chat("react", f"react.{kind}", values, "Noted.", budgeted=False, quip=False,
+                               why=kind.replace("_", " "))
         except Exception:
             log.exception("chatter: the reaction failed")
             return None
@@ -676,6 +695,8 @@ class Chatter:
                 self.react("confirm_all", len(items))
             slug = self.atlas_project()
             for it in items:
+                if str(getattr(it, "source_entry", "") or "").startswith(WEEK_SOURCE):
+                    continue  # the week's suggestion: a model wrote it
                 if slug and getattr(it, "project", None) == slug:
                     text = vl.reminder_text(it.text)
                     self.v.chat("self", "self.atlas_item", {"text": text},
@@ -743,7 +764,7 @@ class Chatter:
             return
         pool, values, fixed = change
         self.v.chat("self", pool, values, fixed, budgeted=pool != "self.set.other",
-                    force=pool == "self.set.debug", quip=pool != "self.set.sass_off", why="you changed my settings")
+                    force=pool == "self.set.debug", quip=False, why="you changed my settings")
 
     def close(self) -> None:
         with self._lock:
@@ -897,11 +918,19 @@ def settings_remark(before: dict, after: dict) -> tuple[str, dict, str] | None:
     return None
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """A read-only git call on the code's checkout, with the portability rules' flags."""
+    ignorecase = str(sys.platform == "win32").lower()
+    kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+    return subprocess.run(["git", "-c", f"safe.directory={repo.as_posix()}", "-c", f"core.ignorecase={ignorecase}",
+                           "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-C", str(repo), *args],
+                          capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, **kw)
+
+
 def git_commit(repo: Path) -> str | None:
     """The code's commit, read-only (a dev checkout or the live copy); None when it can't tell."""
     try:
-        r = subprocess.run(["git", "-c", f"safe.directory={repo.as_posix()}", "-C", str(repo), "rev-parse", "HEAD"],
-                           capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+        r = _git(repo, "rev-parse", "HEAD")
         return r.stdout.strip() or None if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -909,8 +938,7 @@ def git_commit(repo: Path) -> str | None:
 
 def git_count(repo: Path, old: str, new: str) -> int | None:
     try:
-        r = subprocess.run(["git", "-c", f"safe.directory={repo.as_posix()}", "-C", str(repo), "rev-list", "--count",
-                            f"{old}..{new}"], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+        r = _git(repo, "rev-list", "--count", f"{old}..{new}")
         return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else None
     except (OSError, subprocess.SubprocessError, ValueError):
         return None

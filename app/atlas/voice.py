@@ -179,7 +179,7 @@ class Announcer:
         self._pending: dict[str, list[Line]] = {}
         self._timers: dict[str, threading.Timer] = {}
         self._turn_start: dict[str, datetime] = {}
-        self._spoken: set[tuple] = set()
+        self._spoken: dict[tuple, None] = {}  # insertion-ordered, so the oldest go first
         self._ticked = False
 
     # -- state the UI shows ---------------------------------------------------------------------
@@ -409,7 +409,7 @@ class Announcer:
                 return
             if first and len(due) > 1:
                 for item, raw in due:
-                    self._spoken.add(("reminder", item.id, raw))
+                    self._spoken[("reminder", item.id, raw)] = None
                 line, meta = self._info("catch_up", {"count": vl.number_words(len(due))}, vl.catch_up_line(len(due)))
                 self._submit("catch_up", line, {**meta, "count": vl.number_words(len(due))}, None)
                 return
@@ -442,9 +442,9 @@ class Announcer:
         if key is not None:
             if key in self._spoken:
                 return
-            self._spoken.add(key)
+            self._spoken[key] = None
             if len(self._spoken) > 5000:  # a long-running hub: forget the oldest half
-                self._spoken = set(itertools.islice(self._spoken, 2500, None))
+                self._spoken = dict.fromkeys(itertools.islice(self._spoken, 2500, None))
         if not self._gate(event, self._settings(), now):
             return
         line = Line(event, info, {**meta, "line": info}, now)
@@ -529,7 +529,7 @@ class Announcer:
                 if key is not None:
                     if key in self._spoken:
                         return None
-                    self._spoken.add(key)
+                    self._spoken[key] = None
                 lvl = ch.level(s)
                 if text is None:
                     info, meta = self._info(pool, values, fallback)
@@ -804,13 +804,14 @@ class Speaker:
                     idle = False
                     line = self._lines.popleft()
                     gen = self._stops
+                    self._speaking = True  # with the pop, so wait_quiet never sees neither
             if idle:
                 self._kill()  # nothing to say for IDLE_S: the model's memory goes back
                 continue
             if (self._now() - line.created).total_seconds() > STALE_S:
+                self._speaking = False
                 continue
             try:
-                self._speaking = True
                 self._speak(line, gen)
             except Exception as e:
                 self.last_error = str(e) or type(e).__name__

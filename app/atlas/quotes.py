@@ -263,8 +263,8 @@ That's the lot. Carry on.
 Don't say I never tell you anything.
 Now you know what I know.
 Right. Back to it.
-That's your lot. You're welcome.
-Try to keep up.
+Briefing over. You may applaud.
+I'll quiz you later.
 I'll be here. Obviously.
 Any questions. No. Good.
 
@@ -273,7 +273,7 @@ Just thought you should know.
 I notice things. It's my job.
 Not that anyone asked.
 I'm very self aware. It's exhausting.
-Carry on. I'm fine.
+Anyway. Back to filing.
 I contain multitudes. Mostly notes.
 Don't mind me.
 I'm growing as a person. Sort of.
@@ -284,19 +284,19 @@ Not nagging. Reminding.
 It won't sort itself out.
 I'll stop when you do it.
 You know where to find it.
-Don't shoot the messenger.
+I'm only the messenger. A loud one.
 Go on. It's quick.
 I'll ask again later. I always do.
 
 ## react
-Noted.
-Bold choice.
+Growth.
+Character building.
 I'll allow it.
 Moving on.
 As you wish.
 Fair enough.
 If you say so.
-Duly noted.
+Filed under lessons.
 
 ## due_today
 The day isn't getting any longer.

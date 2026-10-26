@@ -72,6 +72,54 @@ The owner asked on 2026-10-26 for "a level of self awareness and chattiness" in 
   - **The wordings:** pools in `lines.md` (`greeting.*`, `goodbye.*`), with no quip after them: they are the joke.
 - **CH17 Settings saved by another build** keep working as VI5 rules: the seven new `voice_events` keys start on.
 
+## After the reviews (2026-10-26)
+Four specialised reviews ran on the PRs: backend correctness, safety and the project's rules, UI and wording, and #22's ducking. Every finding below was fixed, and the confirmed ones have regression tests.
+- **CH22 The model writes jokes, never facts (narrows the owner's approval of B and the design of A).**
+  - **What the review showed:** the safety review got false and invented content past `honest()`:
+    - "Nothing is waiting." while an agent waited;
+    - "Rob" passing as a substring of "Robot";
+    - "Your bank called.";
+    - "a couple".
+
+    It also got pattern A wordings to state facts ("All 12 tests failed.", "It's due tomorrow at 9 am."). A word check can't prove a sentence true.
+  - **What changed:**
+    - Every fact ATLAS speaks now comes from code.
+    - **A** writes quips only, never info wordings.
+    - **B** no longer words the briefing. The briefing is code's, and B writes only its closing joke, from counts alone: no names, no item text, no folder names.
+    - Everything a model writes must pass `chatter_sub.fact_free`:
+      - phase 4's wording rules, at most two sentences;
+      - no digit, and no number, time, day, deadline or event word;
+      - no capitalised word inside a sentence;
+      - for B's joke, only common words may open a sentence.
+  - **If the owner wants B to word whole briefings again,** that needs a different safety story, not a better word list.
+- **CH23 The welcome back's facts agree in number.** Pools that took a bare `{count}` now take ready phrases (`{reminders}`, `{notes}`, `{suggestions}`, `{changes}`: "one reminder", "three reminders"), and waiting is `fact.waiting` / `fact.waiting_many`. No more "One reminders went by" or "Robot Arm and Atlas is waiting". `{text}` and `{closest}` always end a sentence, so they're never followed by a verb.
+- **CH24 The subscription's tick is its own task.** Awaiting a 3-minute `claude -p` run inside the reminder tick delayed reminders and turned them into a false catch-up. Its locked state writes run off the loop.
+- **CH25 One line per moment:**
+  - a welcome back in the morning stands in for the morning digest;
+  - an approach slot is skipped when the item's own reminder speaks in the same 5 minutes;
+  - teasing and the stale nudge record an attempt whether it was spoken or captioned, so they wait a cadence instead of re-captioning every tick, and learned restraint holds;
+  - reactions and settings remarks carry no quip.
+- **CH26 Start and stop:**
+  - the update and flushed-notes lines aren't budgeted, so they're spoken at a start, before anyone has been seen;
+  - the goodbye goes first in shutdown and only within `GOODBYE_BY` (6 s) of shutdown starting;
+  - `wait_quiet` can no longer return between taking a line off the queue and playing it.
+- **CH27 Presence:**
+  - only a request that succeeded counts, and never one from the tablet's LAN side;
+  - `seen` (which may run the welcome back) runs off the event loop;
+  - the pages ping every 15 s, so a 1-minute away at Very high never mistakes typing for absence;
+  - `voice.line` is quiet on the tablet;
+  - on Windows, idle time survives the tick counter's wrap.
+- **CH28 ATLAS's week:**
+  - ✓/✕ are serialised, so a double click makes one task;
+  - the task's project and area must exist in the map;
+  - a task from the week (a model wrote its text) is never teased or read aloud.
+- **CH29 The UI:**
+  - a NOTE/ASK flip is reported once, when the text is sent against the guess, and INSTEAD only when the guess decided;
+  - a disabled lines-an-hour field never blocks a save;
+  - ATLAS'S WEEK keeps an armed ✕;
+  - the recent lines aren't re-read by screen readers.
+- **CH30 Wording edits from the review:** the weakest lines were rewritten, and "Fine." and "Bold" were thinned out. Event names read naturally ("teases", "remarks about myself").
+
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.
 - **The level numbers are untested on the owner:** the per-level numbers and the cadences in spec §3–§4 are the approved proposal. Tune them from a week at Medium.

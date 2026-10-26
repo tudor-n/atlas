@@ -66,7 +66,9 @@ def idle_windows() -> float | None:
         info.cbSize = ctypes.sizeof(info)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):  # type: ignore[attr-defined]
             return None
-        return max(0.0, (ctypes.windll.kernel32.GetTickCount() - info.dwTime) / 1000.0)  # type: ignore[attr-defined]
+        tick = ctypes.windll.kernel32.GetTickCount  # type: ignore[attr-defined]
+        tick.restype = ctypes.c_uint32  # unsigned, and both wrap at 49.7 days: subtract modulo 2**32
+        return ((tick() - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except (OSError, AttributeError, ValueError):
         return None
 

@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 import warnings
 import webbrowser
 from datetime import datetime
@@ -42,6 +43,7 @@ t = asyncio.to_thread
 # Root states the full app can't run on: run_server serves the reduced app for them instead.
 UNAVAILABLE = ("missing", "foreign", "newer")
 RECHECK_SECONDS = 15.0  # P8: how often a reduced or read-only hub looks at the root again
+GOODBYE_BY = 6.0  # seconds after shutdown began; then the tasks' kills and close_voice still fit in 10
 EXIT_RESTART = 75  # P8: the root is usable again; the shell restarts the hub at once, with no backoff
 
 
@@ -260,17 +262,22 @@ async def on_startup(app: web.Application) -> None:
 
 
 async def on_shutdown(app: web.Application) -> None:
+    app["shutdown"]["since"] = time.monotonic()  # the goodbye fits inside the shell's 10 s grace from here
     for ws in list(app["sockets"]):
         await ws.close()
 
 
 async def on_cleanup(app: web.Application) -> None:
+    if app.get("chatter") is not None and app["start_workers"] and app["exit_code"] != EXIT_RESTART:
+        # The owner quit ATLAS: one line before the voice goes, first, and only in what's left of the
+        # shell's 10 s grace (GOODBYE_BY after shutdown began), so the store still closes cleanly.
+        left = GOODBYE_BY - (time.monotonic() - app["shutdown"].get("since", time.monotonic()))
+        if left > 1:
+            await t(app["chatter"].goodbye, left)
     tasks = [*app["tasks"], *app["background"]]
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    if app.get("chatter") is not None and app["start_workers"] and app["exit_code"] != EXIT_RESTART:
-        await t(app["chatter"].goodbye)  # the owner quit ATLAS: one line before the voice goes
     await t(close_voice, app)  # the worker (and whatever it's playing) goes with the hub
     if "store" in app:  # the reduced app has none
         app["store"].close()
@@ -339,6 +346,7 @@ def _warnings(paths: Paths) -> list[str]:
 def _run_state(app: web.Application, recheck_interval: float) -> None:
     """What run_server and the root watch share: the exit code (P8) and the stop event."""
     app["exit_code"], app["stop"], app["recheck_interval"] = 0, asyncio.Event(), recheck_interval
+    app["shutdown"] = {}  # filled in on_shutdown (a started app's own keys can't change)
 
 
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,

@@ -100,7 +100,12 @@ async def voice_tick(app: web.Application) -> None:
     while True:
         await t(app["voice"].tick)
         await t(app["chatter"].tick)
-        await app["chatter"].sub.tick()  # on the loop: its runs are async, never on a line's path
+        sub = app["chatter"].sub
+        task = app.get("sub_task")
+        if not sub.running and (task is None or task.done()):  # its own task: a run takes minutes,
+            app["sub_task"] = asyncio.create_task(sub.tick())   # and must never hold up a reminder
+            app["background"].add(app["sub_task"])
+            app["sub_task"].add_done_callback(app["background"].discard)
         await asyncio.sleep(TICK_S)
 
 
@@ -219,9 +224,15 @@ async def post_edit_lines(request: web.Request) -> web.Response:
 async def post_presence(request: web.Request) -> web.Response:
     """The app's and the widget's input ping (throttled there): the owner is at the PC."""
     await body_dict(request)
-    if request.app.get("presence") is not None:
-        request.app["presence"].seen("app")
+    _seen_off_the_loop(request.app)
     return web.Response(status=204)
+
+
+def _seen_off_the_loop(app: web.Application) -> None:
+    """presence.seen may run the welcome back (locks, files): never on the event loop. Fire and forget."""
+    presence = app.get("presence")
+    if presence is not None:
+        asyncio.get_running_loop().run_in_executor(None, presence.seen, "app")
 
 
 REACT_KINDS = ("flip_ask", "flip_note")
@@ -276,12 +287,13 @@ QUIET_PATHS = ("/api/hooks/", "/api/usage", "/api/tablet/", "/api/presence")
 async def _owner_was_here(request: web.Request, response: web.StreamResponse) -> None:
     """A write from the PC app or the widget is the owner at the PC (agents' hooks and the status
     line aren't, and nor is the tablet at the bench)."""
-    presence = request.app.get("presence")
-    if presence is None or request.method in ("GET", "HEAD", "OPTIONS"):
+    if request.app.get("presence") is None or request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if response.status >= 400 or request.get("lan"):  # refused, or from the tablet's LAN side: not the owner here
         return
     if not request.path.startswith("/api/") or request.path.startswith(QUIET_PATHS):
         return
-    presence.seen("app")
+    _seen_off_the_loop(request.app)
 
 
 async def get_week(request: web.Request) -> web.Response:

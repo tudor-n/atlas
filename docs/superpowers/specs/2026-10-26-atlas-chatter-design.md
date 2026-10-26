@@ -1,5 +1,7 @@
 # ATLAS chatter: self-awareness, varied lines, chattiness levels
 
+> **Amended after review (2026-10-26, CH22):** §6 A writes quips only, and §6 B / §7 now cover only the briefing's closing joke, from counts. Every fact spoken is code's. See `../chatter-decisions.md` CH22–CH30.
+
 Approved by the owner on 2026-10-26. The brainstorm and its tradeoffs are in the session plan; this is the build's design. Decisions made while building are in `../chatter-decisions.md` (CH1…).
 
 It amends the phase 4 design (`2026-10-23-atlas-phase4-design.md`, §4–§5, §7) and V16.

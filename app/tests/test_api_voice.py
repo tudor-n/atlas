@@ -308,6 +308,8 @@ async def test_a_pc_write_is_the_owner_and_a_hook_is_not(client):
     await client.post("/api/hooks/event", json={"session_id": "s", "hook_event_name": "Stop", "cwd": "/tmp"})
     assert seen == []
     await client.put("/api/settings", json={"voice_volume": 40})
+    import asyncio
+    await asyncio.sleep(0.05)  # it runs off the loop
     assert seen == ["app"]
 
 
@@ -315,3 +317,16 @@ async def test_the_week_endpoints(client):
     assert await (await client.get("/api/chatter/week")).json() == {"week": None}
     assert (await client.post("/api/chatter/week/w-1/confirm", json={})).status == 400
     assert (await client.post("/api/chatter/week/w-1/maybe", json={})).status in (404, 405)
+
+
+async def test_a_refused_request_is_not_the_owner(client):
+    import asyncio
+    app = client.server.app
+    seen = []
+    app["presence"].seen = seen.append
+    r = await client.put("/api/settings", json={"voice_volume": 40}, headers={"Origin": "http://evil.example"})
+    assert r.status == 403
+    r = await client.post("/api/nope", json={})
+    assert r.status == 404
+    await asyncio.sleep(0.05)
+    assert seen == []

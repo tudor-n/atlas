@@ -264,7 +264,7 @@ def test_welcome_back_names_what_happened(env):
                    "status_since": env.now.t.isoformat()}]
     env.now.t += timedelta(minutes=5)
     env.c.presence.seen("app")
-    assert said(env)[-1] == "Welcome back. Atlas is waiting on you. Robot Arm finished."
+    assert said(env)[-1] == "Welcome back. Atlas is waiting on you. Robot Arm finished while you were out."
 
 
 def test_welcome_back_with_nothing_to_say(env):
@@ -433,7 +433,7 @@ def test_shushed_three_times_by_pausing_is_announced_once(env):
         env.c.react("pause")
         env.now.t += timedelta(minutes=2)
     restraint = [x for x in env.lines if "to myself" in x["text"]]
-    assert len(restraint) == 1 and restraint[0]["text"] == "Noted. I'll keep the teasing to myself."
+    assert len(restraint) == 1 and restraint[0]["text"] == "Noted. I'll keep the teases to myself."
     assert restraint[0]["spoken"] is False  # paused: captioned
 
 
@@ -514,3 +514,45 @@ def test_the_seeded_hellos_follow_the_wording_rules():
     pools, _, problems = parse(SEED)
     hello = [p for p in POOLS if p.startswith(("greeting.", "goodbye."))]
     assert problems == [] and len(hello) == 18 and all(len(pools[p]) >= 3 for p in hello)
+
+
+# -- review fixes (2026-10-26) ----------------------------------------------------------------------------
+def test_a_morning_welcome_back_stands_in_for_the_morning_digest(env):
+    env.now.t = T0.replace(hour=7)  # quiet hours: away overnight
+    env.c.presence.seen()
+    env.now.t = T0.replace(hour=7, minute=30)
+    env.c.presence.poll()
+    env.items = [item("a", "Pay rent", due=T0.date().isoformat())]
+    env.now.t = T0.replace(hour=8, minute=30)
+    env.c.presence.seen("app")
+    assert said(env)[-1] == "Welcome back. Due today. Pay rent. One reminder went by."
+    env.c.tick()
+    assert not any(x.startswith("Good morning") for x in said(env))
+
+
+def test_no_approach_slot_in_the_same_window_as_the_items_own_reminder(env):
+    due = T0 + timedelta(hours=1)
+    env.items = [item("a", "Call the bank", due=due.strftime("%Y-%m-%dT%H:%M"),
+                      remind_at=T0.strftime("%Y-%m-%dT%H:%M"))]
+    env.c.tick()  # T0: the hour slot coincides with remind_at
+    assert not any("in an hour" in x for x in said(env))
+
+
+def test_the_update_line_is_spoken_at_a_start_before_anyone_is_seen(env):
+    env.c.startup()
+    env.commit = "c2"
+    a, c = env.make()
+    a.presence = c.presence = type(c.presence)(now=env.now, probe=lambda: {"locked": False})  # nobody seen yet
+    c.startup()
+    assert any(x.get("spoken") and "updated" in x["text"] for x in env.lines)
+
+
+def test_an_unspoken_tease_waits_a_cadence_instead_of_recaptioning_every_tick(env):
+    env.settings["voice_chattiness"] = "high"
+    env.items = [item("a", "Fix my intent rules", project="atlas", created=T0 - timedelta(days=2))]
+    env.now.t += timedelta(minutes=25)
+    env.c.presence.poll()  # away: captioned, not spoken
+    for _ in range(4):
+        env.c.tick()
+        env.now.t += timedelta(seconds=30)
+    assert sum("intent" in x for x in said(env)) == 1

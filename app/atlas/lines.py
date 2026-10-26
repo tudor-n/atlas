@@ -52,14 +52,15 @@ _pool("reply.failed")
 for _n in ("briefing.back", "briefing.morning", "briefing.evening"):
     _pool(_n, "facts")
     _pool(_n + "_quiet")
-_pool("fact.finished", "projects", "count")
-_pool("fact.waiting", "projects", "count")
-_pool("fact.reminders", "count")
+_pool("fact.finished", "projects")
+_pool("fact.waiting", "projects")
+_pool("fact.waiting_many", "projects")
+_pool("fact.reminders", "reminders")
 _pool("fact.due", "count closest")
 _pool("fact.due_one", "text")
 _pool("fact.usage", "percent")
-_pool("fact.filed", "count")
-_pool("fact.unconfirmed", "count")
+_pool("fact.filed", "notes")
+_pool("fact.unconfirmed", "suggestions")
 _pool("due_today.repeat", "count closest")
 _pool("due_today.repeat_one", "text")
 _pool("due_today.soon", "text left")
@@ -72,8 +73,8 @@ _pool("react.confirm_all", "count")
 _pool("react.dismiss_all", "", "count")
 for _n in ("react.flip_ask", "react.flip_note", "react.correction", "react.retry", "react.pause"):
     _pool(_n, "", "count")
-_pool("self.updated", "", "count")
-_pool("self.flushed", "count")
+_pool("self.updated", "", "changes")
+_pool("self.flushed", "notes")
 _pool("self.usage", "percent")
 for _n in ("self.quotes_edited", "self.lines_edited", "self.atlas_note", "self.musing", "self.week",
            "self.set.mute", "self.set.debug", "self.set.speed_up", "self.set.speed_down", "self.set.volume_up",
@@ -228,7 +229,7 @@ Saved. {text}
 
 ## reply.tasks
 I pulled out {tasks}.
-There are {tasks} in there.
+That's {tasks}.
 I found {tasks}.
 
 ## reply.more
@@ -246,7 +247,7 @@ Filed. {things} to look over.
 
 ## reply.found
 I found {entries} on that.
-There are {entries} on that.
+That's {entries} on that.
 {entries} on that.
 
 ## reply.nothing
@@ -261,7 +262,7 @@ Filing failed. Your words are still in the log.
 ## briefing.back
 Welcome back. {facts}
 You're back. {facts}
-Oh, hello again. {facts}
+Look who it is. {facts}
 There you are. {facts}
 Back already. {facts}
 
@@ -288,25 +289,30 @@ Evening. Nothing left hanging today.
 Evening. A quiet day, all told.
 
 ## fact.finished
-{projects} finished.
+{projects} finished while you were out.
 {projects} got done.
-{count} agents finished. {projects}.
+{projects} wrapped up while you were gone.
 
+# One project waiting (fact.waiting), or several (fact.waiting_many), so is and are agree.
 ## fact.waiting
 {projects} is waiting on you.
 {projects} needs you.
-{count} agents are waiting. {projects}.
+{projects} is still waiting for you.
+
+## fact.waiting_many
+{projects} are waiting on you.
+{projects} all need you.
 
 ## fact.reminders
-{count} reminders went by.
-You missed {count} reminders.
+{reminders} went by.
+You missed {reminders}.
 
 ## fact.due
-{count} things are due today. {closest} is the closest.
+{count} things are due today. The closest is {closest}
 {count} things due today. Start with {closest}
 
 ## fact.due_one
-{text} is due today.
+Due today. {text}
 One thing due today. {text}
 
 ## fact.usage
@@ -314,16 +320,16 @@ You're at {percent} percent of your window.
 Usage is at {percent} percent.
 
 ## fact.filed
-I filed {count} notes today.
-{count} notes filed today.
+I filed {notes} today.
+{notes} filed today.
 
 ## fact.unconfirmed
-{count} suggestions are still waiting for a tick.
-{count} things still need confirming.
+Still waiting for a tick. {suggestions}.
+{suggestions} still to confirm.
 
 # Things due today: the repeats, the approach as a timed one nears, and the evening's last call.
 ## due_today.repeat
-{count} things still due today. {closest} is the closest.
+{count} things still due today. Next up is {closest}
 Still {count} things due today. Starting with {closest}
 {count} things left for today. The closest is {closest}
 
@@ -349,12 +355,12 @@ Last call. {count} things still open today. {texts}
 # Nudges: an agent left waiting, a waiting-on item gone stale, a day with nothing written down.
 ## nudge.waiting
 {project} has been waiting {duration}.
-{project} is still waiting. {duration} now.
+{project} is still waiting. That's {duration} now.
 Still waiting on you. {project}, {duration}.
 
 ## nudge.stale
 {text} That's been waiting {days}.
-Still waiting on this. {text} {days} now.
+Still waiting on this. {text} It's been {days}.
 
 ## nudge.no_capture
 Nothing written down today. Suspicious.
@@ -371,12 +377,12 @@ All dropped. Fair. They were optimistic.
 Gone. I'll pretend I never suggested them.
 
 ## react.flip_ask
-My mistake. Asking.
-Ah, a question. Asking.
+A question, then. Go on.
+Ah, a question. Fair enough.
 
 ## react.flip_note
 Right, a note then.
-Noted. Literally.
+A note, then. Got it.
 
 ## react.correction
 Fair. I'll file it your way.
@@ -389,17 +395,17 @@ Once more, then.
 
 ## react.pause
 Going quiet.
-Fine. Shutting up.
+Shutting up now.
 
 # Self-awareness: about itself, its project, its settings.
 ## self.updated
-I've been updated. {count} new changes. I feel lighter.
-I was updated. {count} changes. I'm told I'm better now.
+I've been updated. {changes}. I feel lighter.
+I was updated. {changes}. I'm told I'm better now.
 I've been updated. I feel different. Better, probably.
 
 ## self.flushed
-The drive is back. {count} held notes are in the log.
-Your drive came back. I filed {count} held notes.
+The drive is back. I filed {notes} I was holding.
+Your drive came back. {notes} from the holding pen are in the log.
 
 ## self.usage
 {percent} percent of your window. I'll keep my own thinking short.
@@ -422,7 +428,7 @@ You've put me on your to-do list. Finally, some recognition. {text}
 A task about me. {text} I'll be watching.
 
 ## self.atlas_session
-{project} is operating on me again. Mind the voice module.
+{project} is working on me again. No pressure.
 {project} is working on me. Be gentle.
 
 ## self.atlas_finished
@@ -431,7 +437,7 @@ Done working on me. {duration}. I hope you tested that.
 
 ## self.restraint
 Noted. I'll keep the {what} to myself.
-Fine. Less {what} from me.
+Message received. Less {what} from me.
 
 ## self.musing
 Quiet {time_of_day}. I'm just here, being useful.
@@ -451,13 +457,13 @@ Down to {level}. I get it.
 {level}. Finally, an audience.
 
 ## self.set.mute
-Fine. I'll sulk silently.
+I'll sulk silently.
 
 ## self.set.debug
 Very high. Everything at once. You asked for it.
 
 ## self.set.speed_up
-Faster. Fine. I'll talk like I'm late.
+Faster. I'll talk like I'm late.
 
 ## self.set.speed_down
 Slower. I'll savour every word.
@@ -475,8 +481,8 @@ Sass off.
 Sass is back. Brace yourself.
 
 ## self.set.event_off
-No more {what} from me. Bold.
-Fine. I'll keep the {what} to myself.
+No more {what}. Bold.
+Understood. No more {what}.
 
 ## self.set.event_on
 {what} are back on.
@@ -496,8 +502,8 @@ Settings changed. I noticed.
 # Teasing about my own open to-dos (High and up). {days} is how long it's been open.
 ## tease
 {text} That's been open {days}. Not that I'm counting.
-Still waiting on you to deal with this. {text} {days} now.
-{text} Open for {days}. I'll just be here. Small.
+Still waiting on you to deal with this. {text} Open for {days}.
+~ {text} Open for {days}. I've started a little calendar.
 
 # Hello when ATLAS starts, goodbye when you quit it. Picked by the time of day, the day of the week
 # ({day} is its name), how long ATLAS was off ({days}) or how long it ran ({duration}).
@@ -525,10 +531,10 @@ Afternoon. The post lunch slump is a myth. Mostly.
 
 ## greeting.evening
 Evening. The day shift's over. Welcome to overtime.
-Evening. Starting now. Brave.
+Evening. Fresh start, or the same old one.
 Evening. Is this work, or a hobby now.
 Evening. Let's make this quick. Or at least feel quick.
-Evening. The best ideas show up around now. So do the worst.
+Evening. Let's do one thing well, then stop.
 
 ## greeting.late
 It's late. I'm not judging. I'm a little judging.
@@ -556,9 +562,9 @@ It's {day}. Shouldn't you be outside.
 Working on a {day}. I won't tell anyone.
 
 ## greeting.back_days
-Oh, you're back. {days}. I counted.
+Oh, you're back. That's {days}. I counted.
 {days} away. Things happened. Probably.
-There you are. {days} without me. How did you cope.
+There you are. That's {days} without me. How did you cope.
 Back after {days}. I kept everything exactly where you left it.
 
 ## greeting.again

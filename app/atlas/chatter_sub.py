@@ -1,17 +1,18 @@
 """Chatter's use of the owner's subscription (chatter spec §6), only where `claude -p`'s slowness
 doesn't show: nothing here is ever on the path of a spoken line.
 
-- A, fresh quips: once a day while the owner is away (or in quiet hours), a batch of new quips and
-  info wordings for the pools, written to `brain/_voice/generated.md` (replaced per batch) and
-  committed. They are templates: placeholders filled from real values, as the owner's lines are.
-- B, briefings worded while the owner is away: a welcome back from a fact sheet, spoken on return
-  only if its sheet still equals the current one and it passes `honest()` (V16 amended, §7).
+- A, fresh quips: once a day while the owner is away (or in quiet hours), a batch of new quips for
+  the pools, written to `brain/_voice/generated.md` (replaced per batch) and committed. Quips only:
+  the information a line carries always comes from code (review, CH22).
+- B, the welcome back's joke, written while the owner is away from counts only: the facts of the
+  briefing are code's; the model adds the last sentence, only if it's still for the same counts.
 - C, ATLAS's week: once a week, a short self-review from stats, with up to two suggestions the owner
   can ✓ into a task in ATLAS's project.
 
 All of it is behind `voice_subscription` and its own switch, skipped above `voice_sub_max_pct` of
 the 5-hour window (Try it now skips that), boxed in like filing (no tools at all), and reported to
-the usage meter by the runner. No agent text goes into any prompt: names from the map, counts."""
+the usage meter by the runner. No agent text goes into any prompt: names from the map, counts. Every
+line a model writes must pass `fact_free`: it can be a joke, never a claim."""
 from __future__ import annotations
 
 import asyncio
@@ -20,13 +21,13 @@ import logging
 import os
 import re
 import secrets
+import threading
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import voice_lines as vl
-from .lines import POOLS as LINE_POOLS
-from .lines import generated_path, load_all
+from .lines import generated_path
 from .quotes import CHATTER_POOLS, PLACEHOLDERS, load_quotes
 from .voice import in_quiet_hours
 
@@ -41,64 +42,56 @@ MAX_TURNS = 2
 RUNS_KEPT = timedelta(days=7)
 
 QUIP_POOLS = ("agent_finished", "agent_waiting", "reminder", "reply_tasks", "reply_found", *CHATTER_POOLS)
-WORDING_POOLS = ("agent_waiting.idle", "agent_waiting.permission", "agent_waiting.question", "agent_finished",
-                 "reminder", "due_today.repeat_one", "briefing.back", "self.musing")
 
 _LINE = {"type": "array", "items": {"type": "string", "maxLength": 140}, "maxItems": 12}
-QUIPS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quips", "lines"], "properties": {
-    "quips": {"type": "object", "additionalProperties": _LINE},
-    "lines": {"type": "object", "additionalProperties": _LINE}}}
-BRIEFING_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["text"],
-                   "properties": {"text": {"type": "string", "maxLength": 300}}}
+QUIPS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quips"], "properties": {
+    "quips": {"type": "object", "additionalProperties": _LINE}}}
+BRIEFING_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["quip"],
+                   "properties": {"quip": {"type": "string", "maxLength": 120}}}
 WEEK_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["title", "paragraphs", "suggestions"],
                "properties": {"title": {"type": "string", "maxLength": 80},
                               "paragraphs": {"type": "array", "items": {"type": "string", "maxLength": 700}, "maxItems": 3},
                               "suggestions": {"type": "array", "items": {"type": "string", "maxLength": 140},
                                               "maxItems": 2}}}
 
-_WORD_NUMBERS = {w: i for i, w in enumerate(vl._ONES)} | {w: i * 10 for i, w in enumerate(vl._TENS) if w}
-_BAD = re.compile(r"[{}:;–—()\[\]\"]| - ")
-# Words a briefing's sentence may start with besides a name from its sheet. Anything else that's
-# capitalised is treated as a name, so an invented one can't hide at the start of a sentence.
-_STARTERS = set("""a all also and another anyway apparently as at back both busy but don't everything go good great
-heads in it it's its just luckily meanwhile my nice no none not nothing now oh on only plus quick quiet right sadly
-shocking so somebody someone something still that that's the then there there's these they this those today
-tonight welcome well what while yes you you're your""".split()) | set(_WORD_NUMBERS)
-_SENTENCE_START = re.compile(r"(?:^|[.!?]\s+)(\w+)")
+_BAD = re.compile(r"[{}:;/&$%#*<>@|\\\u2013\u2014()\[\]\"]| - |\d")
+# Words that state a quantity, a time or a happening: a joke has no need of them, a claim does.
+_CLAIMS = set("""zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen
+sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred hundreds thousand
+thousands million millions billion couple dozen dozens half both twice thrice several few first second third
+fourth fifth last next am pm noon midnight o'clock tomorrow tonight yesterday today monday tuesday wednesday
+thursday friday saturday sunday january february march april may june july august september october november
+december week weeks month months minute minutes hour hours deadline due overdue called emailed texted phoned
+messaged crashed deleted failed failing broke broken error errors deployed pushed merged password bank urgent
+emergency fire police doctor hospital nothing nobody none""".split())
+_OPENERS = set("""a all also and anyway as at back but don't go good great just look maybe my nice no not now oh
+right so still that that's the then there there's this time try well what while yes you you're your i i'm i'll
+i've it it's""".split())
 
 
 def wording_ok(line: str, limit: int = 120) -> bool:
     """Phase 4's wording rules for a generated line: short, plain, ending a sentence."""
-    body = line[2:] if line.startswith("~ ") else line
-    stripped = re.sub(r"\{\w+\}", "", body)
-    return (0 < len(body) <= limit and not _BAD.search(stripped) and body.rstrip().endswith((".", "?", "!", "}"))
+    stripped = re.sub(r"\{\w+\}", "", line)
+    return (0 < len(line) <= limit and not _BAD.search(stripped) and line.rstrip().endswith((".", "?", "!", "}"))
             and stripped.count("{") == 0)
 
 
-def honest(text: str, sheet: dict) -> bool:
-    """May a model-worded briefing be spoken? Every number and every name in it must be in its
-    fact sheet; at most three sentences and 300 characters; no braces, colons, dashes or brackets."""
-    if not isinstance(text, str) or not text.strip() or len(text) > 300 or _BAD.search(text):
+def fact_free(text: str, limit: int = 120, *, strict: bool = False) -> bool:
+    """May a line a model wrote be spoken? It may joke but never claim: phase 4's wording rules, at
+    most two sentences, no digit, no number, time, day or happening word, no capitalised word inside
+    a sentence (a name). `strict` (B's joke, said inside the briefing) also allows only common
+    openers at a sentence's start, so no name can lead one. The facts a line carries are code's (CH22)."""
+    if not isinstance(text, str) or not wording_ok(text, limit):
         return False
-    if len(re.findall(r"[.!?](\s|$)", text.strip())) > 3:
+    body = re.sub(r"\{\w+\}", "", text)
+    if len([x for x in re.split(r"[.!?]+", body) if x.strip()]) > 2:
         return False
-    names = " ".join([*sheet.get("waiting", []), *sheet.get("finished", []), *sheet.get("due_today", [])]).lower()
-    counts = {len(sheet.get("waiting", [])), len(sheet.get("finished", [])), sheet.get("due_count", 0)}
-    if re.search(r"\d", text):  # numbers are spoken as words: a digit means the wording went astray
+    words = re.findall(r"[A-Za-z']+", body)
+    if any(w.lower().strip("'") in _CLAIMS for w in words):
         return False
-    for w in re.findall(r"[a-z]+(?:-[a-z]+)?", text.lower()):
-        if w in _WORD_NUMBERS or "-" in w and all(p in _WORD_NUMBERS for p in w.split("-")):
-            n = sum(_WORD_NUMBERS[p] for p in w.split("-"))
-            if n not in counts and n != 1:  # "one" reads as a word as often as a number
-                return False
-    starts = {m.group(1) for m in _SENTENCE_START.finditer(text)}
-    for word in re.findall(r"\b[A-Z][\w']*", text):
-        if word.lower() in names or word in ("I", "I'm", "I'll", "I've"):
-            continue
-        if word in starts and word.lower() in _STARTERS:
-            continue
-        return False  # a name the sheet doesn't have (or a sentence that starts oddly: the template plays)
-    return True
+    starts = {m.group(1) for m in re.finditer(r"(?:^|[.!?]\s+)([A-Za-z']+)", body.strip())}
+    return all(not w[0].isupper() or (w in starts and (not strict or w.lower() in _OPENERS
+                                                        or w.lower().endswith("ly"))) for w in words)
 
 
 class Sub:
@@ -111,8 +104,8 @@ class Sub:
         self.running: str | None = None
         self.last_error: str | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
-        self._briefing: dict | None = None  # {"sheet", "text"} worded while the owner was away
-        self._dirty = True
+        self._briefing: dict | None = None  # {"sheet", "quip"} written while the owner was away
+        self._decide = threading.Lock()  # ✓/✕ on the week: one at a time, or a double click makes two tasks
 
     # -- state ------------------------------------------------------------------------------------
     @property
@@ -159,15 +152,16 @@ class Sub:
 
     # -- the tick (on the loop, every 30 s with the voice's) ---------------------------------------
     async def tick(self) -> None:
+        """Every voice tick, as its own task (never awaited by the reminder tick: a run takes minutes)."""
         self.loop = asyncio.get_running_loop()
         if self.running:
             return
         try:
             if self.enabled("briefings") and self.presence is not None and self.presence.state() == "away":
                 await self._maybe_brief()
-            if self.enabled("quips") and self._away_or_quiet() and self._due("quips", QUIPS_EVERY, True):
+            if self.enabled("quips") and self._away_or_quiet() and await t(self._due, "quips", QUIPS_EVERY, True):
                 await self.quip_batch()
-            if self.enabled("review") and self._away_or_quiet() and self._due("review", REVIEW_EVERY, False):
+            if self.enabled("review") and self._away_or_quiet() and await t(self._due, "review", REVIEW_EVERY, False):
                 await self.weekly_review()
         except Exception as e:  # never the hub's problem
             self.last_error = str(e)[:300]
@@ -179,7 +173,7 @@ class Sub:
             return False
         if not self.enabled(name, manual=True):
             return False
-        coro = {"quips": self.quip_batch, "briefings": self._brief_now, "review": self.weekly_review}[name]()
+        coro = {"quips": self.quip_batch, "briefings": self._quip_now, "review": self.weekly_review}[name]()
         asyncio.run_coroutine_threadsafe(self._guard(coro), self.loop)
         return True
 
@@ -202,22 +196,18 @@ class Sub:
             return out
         finally:
             self.running = None
-            self._note_run(name)
+            await t(self._note_run, name)  # the Announcer's lock: never taken on the loop
 
     # -- A: fresh quips ----------------------------------------------------------------------------
     async def quip_batch(self) -> int:
         brain = self.paths.brain
         quotes, _ = await t(load_quotes, brain)
-        wordings, _, _ = await t(load_all, brain)
         facts = await t(self._week_facts)
-        pools = {"quips": {p: {"placeholders": sorted(PLACEHOLDERS), "examples": quotes.get(p, [])[:4]}
-                           for p in QUIP_POOLS},
-                 "lines": {p: {"required": sorted(LINE_POOLS[p][0]), "optional": sorted(LINE_POOLS[p][1]),
-                               "examples": wordings.get(p, [])[:3]} for p in WORDING_POOLS}}
-        prompt = ("Write up to 6 new lines for each pool.\n" +
+        pools = {p: {"placeholders": sorted(PLACEHOLDERS), "examples": quotes.get(p, [])[:4]} for p in QUIP_POOLS}
+        prompt = ("Write up to 6 new quips for each pool.\n" +
                   json.dumps({"pools": pools, "week": facts}, ensure_ascii=False, indent=1))
         raw = await self._run("quips", prompt, "quips.md", QUIPS_SCHEMA)
-        text, n = render_generated(raw, quotes, wordings, self._now())
+        text, n = render_generated(raw, quotes, self._now())
         if n:
             await t(_write, generated_path(brain), text)
             await t(self._commit, "chatter: fresh quips")
@@ -244,49 +234,53 @@ class Sub:
         return {"notes_filed": filed, "busiest_projects": [names.get(s, s) for s in top],
                 "time_of_week": now.strftime("%A")}
 
-    # -- B: briefings worded while away ------------------------------------------------------------
+    # -- B: the welcome back's joke, written while away ------------------------------------------
     def facts_changed(self, sheet: dict) -> None:
-        self._dirty = True
+        pass  # the tick notices: it writes again when the counts differ from the last joke's
 
-    def briefing_for(self, sheet: dict) -> str | None:
+    def quip_for(self, sheet: dict) -> str | None:
+        """The joke written for exactly these counts, if it still passes the check."""
         b = self._briefing
-        if b and b["sheet"] == sheet and honest(b["text"], sheet):
-            return b["text"]
+        if b and b["sheet"] == sheet and fact_free(b["quip"], 90, strict=True):
+            return b["quip"]
         return None
 
     async def _maybe_brief(self) -> None:
         sheet = await t(self.chatter.fact_sheet, self.presence.away_since())
-        if not (sheet["waiting"] or sheet["finished"] or sheet["due_today"]):
+        if not any(sheet.values()) or (self._briefing and self._briefing["sheet"] == sheet):
             return
-        if self._briefing and self._briefing["sheet"] == sheet:
+        if not await t(self._count_briefing):
             return
-        b = self.voice.chatter_state().get("sub_day") or {}
-        today = self._now().date().isoformat()
-        if b.get("day") != today:
-            b = {"day": today, "briefings": 0}
-        if b["briefings"] >= BRIEFINGS_A_DAY:
-            return
-        b["briefings"] += 1
-        with self.voice._lock:
-            self.voice.chatter_state()["sub_day"] = b
-            self.voice.save_state()
         await self._brief(sheet)
 
-    async def _brief_now(self) -> None:
+    def _count_briefing(self) -> bool:
+        with self.voice._lock:
+            st = self.voice.chatter_state()
+            today = self._now().date().isoformat()
+            b = st.get("sub_day") if isinstance(st.get("sub_day"), dict) and st["sub_day"].get("day") == today \
+                else {"day": today, "briefings": 0}
+            if b["briefings"] >= BRIEFINGS_A_DAY:
+                return False
+            b["briefings"] += 1
+            st["sub_day"] = b
+            self.voice.save_state()
+            return True
+
+    async def _quip_now(self) -> None:
         since = self.presence.away_since() if self.presence is not None else None
         sheet = await t(self.chatter.fact_sheet, since or self._now() - timedelta(hours=1))
         await self._brief(sheet)
-        text = self.briefing_for(sheet)
-        if text:
-            await t(self.voice.chat, "briefing", "briefing.back", {}, "", force=True, why="try it now (worded)",
-                    text=f"Welcome back. {text}")
+        quip = self.quip_for(sheet)
+        if quip:
+            await t(self.voice.chat, "briefing", "briefing.back", {}, "", force=True, why="try it now (the joke is B's)",
+                    text=f"Welcome back. {quip}")
 
     async def _brief(self, sheet: dict) -> None:
-        raw = await self._run("briefings", json.dumps(sheet, ensure_ascii=False), "briefing.md", BRIEFING_SCHEMA)
-        text = " ".join(str(raw.get("text", "")).split())
-        self._briefing = {"sheet": sheet, "text": text} if honest(text, sheet) else None
+        raw = await self._run("briefings", json.dumps(sheet), "briefing.md", BRIEFING_SCHEMA)
+        quip = " ".join(str(raw.get("quip", "")).split())
+        self._briefing = {"sheet": sheet, "quip": quip} if fact_free(quip, 90, strict=True) else None
         if self._briefing is None:
-            log.info("chatter: a worded briefing failed the check: %r", text[:200])
+            log.info("chatter: the welcome back's joke failed the check: %r", quip[:200])
 
     # -- C: ATLAS's week ---------------------------------------------------------------------------
     def week_path(self) -> Path:
@@ -329,42 +323,53 @@ class Sub:
                 "chattiness": self._settings()["voice_chattiness"]}
 
     def decide(self, sid: str, confirm: bool) -> dict:
-        """✓ or ✕ on one of the week's suggestions. ✓ makes it an open task in ATLAS's project."""
-        week = self.week()
-        sug = next((x for x in (week or {}).get("suggestions", []) if x.get("id") == sid), None)
-        if sug is None or sug.get("status") != "open":
-            raise ValueError("unknown or already handled suggestion")
-        if confirm:
-            self.reviewer.add_task(sug["text"], project=self.chatter.atlas_project(), area="projects",
-                                   source=f"atlas-week-{week['written_at'][:10]}")
-        sug["status"] = "confirmed" if confirm else "dismissed"
-        _write(self.week_path(), json.dumps(week, indent=1))
-        return week
+        """✓ or ✕ on one of the week's suggestions. ✓ makes it an open task in ATLAS's project (a
+        project and an area from the map, or none). One at a time: a double click is one task."""
+        with self._decide:
+            week = self.week()
+            sug = next((x for x in (week or {}).get("suggestions", []) if x.get("id") == sid), None)
+            if sug is None or sug.get("status") != "open":
+                raise ValueError("unknown or already handled suggestion")
+            if confirm:
+                project, area = self._home()
+                self.reviewer.add_task(sug["text"], project=project, area=area,
+                                       source=f"atlas-week-{week['written_at'][:10]}")
+            sug["status"] = "confirmed" if confirm else "dismissed"
+            _write(self.week_path(), json.dumps(week, indent=1))
+            return week
+
+    def _home(self) -> tuple[str | None, str]:
+        """Where a week's task goes: ATLAS's project if the map has it, and an area the map has."""
+        from .brainmap import load_map
+        m = load_map(self.paths.brain)
+        projects = {p.get("slug") for p in (m.projects if m else [])}
+        areas = [a.get("slug") for a in (m.areas if m else [])]
+        slug = self.chatter.atlas_project()
+        area = "projects" if "projects" in areas or not areas else areas[0]
+        return (slug if slug in projects else None), area
 
 
-def render_generated(raw: dict, quotes: dict, wordings: dict, now: datetime) -> tuple[str, int]:
-    """generated.md's text from a batch, keeping only lines that pass their pool's rules and the
-    wording rules and aren't already there. (text, how many lines)."""
-    from .lines import parse as parse_lines
+def render_generated(raw: dict, quotes: dict, now: datetime) -> tuple[str, int]:
+    """generated.md's text from a batch: quips that pass their pool's rules, `fact_free` and aren't
+    already there. (text, how many)."""
     from .quotes import parse as parse_quips
     out = [f"# Written by ATLAS's overnight batch on {now.date().isoformat()} (chatter pattern A).",
            "# The next batch replaces this file. Delete any line you don't like; the hub reads it every time.", ""]
     n = 0
-    for kind, allowed, existing in (("quips", QUIP_POOLS, quotes), ("lines", WORDING_POOLS, wordings)):
-        got = raw.get(kind) if isinstance(raw, dict) else None
-        for pool in allowed:
-            lines = []
-            for line in (got or {}).get(pool, []) if isinstance(got, dict) else []:
-                line = " ".join(str(line).split())
-                if not wording_ok(line) or line in existing.get(pool, []) or line in lines:
-                    continue
-                check = parse_quips(f"## {pool}\n{line}\n") if kind == "quips" else parse_lines(f"## {pool}\n{line}\n")
-                if check[-1] or not check[0][pool]:
-                    continue
-                lines.append(line)
-            if lines:
-                out += [f"## {kind} {pool}", *lines[:8], ""]
-                n += len(lines[:8])
+    got = raw.get("quips") if isinstance(raw, dict) else None
+    for pool in QUIP_POOLS:
+        lines = []
+        for line in (got or {}).get(pool, []) if isinstance(got, dict) else []:
+            line = " ".join(str(line).split())
+            if not fact_free(line) or line in quotes.get(pool, []) or line in lines:
+                continue
+            check = parse_quips(f"## {pool}\n{line}\n")
+            if check[-1] or not check[0][pool]:
+                continue
+            lines.append(line)
+        if lines:
+            out += [f"## quips {pool}", *lines[:8], ""]
+            n += len(lines[:8])
     return "\n".join(out), n
 
 

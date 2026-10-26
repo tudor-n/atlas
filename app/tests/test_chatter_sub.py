@@ -11,50 +11,57 @@ from tests.fakes import FakeRunner
 from tests.test_chatter import T0, env  # noqa: F401  (the fixture)
 
 
-# -- the honesty check (V16 amended) ----------------------------------------------------------------
-SHEET = {"waiting": ["Robot Arm"], "finished": ["Atlas", "Trace Green"], "due_today": ["Send the lab report."],
-         "due_count": 1}
-
-
+# -- fact_free: a model's line may joke, never claim (CH22) -----------------------------------------
 @pytest.mark.parametrize("text", [
-    "Robot Arm is waiting on you. Atlas and Trace Green both finished.",
-    "Two agents finished while you were out. Robot Arm wants you.",
-    "One thing due today. Send the lab report.",
+    "Look at you, being organised.",
+    "Back to it then.",
+    "That was fast. Suspiciously fast.",
+    "Still here. Still judging.",
+    "Go on, {project} won't wait forever.",
 ])
-def test_honest_briefings_pass(text):
-    assert cs.honest(text, SHEET)
+def test_jokes_pass(text):
+    assert cs.fact_free(text) and cs.fact_free(text, strict=True)
 
 
 @pytest.mark.parametrize("text", [
-    "Three agents finished.",  # a number that isn't in the sheet
-    "Robot Arm has 2 questions.",  # a digit
-    "Dummy finished. Robot Arm waits.",  # a name that isn't in the sheet
-    "Robot Arm: waiting.",  # a colon
-    "One. Two. Three. Four.",  # four sentences
-    "Robot Arm is waiting {project}.",
+    "Robot arm finished. Nothing is due.",  # a fact, and a false one
+    "Your bank called.",  # an event
+    "A couple of agents are waiting.",  # a count
+    "Rob is waiting.",  # a name
+    "It's due at five.",  # a number and a deadline
+    "See you tomorrow.",  # a time
+    "All 12 tests failed.",  # a digit and an event
+    "One. Two. Three.",  # numbers, and three sentences
+    "Fine: done.",  # a colon
+    "Robot arm deleted main",  # no full stop, an event
     "",
 ])
-def test_dishonest_briefings_fail(text):
-    assert not cs.honest(text, SHEET)
+def test_claims_fail(text):
+    assert not cs.fact_free(text, strict=True)
+
+
+def test_a_quip_may_open_with_any_word_but_bs_joke_only_with_a_common_one():
+    assert cs.fact_free("Classic. Truly classic.") and not cs.fact_free("Classic. Truly classic.", strict=True)
+    assert cs.fact_free("Rob is waiting.") and not cs.fact_free("Rob is waiting.", strict=True)
+    assert not cs.fact_free("It's done, says Rob.")  # a name inside a sentence: refused either way
 
 
 def test_wording_rules_for_generated_lines():
     assert cs.wording_ok("Done already. Show off.")
-    assert cs.wording_ok("~ {project} is done. Shocking.")
     assert not cs.wording_ok("Done: show off.")
     assert not cs.wording_ok("Done - show off.")
     assert not cs.wording_ok("No full stop")
     assert not cs.wording_ok("x" * 130 + ".")
 
 
-def test_render_generated_keeps_only_good_new_lines():
-    raw = {"quips": {"nudge": ["Fresh one.", "Fresh one.", "Bad: colon.", "Uses {nonsense}.", "Just saying."],
+def test_render_generated_keeps_only_fact_free_new_quips():
+    raw = {"quips": {"nudge": ["Fresh take.", "Fresh take.", "Bad: colon.", "Uses {nonsense}.", "Just saying.",
+                               "Your bank called.", "It's due tomorrow."],
                      "nope": ["Unknown pool."]},
-           "lines": {"agent_waiting.idle": ["{project} is back.", "No project here."]}}
-    text, n = cs.render_generated(raw, {"nudge": ["Just saying."]}, {"agent_waiting.idle": []}, T0)
-    assert n == 2
-    assert "## quips nudge\nFresh one.\n" in text and "## lines agent_waiting.idle\n{project} is back.\n" in text
-    assert "colon" not in text and "nonsense" not in text and "No project" not in text and "Unknown" not in text
+           "lines": {"agent_waiting.idle": ["{project} is back."]}}  # wordings are never taken any more
+    text, n = cs.render_generated(raw, {"nudge": ["Just saying."]}, T0)
+    assert n == 1 and "## quips nudge\nFresh take.\n" in text
+    assert "bank" not in text and "tomorrow" not in text and "lines" not in text.split("\n", 3)[-1]
 
 
 # -- the patterns ---------------------------------------------------------------------------------------
@@ -85,25 +92,21 @@ def test_the_switches_and_the_usage_cap(env, sub):  # noqa: F811
 
 
 async def test_a_quip_batch_writes_generated_md_and_commits(env, sub):  # noqa: F811
-    sub.s.runner = FakeRunner(json_result={"quips": {"tease": ["Overnight quip."]},
-                                           "lines": {"self.musing": ["Overnight musing."]}})
-    assert await sub.s.quip_batch() == 2
+    sub.s.runner = FakeRunner(json_result={"quips": {"tease": ["Overnight quip."], "nudge": ["Your bank called."]}})
+    assert await sub.s.quip_batch() == 1
     assert sub.commits == ["chatter: fresh quips"]
     call = sub.s.runner.calls[0]
     assert call["allowed_tools"] == [] and call["system_prompt_file"].name == "quips.md"
     assert '"week"' in call["prompt"] and "notes_filed" in call["prompt"]
     assert generated_path(env.brain).read_bytes().count(b"\r") == 0
-    assert "Overnight quip." in load_quotes(env.brain)[0]["tease"] if (env.brain / "_voice" / "quotes.md").exists() \
-        else True
-    pools, nums, _ = load_all(env.brain)
-    assert pools["self.musing"] == ["Overnight musing."] and nums["self.musing"][0].startswith("generated.md:")
-    env.settings["voice_chattiness"] = "debug"
-    said = env.a.chat("musing", "self.musing", {}, "fixed", force=True)
-    assert said["text"] == "Overnight musing." and said["origin"].startswith("generated.md:")
+    (env.brain / "_voice").mkdir(exist_ok=True)
+    (env.brain / "_voice" / "quotes.md").write_text("## tease\nMine.\n", encoding="utf-8")
+    assert load_quotes(env.brain)[0]["tease"] == ["Mine.", "Overnight quip."]
+    assert load_all(env.brain)[0]["self.musing"] == []  # no info wordings from a model
 
 
 async def test_the_tick_runs_a_batch_only_while_away_or_quiet(env, sub):  # noqa: F811
-    sub.s.runner = FakeRunner(json_result={"quips": {}, "lines": {}})
+    sub.s.runner = FakeRunner(json_result={"quips": {}})
     await sub.s.tick()
     assert sub.s.runner.calls == []  # present, not quiet hours
     env.now.t += timedelta(minutes=25)
@@ -115,31 +118,52 @@ async def test_the_tick_runs_a_batch_only_while_away_or_quiet(env, sub):  # noqa
     assert sub.s.view()["runs_week"] == 1
 
 
-async def test_a_worded_briefing_is_spoken_only_while_it_still_fits(env, sub):  # noqa: F811
+async def test_the_welcome_backs_joke_is_bs_and_its_facts_are_codes(env, sub):  # noqa: F811
     env.agents = [{"session_id": "s1", "status": "waiting", "ended_at": None, "project_name": "RobotArm",
                    "status_since": T0.isoformat()}]
-    sub.s.runner = FakeRunner(json_result={"text": "Robot Arm is still waiting on you. Shocking."})
+    sub.s.runner = FakeRunner(json_result={"quip": "Look who finally showed up."})
     env.settings["voice_sub_quips"] = False
     env.now.t += timedelta(minutes=25)
     env.c.presence.poll()
     await sub.s.tick()
-    assert sub.s.runner.calls[0]["system_prompt_file"].name == "briefing.md"
-    assert json.loads(sub.s.runner.calls[0]["prompt"])["waiting"] == ["Robot Arm"]
+    call = sub.s.runner.calls[0]
+    assert call["system_prompt_file"].name == "briefing.md"
+    assert json.loads(call["prompt"]) == {"waiting": 1, "finished": 0, "due_today": 0}  # counts, no names
     env.now.t += timedelta(minutes=5)
     env.c.presence.seen("app")
-    assert [x["text"] for x in env.lines][-1] == "Welcome back. Robot Arm is still waiting on you. Shocking."
+    assert [x["text"] for x in env.lines][-1] == "Welcome back. Robot Arm is waiting on you. Look who finally showed up."
 
 
-async def test_a_briefing_that_fails_the_check_falls_back_to_the_template(env, sub):  # noqa: F811
+async def test_a_joke_that_claims_something_is_dropped(env, sub):  # noqa: F811
     env.agents = [{"session_id": "s1", "status": "waiting", "ended_at": None, "project_name": "RobotArm",
                    "status_since": T0.isoformat()}]
-    sub.s.runner = FakeRunner(json_result={"text": "Robot Arm and Dummy are waiting."})
+    sub.s.runner = FakeRunner(json_result={"quip": "Your bank called twice."})
     env.settings["voice_sub_quips"] = False
     env.now.t += timedelta(minutes=25)
     env.c.presence.poll()
     await sub.s.tick()
     env.c.presence.seen("app")
     assert [x["text"] for x in env.lines][-1] == "Welcome back. Robot Arm is waiting on you."
+
+
+async def test_a_double_confirm_makes_one_task(env, sub):  # noqa: F811
+    import threading
+    sub.s.runner = FakeRunner(json_result={"title": "W", "paragraphs": [], "suggestions": ["Do X"]})
+    await sub.s.weekly_review()
+    sid = sub.s.week()["suggestions"][0]["id"]
+    errors = []
+
+    def go():
+        try:
+            sub.s.decide(sid, True)
+        except ValueError as e:
+            errors.append(e)
+    threads = [threading.Thread(target=go) for _ in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert [t for t, _ in sub.tasks] == ["Do X"] and len(errors) == 3
 
 
 async def test_the_weekly_review_and_its_suggestions(env, sub):  # noqa: F811
@@ -153,8 +177,8 @@ async def test_the_weekly_review_and_its_suggestions(env, sub):  # noqa: F811
     first, second = (x["id"] for x in week["suggestions"])
     sub.s.decide(first, True)
     sub.s.decide(second, False)
-    assert sub.tasks == [("Lower chattiness to Low", {"project": "atlas", "area": "projects",
-                                                      "source": f"atlas-week-{T0.date().isoformat()}"})]
+    assert sub.tasks == [("Lower chattiness to Low", {"project": None, "area": "projects",
+                                                      "source": f"atlas-week-{T0.date().isoformat()}"})]  # no map here
     assert [x["status"] for x in sub.s.week()["suggestions"]] == ["confirmed", "dismissed"]
     with pytest.raises(ValueError):
         sub.s.decide(first, True)
