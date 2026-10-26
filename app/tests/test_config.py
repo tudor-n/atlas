@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from atlas.config import load_settings, save_settings
+from atlas.config import VOICE_EVENTS, load_settings, save_settings
 
 
 def test_defaults_when_no_file(paths):
@@ -265,3 +265,12 @@ def test_voice_volume_model_and_threshold(paths):
                      ("voice_finish_min_s", 3601), ("voice_enabled", 1), ("voice_sass", "yes")]:
         with pytest.raises(ValueError):
             save_settings(paths, {key: bad})
+
+
+def test_the_settings_page_has_a_switch_for_every_voice_event():
+    """Settings → Voice saves `voice_events` whole: a key the page lacks would fail every save."""
+    import re
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "web" / "js" / "views" / "voice-model.js").read_text(encoding="utf-8")
+    block = js[js.index("export const EVENT_LABELS"):js.index("];", js.index("export const EVENT_LABELS"))]
+    assert re.findall(r"\['(\w+)'", block) == list(VOICE_EVENTS)

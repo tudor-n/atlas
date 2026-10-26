@@ -26,7 +26,17 @@ export function atlasWeek({ blocked = () => '' } = {}) {
     let res;
     try { res = await api.get('/api/chatter/week'); } catch (_) { return; }  // not there yet, or the hub is away
     if (dead || mine !== seq) return;
-    week = weekView(res && res.week);
+    show(res && res.week);
+  }
+
+  // Redraw only when the week changed: a redraw drops an armed ✕ (press twice), and voice.line
+  // reloads come often at Very high.
+  let shown = '';
+  function show(raw) {
+    const key = JSON.stringify(raw || null);
+    if (key === shown) return;
+    shown = key;
+    week = weekView(raw);
     draw();
   }
 
@@ -70,15 +80,16 @@ export function atlasWeek({ blocked = () => '' } = {}) {
     busy = true;
     errors.delete(id);
     draw();
+    let res = null;
     try {
-      await api.post(`/api/chatter/week/${encodeURIComponent(id)}/${how}`, {});
+      res = await api.post(`/api/chatter/week/${encodeURIComponent(id)}/${how}`, {});
     } catch (e) {
       errors.set(id, `${how === 'confirm' ? 'Not confirmed' : 'Not dismissed'}: ${e.message}`);
     }
     busy = false;
     if (dead) return;
+    if (res && res.week) { shown = ''; show(res.week); return; }  // the hub's answer is the new week
     draw();
-    await load();
   }
 
   const off = api.onEvent('voice.line', () => {

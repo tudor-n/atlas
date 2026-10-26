@@ -86,7 +86,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
 
     // -- chattiness (chatter spec §4): the level, its preview, the owner's cap, last call, ATLAS's project
     let lvl = LEVELS.some((l) => l.value === s.voice_chattiness) ? s.voice_chattiness : 'medium';
-    const preview = el('p', { class: 'st-prev', 'aria-live': 'polite' });
+    const preview = el('p', { class: 'st-prev' });
     const saveFirst = el('p', { class: 'st-prev' }, 'Save, and TRY IT NOW shows below.');
     const debugTag = chip('DEBUG CHATTER', { title: 'Very high: every wait collapses. It drops back after 2 h or at a restart.' });
     const perHour = el('input', { type: 'number', id: 'voice-per-hour', class: 'm num', min: '0', max: '60', step: '1',
@@ -159,7 +159,9 @@ export async function renderVoiceSettings(box, isDead, ui) {
       if (finishMin.value.trim() === '' || !Number.isFinite(mins) || mins < 0 || mins > 60) throw new Error('Long run: minutes, 0 to 60.');
       const words = workoutWords(workout.value);
       if (words.error) throw new Error(words.error);
-      const chat = readChatter({ perHour: perHour.value, lastCall: lastCall.value, project: project.value, maxPct: subMax.value });
+      if (capOverridable(lvl) && perHour.validity && perHour.validity.badInput) throw new Error('Lines an hour: a whole number from 0 to 60, or empty.');
+      // A disabled field (Mute, Very high) is the level's own: never what blocks a save.
+      const chat = readChatter({ perHour: capOverridable(lvl) ? perHour.value : '', lastCall: lastCall.value, project: project.value, maxPct: subMax.value });
       if (chat.error) throw new Error(chat.error);
       return {
         voice_enabled: on.isOn(), voice_sass: sass.isOn(), voice_sass_readback: sassRb.isOn(),
@@ -247,7 +249,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
   // and the lines redraw on their own (drawChatter), so a new line never touches unsaved edits.
   function tryGroups() {
     const notes = el('div', { class: 'st-notes' });
-    const lines = el('ul', { class: 'st-lines', 'aria-live': 'polite' });
+    const lines = el('ul', { class: 'st-lines' });  // rebuilt on every line: not live, or it's all re-read
     const head = groupHead('RECENT LINES');
     live = { notes, lines, head };
     const buttons = tryList(s.voice_subscription !== false).map((t) => button(t.label, { size: 40, onclick: () => tryIt(t.what) }));

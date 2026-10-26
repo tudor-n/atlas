@@ -1,8 +1,8 @@
 // The presence ping (chatter spec §5): a key or a pointer press in the app or the widget tells the hub
-// the owner is at the PC, at most once a minute. Fire and forget: a failed ping is never shown. No DOM
+// the owner is at the PC, at most every 15 seconds (well inside the 1-minute away at Very high). Fire and forget: a failed ping is never shown. No DOM
 // of its own; `target` is the document, `send` the POST, `now` a millisecond clock.
 
-export const PING_EVERY_MS = 60000;
+export const PING_EVERY_MS = 15000;
 
 // At most one go per `ms`. A clock that went backwards (a resumed laptop) lets the next one through.
 export class Throttle {

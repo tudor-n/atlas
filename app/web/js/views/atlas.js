@@ -28,6 +28,7 @@ export function render(container, params, query) {
   let lastQ = '';
   let noteSeq = 0;
   let pinned = null;     // the owner's NOTE/ASK press, until the field is emptied
+  let fromGuess = false;  // the last text went the way ATLAS guessed: an INSTEAD press is its mistake
   let saving = null;     // the text being saved, while a save is in flight
   let note = null;       // the note on screen: {entryId, text, card}
   let savedText = null;  // the text last saved as a note here (ASK INSTEAD keeps it in the log)
@@ -54,13 +55,7 @@ export function render(container, params, query) {
       if (ev.ctrlKey || ev.metaKey || intent() === 'ask') { ev.preventDefault(); submit(); }
     },
   });
-  const pick = seg(INTENTS, 'note', (v) => {
-    const kind = overrideKind(input.value, intent(), v);
-    pinned = v;
-    sync();
-    input.focus();
-    if (kind) react(kind);
-  }, { label: 'Note or question' });
+  const pick = seg(INTENTS, 'note', (v) => { pinned = v; sync(); input.focus(); }, { label: 'Note or question' });
   // SAVE or ASK: an outline at rest, the white primary only while there is text (one primary on screen)
   const go = button('SAVE', { type: 'submit', cls: 'atl-go' });
   const form = el('form', { class: 'atl-bar', onsubmit: (ev) => { ev.preventDefault(); submit(); } },
@@ -156,6 +151,10 @@ export function render(container, params, query) {
   function submit() {
     const text = input.value;
     if (!text.trim()) return;
+    // Sent against the guess: tell ATLAS once, now (chatter react), not on each NOTE | ASK press.
+    const flip = overrideKind(text, shownIntent(text, null), intent());
+    fromGuess = !flip;
+    if (flip) react(flip);
     if (intent() === 'ask') {
       clearField();
       ask(text.trim());
@@ -196,7 +195,7 @@ export function render(container, params, query) {
         note = { entryId: res.entry_id, text, card };
         clear(notePane).appendChild(card);
       }
-      showWas('Saved as a note', button('ASK INSTEAD', { size: 40, onclick: () => { react('flip_ask'); ask(lastQ); } }),
+      showWas('Saved as a note', button('ASK INSTEAD', { size: 40, onclick: () => { if (fromGuess) react('flip_ask'); fromGuess = false; ask(lastQ); } }),
         'It stays in your log either way.');
       show('note');
     } catch (e) {
@@ -316,7 +315,7 @@ export function render(container, params, query) {
     clear(deeperAct);
     const asNote = savedText !== null && savedText.trim() === q
       ? null  // already in the log: nothing to offer
-      : button('SAVE AS NOTE INSTEAD', { size: 40, onclick: () => { react('flip_note'); saveNote(q); } });
+      : button('SAVE AS NOTE INSTEAD', { size: 40, onclick: () => { if (fromGuess) react('flip_note'); fromGuess = false; saveNote(q); } });
     showWas('Asked as a question', asNote, asNote ? null : 'It is in your log as a note too.');
     show('ask');
     run(`/api/ask?q=${encodeURIComponent(q)}&reply=1`, answer, quickUi, {
