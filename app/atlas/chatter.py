@@ -35,6 +35,7 @@ SETTLE_S = 5.0  # a burst of settings saves becomes one line, this long after th
 APPROACH = (timedelta(hours=2), timedelta(hours=1), timedelta(minutes=15))
 SLOT_WORDS = {APPROACH[0]: "in two hours", APPROACH[1]: "in an hour", APPROACH[2]: "in fifteen minutes"}
 SESSION_LINE_GAP = timedelta(hours=1)
+CALLBACK_AT = (3, 5, 10)  # "That's three times today for Robot Arm": at these counts only
 RESTART_GAP = timedelta(minutes=3)  # alive this recently: a restart (update, crash, drive back), not a hello
 GOODBYE_WAIT_S = 7.0  # the shell gives the hub 10 s after SIGTERM
 _DAYS_OF_WEEK = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")  # an ATLAS session starting a turn: one line per session an hour
@@ -359,6 +360,10 @@ class Chatter:
             if filed:
                 notes = vl.things(filed, "note", "notes")
                 facts.append(("fact.filed", {"notes": notes}, f"I filed {notes} today."))
+            left = self._due_items(now)
+            if left:
+                things = vl.things(len(left), "thing", "things")
+                facts.append(("fact.due_left", {"things": things}, f"Still due today. {things.capitalize()}."))
             pending = self._unconfirmed()
             if pending:
                 sugg = vl.things(pending, "suggestion", "suggestions")
@@ -477,16 +482,21 @@ class Chatter:
     def _nudges(self, now: datetime, s: dict, lvl: ch.Level) -> None:
         if lvl.name == "mute":
             return
+        longest: dict[str, tuple[timedelta, dict]] = {}  # one nudge per project: its longest wait
         for r in self._agents():
             since = _parse(r.get("status_since"))
             if r.get("status") != "waiting" or r.get("ended_at") or since is None:
                 continue
             wait = now - since
             if NUDGE_WAIT <= wait < timedelta(hours=6) or (lvl.debug and wait >= timedelta(minutes=1)):
-                project = vl.spoken_project(r.get("project_name"))
-                self.v.chat("nudge", "nudge.waiting", {"project": project, "duration": vl.duration_words(wait.total_seconds())},
-                            f"{project} has been waiting {vl.duration_words(wait.total_seconds())}.",
-                            key=("nudge_wait", r.get("session_id"), r.get("status_since")), why="an agent left waiting")
+                name = r.get("project_name") or ""
+                if name not in longest or wait > longest[name][0]:
+                    longest[name] = (wait, r)
+        for name, (wait, r) in longest.items():
+            project = vl.spoken_project(name)
+            self.v.chat("nudge", "nudge.waiting", {"project": project, "duration": vl.duration_words(wait.total_seconds())},
+                        f"{project} has been waiting {vl.duration_words(wait.total_seconds())}.",
+                        key=("nudge_wait", r.get("session_id"), r.get("status_since")), why="an agent left waiting")
         b = self._day_bucket("stale")
         if b.get("done") and not lvl.debug:
             return
@@ -636,7 +646,7 @@ class Chatter:
             n = b.get(name, 0) + 1
             b[name] = n
             self.v.save_state()
-            if n >= 3:
+            if n in CALLBACK_AT:
                 project = vl.spoken_project(name)
                 self.v.chat("nudge", "callback.waiting_today", {"project": project, "count": vl.number_words(n)},
                             f"That's {vl.number_words(n)} times today for {project}.", key=("waits", name, n),

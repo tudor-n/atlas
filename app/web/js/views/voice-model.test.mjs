@@ -141,7 +141,9 @@ test('recent lines, presence, debug and the subscription line', async () => {
   assert.equal(subLine({}), '');
   assert.equal(subLine({ runs_week: 3, last: '2026-10-26 quips ok' }), 'Subscription: 3 runs this week, last 2026-10-26 quips ok.');
   assert.equal(subLine({ runs_week: 1, last: { what: 'review', at: '2026-10-26T03:00', nested: { x: 1 } } }),
-    'Subscription: 1 run this week, last review 2026-10-26T03:00.');
+    'Subscription: 1 run this week, last review · 2026-10-26T03:00.');
+  assert.equal(subLine({ runs_week: 3, last: { quips: '2026-10-26T20:48:05', briefings: '2026-10-26T20:50:14', review: '2026-10-26T20:48:18' } }),
+    'Subscription: 3 runs this week, last A 20:48 · B 20:50 · C 20:48.');
 });
 
 test('the widget tag shows only at Very high', async () => {

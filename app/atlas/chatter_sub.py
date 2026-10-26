@@ -66,7 +66,8 @@ messaged crashed deleted failed failing broke broken error errors deployed pushe
 emergency fire police doctor hospital nothing nobody none""".split())
 _OPENERS = set("""a all also and anyway as at back but don't go good great just look maybe my nice no not now oh
 right so still that that's the then there there's this time try well what while yes you you're your i i'm i'll
-i've it it's""".split())
+i've it it's ah aw hmm huh ok okay alright sure wow quiet busy calm peaceful lovely classic typical bit big small
+fresh solid decent rough some quite very such how even honest seriously""".split())
 
 
 def wording_ok(line: str, limit: int = 120) -> bool:
@@ -87,7 +88,7 @@ def fact_free(text: str, limit: int = 120, *, strict: bool = False) -> bool:
     if len([x for x in re.split(r"[.!?]+", body) if x.strip()]) > 2:
         return False
     words = re.findall(r"[A-Za-z']+", body)
-    if any(w.lower().strip("'") in _CLAIMS for w in words):
+    if any(re.sub(r"'s$", "", w.lower().strip("'")) in _CLAIMS for w in words):  # "today's" is "today"
         return False
     starts = {m.group(1) for m in re.finditer(r"(?:^|[.!?]\s+)([A-Za-z']+)", body.strip())}
     return all(not w[0].isupper() or (w in starts and (not strict or w.lower() in _OPENERS
@@ -279,8 +280,9 @@ class Sub:
         raw = await self._run("briefings", json.dumps(sheet), "briefing.md", BRIEFING_SCHEMA)
         quip = " ".join(str(raw.get("quip", "")).split())
         self._briefing = {"sheet": sheet, "quip": quip} if fact_free(quip, 90, strict=True) else None
-        if self._briefing is None:
-            log.info("chatter: the welcome back's joke failed the check: %r", quip[:200])
+        if self._briefing is None:  # said plainly, without the joke: shown in Settings at Very high
+            self.last_error = f"B's joke didn't pass the fact check, so it's left out: {quip[:120]}"
+            log.warning("chatter: the welcome back's joke failed the check: %r", quip[:200])
 
     # -- C: ATLAS's week ---------------------------------------------------------------------------
     def week_path(self) -> Path:

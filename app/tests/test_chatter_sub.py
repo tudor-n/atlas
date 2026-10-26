@@ -41,7 +41,9 @@ def test_claims_fail(text):
 
 
 def test_a_quip_may_open_with_any_word_but_bs_joke_only_with_a_common_one():
-    assert cs.fact_free("Classic. Truly classic.") and not cs.fact_free("Classic. Truly classic.", strict=True)
+    assert cs.fact_free("Glorious. Truly glorious.") and not cs.fact_free("Glorious. Truly glorious.", strict=True)
+    assert cs.fact_free("Quiet. Suspiciously quiet.", strict=True)  # a common opener
+    assert not cs.fact_free("Today's the day.") and not cs.fact_free("Tonight's the night.")  # possessive times
     assert cs.fact_free("Rob is waiting.") and not cs.fact_free("Rob is waiting.", strict=True)
     assert not cs.fact_free("It's done, says Rob.")  # a name inside a sentence: refused either way
 
@@ -202,3 +204,10 @@ async def test_a_failing_run_is_never_the_hubs_problem(env, sub):  # noqa: F811
     env.c.presence.poll()
     await sub.s.tick()
     assert sub.s.last_error == "boom" and sub.s.running is None
+
+
+async def test_a_joke_that_fails_says_so_in_the_panel(env, sub):  # noqa: F811
+    sub.s.runner = FakeRunner(json_result={"quip": "Rob says hi."})
+    await sub.s._brief({"waiting": 1, "finished": 0, "due_today": 0})
+    assert sub.s.quip_for({"waiting": 1, "finished": 0, "due_today": 0}) is None
+    assert "didn't pass the fact check" in sub.s.view()["last_error"]
