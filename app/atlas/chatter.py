@@ -760,9 +760,11 @@ class Chatter:
             return self.v.chat("musing", "self.musing", {}, "Still here.", force=True, why="try it now")
         if what == "self":
             u = (self._usage() or {}).get("five_hour") or {}
-            pct = int(u.get("used") or 0)
-            return self.v.chat("self", "self.usage", {"percent": vl.number_words(pct)},
-                               f"You're at {vl.number_words(pct)} percent of your window.", force=True, why="try it now")
+            if u.get("used") is None:  # no reading yet: a percentage would be made up
+                return self.v.chat("self", "self.updated", {}, "I've been updated.", force=True, why="try it now")
+            pct = vl.number_words(int(u["used"]))
+            return self.v.chat("self", "self.usage", {"percent": pct}, f"You're at {pct} percent of your window.",
+                               force=True, why="try it now")
         if what == "react":
             self._last_react = None
             return self.v.chat("react", "react.correction", {"count": "one"}, "Noted.", force=True, why="try it now")

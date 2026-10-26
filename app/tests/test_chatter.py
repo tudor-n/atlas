@@ -431,3 +431,10 @@ def test_shushed_three_times_by_pausing_is_announced_once(env):
     restraint = [x for x in env.lines if "to myself" in x["text"]]
     assert len(restraint) == 1 and restraint[0]["text"] == "Noted. I'll keep the teasing to myself."
     assert restraint[0]["spoken"] is False  # paused: captioned
+
+
+def test_try_self_never_makes_up_a_percentage(env):
+    env.settings["voice_chattiness"] = "debug"
+    assert "percent" not in env.c.try_now("self")["text"]
+    env.usage = {"five_hour": {"used": 42}}
+    assert "forty-two percent" in env.c.try_now("self")["text"]
