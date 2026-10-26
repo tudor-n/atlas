@@ -22,7 +22,7 @@ from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
 from .lines import ensure_lines
-from .quotes import ensure_quotes, ensure_reply_pools, ensure_workout_pool
+from .quotes import ensure_chatter_pools, ensure_quotes, ensure_reply_pools, ensure_workout_pool
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
@@ -98,6 +98,9 @@ def _ensure_quotes(app: web.Application) -> None:
         app["backup"].notify_commit()
     if ensure_reply_pools(app["paths"].brain):  # a file seeded before the replies (2026-10-25)
         app["repo"].commit_all("add the voice's reply quips")
+        app["backup"].notify_commit()
+    if ensure_chatter_pools(app["paths"].brain):  # a file seeded before chatter (2026-10-26)
+        app["repo"].commit_all("add the voice's chatter quips")
         app["backup"].notify_commit()
 
 

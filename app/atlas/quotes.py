@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up",
-                          "reply_tasks", "reply_filed", "reply_found", "reply_nothing")
+                          "reply_tasks", "reply_filed", "reply_found", "reply_nothing",
+                          "briefing", "self", "nudge", "react", "due_today", "tease")
 PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day", "them")
 COOLDOWN = timedelta(seconds=60)  # after a quip, lines within this play without one
 REL_PATH = "_voice/quotes.md"
@@ -252,6 +253,70 @@ If you said it, you said it out loud.
 Try other words. Or write it down this time.
 Your past self let you down.
 I've got nothing. And I've got everything you wrote.
+
+# Chatter (added 2026-10-26): quips after what ATLAS says unprompted. How often it speaks unprompted is
+# Settings, Voice, Chattiness. briefing follows a welcome back or the morning and evening digests,
+# self what it notices about itself, nudge an agent or item left waiting, react what you just did,
+# due_today the things due today, tease ATLAS's own open to-dos.
+## briefing
+That's the lot. Carry on.
+Don't say I never tell you anything.
+Now you know what I know.
+Right. Back to it.
+That's your lot. You're welcome.
+Try to keep up.
+I'll be here. Obviously.
+Any questions. No. Good.
+
+## self
+Just thought you should know.
+I notice things. It's my job.
+Not that anyone asked.
+I'm very self aware. It's exhausting.
+Carry on. I'm fine.
+I contain multitudes. Mostly notes.
+Don't mind me.
+I'm growing as a person. Sort of.
+
+## nudge
+Just saying.
+Not nagging. Reminding.
+It won't sort itself out.
+I'll stop when you do it.
+You know where to find it.
+Don't shoot the messenger.
+Go on. It's quick.
+I'll ask again later. I always do.
+
+## react
+Noted.
+Bold choice.
+I'll allow it.
+Moving on.
+As you wish.
+Fair enough.
+If you say so.
+Duly noted.
+
+## due_today
+The day isn't getting any longer.
+Clock's ticking.
+Future you is begging.
+You've still got time. Just.
+Today, not tomorrow.
+Don't make me say it again. I will though.
+The clock disagrees with your plans.
+Now would be lovely.
+
+## tease
+I'm not bitter.
+Whenever you're ready. Truly.
+I'll wait. I've got nothing else to do.
+No pressure. Just guilt.
+I've waited this long.
+Some of us are patient.
+It's fine. I'm fine.
+I'll just sit here.
 """
 
 
@@ -410,7 +475,10 @@ def ensure_workout_pool(brain: Path) -> bool:
 
 # The replies' section as the seed has it, for a file seeded before it existed (`ensure_reply_pools`).
 REPLIES_MARKER = "# Replies (added 2026-10-25)"
-REPLIES_SECTION = SEED[SEED.index(REPLIES_MARKER):]
+CHATTER_MARKER = "# Chatter (added 2026-10-26)"
+REPLIES_SECTION = SEED[SEED.index(REPLIES_MARKER):SEED.index(CHATTER_MARKER)]
+CHATTER_SECTION = SEED[SEED.index(CHATTER_MARKER):]
+CHATTER_POOLS: tuple[str, ...] = ("briefing", "self", "nudge", "react", "due_today", "tease")
 REPLY_POOLS: tuple[str, ...] = ("reply_tasks", "reply_filed", "reply_found", "reply_nothing")
 
 
@@ -427,6 +495,23 @@ def ensure_reply_pools(brain: Path) -> bool:
         return False
     with open(path, "a", encoding="utf-8", newline="\n") as f:
         f.write(("" if text.endswith("\n") else "\n") + "\n" + REPLIES_SECTION.rstrip("\n") + "\n")
+    return True
+
+
+def ensure_chatter_pools(brain: Path) -> bool:
+    """Append chatter's section once to a quotes file seeded before it (the owner asked for a chattier
+    ATLAS, 2026-10-26). Never when the file already has one of its headings or the section's marker
+    comment, never to a file it can't read. True when it wrote."""
+    path = quotes_path(brain)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    heads = "|".join(CHATTER_POOLS)
+    if CHATTER_MARKER in text or re.search(rf"^##\s*({heads})\s*$", text, re.M):
+        return False
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write(("" if text.endswith("\n") else "\n") + "\n" + CHATTER_SECTION.rstrip("\n") + "\n")
     return True
 
 

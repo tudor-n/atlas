@@ -29,7 +29,7 @@ def test_parse_reports_problems_with_line_numbers_and_keeps_the_rest():
     assert problems == ["line 1: a quote before the first ## heading", "line 4: unknown placeholder {nope}",
                         "line 5: a stray brace", "line 6: unknown pool 'nonsense' (known: agent_finished, "
                         "agent_waiting, reminder, workout, readback, catch_up, reply_tasks, reply_filed, "
-                        "reply_found, reply_nothing)"]
+                        "reply_found, reply_nothing, briefing, self, nudge, react, due_today, tease)"]
 
 
 def test_picker_cycles_without_repeats_then_reshuffles():
@@ -164,7 +164,7 @@ def test_the_seed_has_the_reply_pools_with_the_owners_lines():
     assert all(len(pools[p]) >= 8 for p in q.REPLY_POOLS)
     assert "Look {them} over and pretend you're not gonna procrastinate {them}." in pools["reply_tasks"]
     assert "Look over it, will you?" in pools["reply_found"]
-    assert q.REPLIES_SECTION.startswith(q.REPLIES_MARKER) and q.SEED.endswith(q.REPLIES_SECTION)
+    assert q.REPLIES_SECTION.startswith(q.REPLIES_MARKER) and q.REPLIES_SECTION + q.CHATTER_SECTION in q.SEED
 
 
 def test_an_older_quotes_file_gets_the_reply_pools_once(tmp_path):
@@ -190,3 +190,28 @@ def test_the_reply_pools_stay_out_when_the_owner_has_one_or_kept_the_marker(tmp_
         assert q.ensure_reply_pools(brain) is False and f.read_text(encoding="utf-8") == text
     f.unlink()
     assert q.ensure_reply_pools(brain) is False and not f.exists()
+
+
+# -- chatter (owner, 2026-10-26) -------------------------------------------------------------------
+def test_the_seed_ends_with_the_chatter_pools():
+    pools, problems = q.parse(q.SEED)
+    assert problems == [] and q.SEED.endswith(q.CHATTER_SECTION)
+    assert all(len(pools[p]) >= 4 for p in q.CHATTER_POOLS)
+    assert "## reply_tasks" not in q.CHATTER_SECTION and "## briefing" not in q.REPLIES_SECTION
+
+
+def test_an_older_quotes_file_gets_the_chatter_pools_once(tmp_path):
+    brain = tmp_path / "brain"
+    (brain / "_voice").mkdir(parents=True)
+    f = brain / "_voice" / "quotes.md"
+    f.write_text("## reminder\nMy own line.", encoding="utf-8", newline="\n")
+    assert q.ensure_chatter_pools(brain) is True
+    text = f.read_text(encoding="utf-8")
+    pools, problems = q.parse(text)
+    assert problems == [] and pools["reminder"] == ["My own line."] and all(pools[p] for p in q.CHATTER_POOLS)
+    assert q.ensure_chatter_pools(brain) is False and f.read_text(encoding="utf-8") == text
+    for kept in ("## tease\nMine.\n", q.CHATTER_MARKER + "\n"):
+        f.write_text(kept, encoding="utf-8", newline="\n")
+        assert q.ensure_chatter_pools(brain) is False and f.read_text(encoding="utf-8") == kept
+    f.unlink()
+    assert q.ensure_chatter_pools(brain) is False and not f.exists()
