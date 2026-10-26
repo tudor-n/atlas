@@ -236,15 +236,27 @@ class Chatter:
 
     # -- hello and goodbye (owner, 2026-10-26) ---------------------------------------------------
     def greet(self) -> dict | None:
-        """Once per real start, not after a restart (an update, a crash, the drive coming back)."""
+        """Once per real start: after the owner quit ATLAS (however soon they start it again), or
+        after a long enough gap. Not after a restart the owner didn't ask for: a crash, or the hub
+        restarting itself when the drive came back (no quit mark, and alive moments ago)."""
         now = self._now()
         self._started = now
         last = self.v.last_alive()
-        if last is not None and timedelta(0) <= now - last < RESTART_GAP:
+        with self._lock:
+            quit_at = _parse(self._st.pop("quit_at", None))
+            self.v.save_state()
+        if quit_at is None and last is not None and timedelta(0) <= now - last < RESTART_GAP:
             return None
-        pool, values = greeting(now, last, self._rng)
+        pool, values = greeting(now, quit_at or last, self._rng)
         return self.v.chat("greet", pool, values, "Hello.", budgeted=False, quip=False, quiet_ok=True,
                            why="ATLAS started")
+
+    @_locked
+    def mark_quit(self) -> None:
+        """The owner quit ATLAS (the hub stopped for good, not restarting itself): the next start says
+        hello however soon it comes."""
+        self._st["quit_at"] = _iso(self._now())
+        self.v.save_state()
 
     def goodbye(self, wait_s: float = GOODBYE_WAIT_S) -> dict | None:
         """When the owner quits ATLAS: one line, said before the hub goes (at most `wait_s`)."""

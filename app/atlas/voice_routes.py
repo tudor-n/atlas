@@ -14,7 +14,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from . import osdirs
+from . import osdirs, runtime
 from . import voice_files as vf
 from .brainmap import load_map
 from .chatter import Chatter, git_commit, git_count
@@ -64,7 +64,7 @@ def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> Non
         usage=lambda: app["usage"].view(load_settings(paths)["usage_warn_pct"], ""),
         presence=app["presence"], save_settings=lambda patch: _save_and_tell(app, patch),
         roots=(paths.root, code), load_map=lambda: load_map(paths.brain),
-        commit=lambda: git_commit(code), count_commits=lambda a, b: git_count(code, a, b))
+        commit=lambda: _running_commit(code), count_commits=lambda a, b: git_count(_code_repo(paths, code), a, b))
     app["chatter"].sub = Sub(
         runner=app["runner"], settings=lambda: load_settings(paths), paths=paths,
         usage=lambda: app["usage"].view(load_settings(paths)["usage_warn_pct"], ""), presence=app["presence"],
@@ -76,6 +76,18 @@ def _commit(app: web.Application, message: str) -> None:
     """Pattern A's generated.md, committed like the hub's other brain writes."""
     sha = app["repo"].commit_all(message)
     app["on_commit"](sha)
+
+
+def _running_commit(code: Path) -> str | None:
+    """The commit this hub runs: the runtime slot's (current.json; a slot is no git repo), else the
+    dev checkout's."""
+    view = runtime.hub_view(osdirs.state_dir())
+    return (view or {}).get("commit") or git_commit(code)
+
+
+def _code_repo(paths, code: Path) -> Path:
+    """Where to count the commits between two versions: the live copy (the root) for a runtime hub."""
+    return paths.root if runtime.hub_view(osdirs.state_dir()) else code
 
 
 def _save_and_tell(app: web.Application, patch: dict) -> dict:

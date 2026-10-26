@@ -126,6 +126,10 @@ Four specialised reviews ran on the PRs: backend correctness, safety and the pro
   - the evening digest names what's still due and says "nothing left hanging" only when it's true;
   - `fact_free` catches "today's" and allows more plain openers for B;
   - a B joke that fails the check shows in Settings (`last_error`).
+- **CH32 A hello after any quit (owner, 2026-10-26: "greetings don't start").**
+  - **The cause:** the owner quit and restarted ATLAS within seconds, three times. The 3-minute rule took each start for a restart and stayed quiet. It also turned out the installed app runs from a runtime slot, which isn't a git repo, so the update line could never fire.
+  - **The quit mark:** a clean stop (the shell's SIGTERM, anything but EXIT_RESTART) leaves `quit_at` in `voice.json`. The next start always says hello, then clears the mark. A crash or a drive-back restart leaves no mark, so those stay quiet.
+  - **The update line:** the running commit comes from the runtime's `current.json`, and commits are counted in the live copy (read-only git).
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.

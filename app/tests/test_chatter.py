@@ -583,3 +583,23 @@ def test_one_nudge_per_project_however_many_of_its_sessions_wait(env):
                    "status_since": since} for i in range(3)]
     env.c.tick()
     assert sum("has been waiting" in x for x in said(env)) == 1
+
+
+def test_a_quick_start_after_a_quit_says_hello_but_a_crash_restart_doesnt(env):
+    env.a.tick()  # alive
+    env.c.mark_quit()  # the owner quit ATLAS
+    env.now.t += timedelta(seconds=20)
+    a2, c2 = env.make()
+    said2 = c2.greet()
+    assert said2 is not None and said2["why"] == "ATLAS started"
+    assert "quit_at" not in a2.chatter_state()  # used up
+    a2.tick()
+    env.now.t += timedelta(seconds=20)  # then it crashed: no quit mark
+    a3, c3 = env.make()
+    assert c3.greet() is None
+
+
+def test_back_again_after_a_quick_quit_uses_the_again_pool(env):
+    from atlas.chatter import greeting
+    t = datetime(2026, 10, 27, 14, 0)
+    assert greeting(t, t - timedelta(seconds=30), random.Random(1))[0] in ("greeting.again", "greeting.afternoon")
