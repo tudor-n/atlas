@@ -397,7 +397,28 @@ def test_ducking_keeps_that_share_of_the_loudness_not_of_the_cubic_volume_value(
     for now, before in ((streams()["7"][0], 65536), (streams()["9"][0], 32768)):
         db = 60 * math.log10(now / before)  # PulseAudio's pa_sw_volume_to_dB, relative
         assert db == pytest.approx(20 * math.log10(share / 100), abs=0.01)
-    assert 60 * math.log10(streams()["7"][0] / 65536) > -11  # even a saved 30 leaves music audible
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_ducking_keeps_the_balance_of_uneven_channels(tmp_path, pactl):
+    exe, streams, db = pactl
+    db.write_text(json.dumps({"7": [65536, 32768]}), encoding="utf-8")
+    vw.Ducker(tmp_path / "state", pactl=exe).duck(50)
+    assert streams() == {"7": [52016, 26008]}  # each channel -6 dB: the balance stays
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+def test_a_record_left_by_the_old_linear_rule_is_still_undone(tmp_path, pactl):
+    """A worker from before V-L4 died mid-line: its ducked.json holds raw values, so the rule
+    that lowered them doesn't matter to the restore."""
+    exe, streams, db = pactl
+    db.write_text(json.dumps({"7": [19661, 19661], "9": [9830]}), encoding="utf-8")
+    f = tmp_path / "state" / "voice" / "ducked.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(json.dumps({"before": {"7": [65536, 65536], "9": [32768]},
+                             "lowered": {"7": [19661, 19661], "9": [9830]}}), encoding="utf-8")
+    vw.Ducker(tmp_path / "state", pactl=exe).recover()
+    assert streams() == {"7": [65536, 65536], "9": [32768]} and not f.exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
