@@ -26,6 +26,7 @@ body.widget { font: 400 13px/1.35 var(--sans); color: var(--text); overflow: hid
 }
 .watt:not([hidden]) + .wsyn { padding-left: 8px; }
 .wsyn.offline, .wsyn.drive { color: var(--amber); }
+.wbar .chip { flex: none; height: 24px; margin-right: 6px; padding: 0 8px; line-height: 22px; }  /* DEBUG CHATTER */
 .wbar .b.wg { flex: none; width: 32px; height: 32px; padding: 0; line-height: 30px; font-size: 13px; letter-spacing: 0; }
 .wbar .b.wg + .b.wg { margin-left: 6px; }
 .wg svg { display: inline-block; width: 16px; height: 16px; vertical-align: middle; position: relative; top: -1px; }

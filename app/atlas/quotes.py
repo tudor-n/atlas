@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 POOLS: tuple[str, ...] = ("agent_finished", "agent_waiting", "reminder", "workout", "readback", "catch_up",
-                          "reply_tasks", "reply_filed", "reply_found", "reply_nothing")
+                          "reply_tasks", "reply_filed", "reply_found", "reply_nothing",
+                          "briefing", "self", "nudge", "react", "due_today", "tease")
 PLACEHOLDERS: tuple[str, ...] = ("project", "duration", "count", "text", "time_of_day", "them")
 COOLDOWN = timedelta(seconds=60)  # after a quip, lines within this play without one
 REL_PATH = "_voice/quotes.md"
@@ -252,6 +253,70 @@ If you said it, you said it out loud.
 Try other words. Or write it down this time.
 Your past self let you down.
 I've got nothing. And I've got everything you wrote.
+
+# Chatter (added 2026-10-26): quips after what ATLAS says unprompted. How often it speaks unprompted is
+# Settings, Voice, Chattiness. briefing follows a welcome back or the morning and evening digests,
+# self what it notices about itself, nudge an agent or item left waiting, react what you just did,
+# due_today the things due today, tease ATLAS's own open to-dos.
+## briefing
+That's the lot. Carry on.
+Don't say I never tell you anything.
+Now you know what I know.
+Right. Back to it.
+Briefing over. You may applaud.
+I'll quiz you later.
+I'll be here. Obviously.
+Any questions. No. Good.
+
+## self
+Just thought you should know.
+I notice things. It's my job.
+Not that anyone asked.
+I'm very self aware. It's exhausting.
+Anyway. Back to filing.
+I contain multitudes. Mostly notes.
+Don't mind me.
+I'm growing as a person. Sort of.
+
+## nudge
+Just saying.
+Not nagging. Reminding.
+It won't sort itself out.
+I'll stop when you do it.
+You know where to find it.
+I'm only the messenger. A loud one.
+Go on. It's quick.
+I'll ask again later. I always do.
+
+## react
+Growth.
+Character building.
+I'll allow it.
+Moving on.
+As you wish.
+Fair enough.
+If you say so.
+Filed under lessons.
+
+## due_today
+The day isn't getting any longer.
+Clock's ticking.
+Future you is begging.
+You've still got time. Just.
+Today, not tomorrow.
+Don't make me say it again. I will though.
+The clock disagrees with your plans.
+Now would be lovely.
+
+## tease
+I'm not bitter.
+Whenever you're ready. Truly.
+I'll wait. I've got nothing else to do.
+No pressure. Just guilt.
+I've waited this long.
+Some of us are patient.
+It's fine. I'm fine.
+I'll just sit here.
 """
 
 
@@ -307,34 +372,46 @@ class QuotePicker:
     def __init__(self, state: dict, rng: random.Random | None = None):
         self.state = state
         self._rng = rng or random.Random()
+        self.last_index: int | None = None
 
-    def pick(self, pool: str, quotes: list[str], values: dict, now: datetime) -> str | None:
+    def pick(self, pool: str, quotes: list[str], values: dict, now: datetime, *, cooldown: bool = True,
+             in_order: bool = False) -> str | None:
+        """A quote with its placeholders filled, or None. `cooldown=False` skips the one-minute
+        quiet after a quip (info lines, the Very high level); `in_order` walks the pool in file
+        order instead of a shuffle (the Very high level shows every line once). `last_index` is the
+        picked quote's index in `quotes` (for the caption's origin)."""
+        self.last_index = None
         last = self.state.get("last_quip")
         try:
-            if last and now - datetime.fromisoformat(last) < COOLDOWN:
+            if cooldown and last and now - datetime.fromisoformat(last) < COOLDOWN:
                 return None
         except (TypeError, ValueError):
             pass
         if not quotes:
             return None
         values = {"time_of_day": time_of_day(now), **{k: v for k, v in values.items() if v is not None}}
-        key = hashlib.sha256("\n".join(quotes).encode()).hexdigest()[:16]
+        key = hashlib.sha256("\n".join(quotes).encode()).hexdigest()[:16] + ("o" if in_order else "")
         st = self.state.setdefault("pools", {}).get(pool)
         if not isinstance(st, dict) or st.get("key") != key or not self._valid(st, len(quotes)):
-            st = {"key": key, "order": self._shuffled(len(quotes), None, quotes), "pos": 0}
+            st = {"key": key, "order": self._order(len(quotes), None, quotes, in_order), "pos": 0}
         for _ in range(len(quotes)):
             if st["pos"] >= len(st["order"]):
                 prev = quotes[st["order"][-1]] if st["order"] else None
-                st["order"], st["pos"] = self._shuffled(len(quotes), prev, quotes), 0
-            quote = quotes[st["order"][st["pos"]]]
+                st["order"], st["pos"] = self._order(len(quotes), prev, quotes, in_order), 0
+            index = st["order"][st["pos"]]
             st["pos"] += 1
-            filled = _fill(quote, values)
+            filled = _fill(quotes[index], values)
             if filled is not None:
                 self.state["pools"][pool] = st
-                self.state["last_quip"] = now.isoformat(timespec="seconds")
+                if cooldown:
+                    self.state["last_quip"] = now.isoformat(timespec="seconds")
+                self.last_index = index
                 return filled
         self.state["pools"][pool] = st
         return None
+
+    def _order(self, n: int, prev: str | None, quotes: list[str], in_order: bool) -> list[int]:
+        return list(range(n)) if in_order else self._shuffled(n, prev, quotes)
 
     @staticmethod
     def _valid(st: dict, n: int) -> bool:
@@ -398,7 +475,10 @@ def ensure_workout_pool(brain: Path) -> bool:
 
 # The replies' section as the seed has it, for a file seeded before it existed (`ensure_reply_pools`).
 REPLIES_MARKER = "# Replies (added 2026-10-25)"
-REPLIES_SECTION = SEED[SEED.index(REPLIES_MARKER):]
+CHATTER_MARKER = "# Chatter (added 2026-10-26)"
+REPLIES_SECTION = SEED[SEED.index(REPLIES_MARKER):SEED.index(CHATTER_MARKER)]
+CHATTER_SECTION = SEED[SEED.index(CHATTER_MARKER):]
+CHATTER_POOLS: tuple[str, ...] = ("briefing", "self", "nudge", "react", "due_today", "tease")
 REPLY_POOLS: tuple[str, ...] = ("reply_tasks", "reply_filed", "reply_found", "reply_nothing")
 
 
@@ -418,6 +498,23 @@ def ensure_reply_pools(brain: Path) -> bool:
     return True
 
 
+def ensure_chatter_pools(brain: Path) -> bool:
+    """Append chatter's section once to a quotes file seeded before it (the owner asked for a chattier
+    ATLAS, 2026-10-26). Never when the file already has one of its headings or the section's marker
+    comment, never to a file it can't read. True when it wrote."""
+    path = quotes_path(brain)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    heads = "|".join(CHATTER_POOLS)
+    if CHATTER_MARKER in text or re.search(rf"^##\s*({heads})\s*$", text, re.M):
+        return False
+    with open(path, "a", encoding="utf-8", newline="\n") as f:
+        f.write(("" if text.endswith("\n") else "\n") + "\n" + CHATTER_SECTION.rstrip("\n") + "\n")
+    return True
+
+
 def load_quotes(brain: Path) -> tuple[dict[str, list[str]], list[str]]:
     """The pools and problems of the owner's file; empty pools and the reason when it can't be read."""
     try:
@@ -426,4 +523,8 @@ def load_quotes(brain: Path) -> tuple[dict[str, list[str]], list[str]]:
         return {p: [] for p in POOLS}, []
     except (OSError, UnicodeDecodeError) as e:
         return {p: [] for p in POOLS}, [f"{REL_PATH} can't be read ({e})"]
-    return parse(text)
+    pools, problems = parse(text)
+    from .lines import load_generated  # the overnight batch's quips (chatter pattern A), merged in
+    for pool, extra in load_generated(brain)[0].items():
+        pools[pool] = pools[pool] + [q for q, _ in extra if q not in pools[pool]]
+    return pools, problems

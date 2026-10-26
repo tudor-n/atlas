@@ -10,6 +10,7 @@ import pytest
 from atlas import voice_files as vf
 from atlas.claude_runner import ClaudeError
 from atlas.rootguard import RootStatus
+from atlas.lines import ensure_lines
 from atlas.server import create_app
 from tests.fakes import FakeRunner
 from tests.test_filing import GOOD_RESULT
@@ -41,6 +42,8 @@ async def client(aiohttp_client, paths, said):
     app["opened"] = opened
     c = await aiohttp_client(app)
     assert (await c.post("/api/setup", json={"map": MAP, "backup_remote": None})).status == 200
+    # These tests check the plumbing with the fixed lines; the varied wordings are test_lines.py's.
+    (paths.brain / "_voice" / "lines.md").unlink()
     # no quiet hours: these tests speak whatever the clock says (CI runs at any hour, in UTC)
     assert (await c.put("/api/settings", json={"quiet_hours": ["00:00", "00:00"]})).status == 200
     return c
@@ -135,6 +138,10 @@ async def test_stop_and_edit_quotes_want_json(client, paths):
     assert (await client.post("/api/voice/stop", data="x")).status == 415
     assert (await client.post("/api/voice/edit-quotes", json={})).status == 204
     assert client.server.app["opened"] == [paths.brain / "_voice" / "quotes.md"]
+    assert (await client.post("/api/voice/edit-lines", json={})).status == 404  # the fixture removed it
+    ensure_lines(paths.brain)
+    assert (await client.post("/api/voice/edit-lines", json={})).status == 204
+    assert client.server.app["opened"][-1] == paths.brain / "_voice" / "lines.md"
 
 
 async def test_switching_the_voice_off_stops_it(client):
@@ -272,3 +279,54 @@ async def test_the_page_hears_when_a_line_sounds_and_ends(client, paths):
     assert kinds[:2] == ["voice.speaking", "voice.quiet"]
     speaking = next(d for k, d in sent if k == "voice.speaking")
     assert speaking["frame_ms"] == 40 and len(speaking["env"]) == 50  # the sample's two parts, a second each
+
+
+# -- chatter (2026-10-26) ---------------------------------------------------------------------------
+async def test_chatter_endpoints(client, paths):
+    _install(paths)
+    app = client.server.app
+    assert (await client.post("/api/presence", json={})).status == 204
+    assert app["presence"].state() == "present"
+    view = await (await client.get("/api/chatter")).json()
+    assert view["available"] and view["level"] == "medium" and view["per_hour"] == 4
+    assert view["presence"]["state"] == "present" and isinstance(view["recent"], list)
+    r = await client.post("/api/chatter/react", json={"kind": "flip_ask"})
+    assert r.status == 200 and (await r.json())["said"]["text"]
+    assert (await client.post("/api/chatter/react", json={"kind": "nope"})).status == 400
+    assert (await client.post("/api/chatter/try", json={"what": "musing"})).status == 409  # only at Very high
+    assert (await client.put("/api/settings", json={"voice_chattiness": "debug"})).status == 200
+    assert app["voice"].chatter_state()["debug"]["before"] == "medium"
+    r = await client.post("/api/chatter/try", json={"what": "musing"})
+    assert r.status == 200 and (await r.json())["said"]["spoken"] is True
+    assert (await client.post("/api/chatter/try", json={"what": "nope"})).status == 400
+
+
+async def test_a_pc_write_is_the_owner_and_a_hook_is_not(client):
+    app = client.server.app
+    seen = []
+    app["presence"].seen = seen.append
+    await client.post("/api/hooks/event", json={"session_id": "s", "hook_event_name": "Stop", "cwd": "/tmp"})
+    assert seen == []
+    await client.put("/api/settings", json={"voice_volume": 40})
+    import asyncio
+    await asyncio.sleep(0.05)  # it runs off the loop
+    assert seen == ["app"]
+
+
+async def test_the_week_endpoints(client):
+    assert await (await client.get("/api/chatter/week")).json() == {"week": None}
+    assert (await client.post("/api/chatter/week/w-1/confirm", json={})).status == 400
+    assert (await client.post("/api/chatter/week/w-1/maybe", json={})).status in (404, 405)
+
+
+async def test_a_refused_request_is_not_the_owner(client):
+    import asyncio
+    app = client.server.app
+    seen = []
+    app["presence"].seen = seen.append
+    r = await client.put("/api/settings", json={"voice_volume": 40}, headers={"Origin": "http://evil.example"})
+    assert r.status == 403
+    r = await client.post("/api/nope", json={})
+    assert r.status == 404
+    await asyncio.sleep(0.05)
+    assert seen == []

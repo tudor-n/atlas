@@ -2,7 +2,8 @@
    ATLAS dot and its caption, then the write-or-ask bar (a growing field, NOTE | ASK, SAVE or ASK);
    then a line naming what was done, with the other way; then the body: a note's confirm card, or a
    question's 360px MATCHES rail and ANSWER pane. The hit rows, citations and note text are styled in
-   journal.css (shared with Journal and Browse); the card in today.css. */
+   journal.css (shared with Journal and Browse); the card in today.css. At rest the body shows ATLAS'S
+   WEEK (atlas-week.js) under the empty row: the self-review's text, and its suggestions as .pp rows. */
 .vw.atl { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
 /* -- the dot and what ATLAS said --------------------------------------------------------------- */
@@ -33,7 +34,15 @@
 
 /* -- the body ---------------------------------------------------------------------------------- */
 .atl-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.atl-idle { flex: none; }
+.atl-idle { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* -- ATLAS'S WEEK: the weekly self-review, at rest ---------------------------------------------- */
+.atl-week > .sect-h { border-top: 1px solid var(--line); }
+.atl-week-b { overflow-wrap: anywhere; }
+.atl-week-t { margin-bottom: 8px; font-weight: 600; font-size: 16px; line-height: 22px; }
+.atl-week-b p + p { margin-top: 10px; }
+.atl-week .pps { border-top: 1px solid var(--sub); }
+.atl-week .pp > .acts .dl { height: var(--h40); }
 .atl-note { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* -- the split below it ---------------------------------------------------------------------- */

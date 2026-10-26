@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 import warnings
 import webbrowser
 from datetime import datetime
@@ -21,7 +22,8 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
-from .quotes import ensure_quotes, ensure_reply_pools, ensure_workout_pool
+from .lines import ensure_lines
+from .quotes import ensure_chatter_pools, ensure_quotes, ensure_reply_pools, ensure_workout_pool
 from .rawlog import read_log
 from .review import Reviewer
 from .rootguard import RootStatus, check_root, read_marker, tz_mismatch
@@ -31,7 +33,7 @@ from .store import SchemaTooNew, Store, commit_hook
 from .tablet import LanSite, Pairing, TabletFeed, lan_guard, watch_lan
 from .tablet_routes import add_tablet_routes
 from .usage import UsageStore, rate_limits_from_event
-from .voice_routes import add_voice_routes, close_voice, setup_voice, voice_tick
+from .voice_routes import add_voice_routes, agent_transition, close_voice, setup_voice, voice_tick
 from .widget import ArmProbe
 
 log = logging.getLogger(__name__)
@@ -41,6 +43,7 @@ t = asyncio.to_thread
 # Root states the full app can't run on: run_server serves the reduced app for them instead.
 UNAVAILABLE = ("missing", "foreign", "newer")
 RECHECK_SECONDS = 15.0  # P8: how often a reduced or read-only hub looks at the root again
+GOODBYE_BY = 6.0  # seconds after shutdown began; then the tasks' kills and close_voice still fit in 10
 EXIT_RESTART = 75  # P8: the root is usable again; the shell restarts the hub at once, with no backoff
 
 
@@ -83,7 +86,11 @@ def _ensure_gitattributes(app: web.Application) -> None:
 
 
 def _ensure_quotes(app: web.Application) -> None:
-    """Brains set up before phase 4 get the voice's quote file, in a commit of its own."""
+    """Brains set up before phase 4 get the voice's quote file, and before chatter its info lines, each in a
+    commit of its own."""
+    if ensure_lines(app["paths"].brain):  # the info lines' wordings (chatter, 2026-10-26)
+        app["repo"].commit_all("add the voice's info lines")
+        app["backup"].notify_commit()
     if ensure_quotes(app["paths"].brain):
         app["repo"].commit_all("add the voice quotes")
         app["backup"].notify_commit()
@@ -93,6 +100,9 @@ def _ensure_quotes(app: web.Application) -> None:
         app["backup"].notify_commit()
     if ensure_reply_pools(app["paths"].brain):  # a file seeded before the replies (2026-10-25)
         app["repo"].commit_all("add the voice's reply quips")
+        app["backup"].notify_commit()
+    if ensure_chatter_pools(app["paths"].brain):  # a file seeded before chatter (2026-10-26)
+        app["repo"].commit_all("add the voice's chatter quips")
         app["backup"].notify_commit()
 
 
@@ -120,6 +130,7 @@ def _flush_held(app: web.Application) -> None:
     Captures held for another ATLAS folder (this OS's state folder is shared by every hub on
     it) stay held, in one line of startup_errors."""
     done = holding.flush(osdirs.state_dir(), app["paths"], app["store"], app["startup_errors"])
+    app["held_flushed"] = sum(1 for e in done.appended if e not in done.tablet)
     for entry_id in done.appended:
         if entry_id not in done.tablet:  # tablet notes are kept, never filed automatically (phase 3)
             app["worker"].mark_queued(entry_id)
@@ -246,15 +257,23 @@ async def on_startup(app: web.Application) -> None:
                          asyncio.create_task(app["backup"].run_forever()),
                          asyncio.create_task(_prune_agents(app))]
         if app.get("voice") is not None:
+            await t(app["chatter"].startup, app.get("held_flushed", 0))  # an update, held notes flushed
             app["tasks"].append(asyncio.create_task(voice_tick(app)))
 
 
 async def on_shutdown(app: web.Application) -> None:
+    app["shutdown"]["since"] = time.monotonic()  # the goodbye fits inside the shell's 10 s grace from here
     for ws in list(app["sockets"]):
         await ws.close()
 
 
 async def on_cleanup(app: web.Application) -> None:
+    if app.get("chatter") is not None and app["start_workers"] and app["exit_code"] != EXIT_RESTART:
+        # The owner quit ATLAS: one line before the voice goes, first, and only in what's left of the
+        # shell's 10 s grace (GOODBYE_BY after shutdown began), so the store still closes cleanly.
+        left = GOODBYE_BY - (time.monotonic() - app["shutdown"].get("since", time.monotonic()))
+        if left > 1:
+            await t(app["chatter"].goodbye, left)
     tasks = [*app["tasks"], *app["background"]]
     for task in tasks:
         task.cancel()
@@ -327,6 +346,7 @@ def _warnings(paths: Paths) -> list[str]:
 def _run_state(app: web.Application, recheck_interval: float) -> None:
     """What run_server and the root watch share: the exit code (P8) and the stop event."""
     app["exit_code"], app["stop"], app["recheck_interval"] = 0, asyncio.Event(), recheck_interval
+    app["shutdown"] = {}  # filled in on_shutdown (a started app's own keys can't change)
 
 
 def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
@@ -408,7 +428,7 @@ def create_app(paths: Paths, *, runner=None, start_workers: bool = True,
     # Phase 4: the voice (None on a read-only root). It hears the agents' status changes.
     setup_voice(app, speaker_env=voice_env)
     app["agents"] = AgentTracker(store, paths, lambda: load_settings(paths),
-                                 on_transition=app["voice"].agent_transition if app["voice"] else None)
+                                 on_transition=agent_transition(app) if app["voice"] else None)
 
     app["arm"] = ArmProbe()
     # The port the hub listens on: run_server sets the bound one; default to the settings port.

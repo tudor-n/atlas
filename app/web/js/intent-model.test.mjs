@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { guessIntent, shownIntent, MAX_CHARS } from './intent-model.js';
+import { guessIntent, shownIntent, overrideKind, MAX_CHARS } from './intent-model.js';
 
 const intent = (s) => guessIntent(s).intent;
 
@@ -77,4 +77,13 @@ test("the owner's pick wins over the guess", () => {
   assert.equal(shownIntent('', 'ask'), 'ask');  // picked before typing
   assert.equal(shownIntent('', null), 'note');
   assert.equal(shownIntent('buy milk', 'bogus'), 'note');
+});
+
+test('a press that overrules the guess is a flip; one that agrees, or changes nothing, is not', () => {
+  assert.equal(overrideKind('buy M3 screws', 'note', 'ask'), 'flip_ask');
+  assert.equal(overrideKind('what did I say about the servo', 'ask', 'note'), 'flip_note');
+  assert.equal(overrideKind('buy M3 screws', 'ask', 'note'), null);  // back to the guess
+  assert.equal(overrideKind('buy M3 screws', 'ask', 'ask'), null);   // already shown
+  assert.equal(overrideKind('   ', 'note', 'ask'), null);            // nothing typed yet
+  assert.equal(overrideKind('buy M3 screws', 'note', 'other'), null);
 });

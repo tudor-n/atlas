@@ -9,6 +9,7 @@ import { notice } from './components/ui.js';
 import { installPress } from './press.js';
 import { parseHash, tabByKey } from './nav-model.js';
 import { driveText, heldText, readonlyReason } from './drive.js';
+import { installPresencePing } from './presence-model.js';
 
 // Re-exported so older imports keep working; new code imports from ./dom.js.
 export { el, clear, fmtWhen } from './dom.js';
@@ -241,6 +242,8 @@ async function boot() {
     if (typeof text === 'string' && text.trim()) capture.setDraft(text, why);
   });
   document.addEventListener('keydown', (ev) => onKey(ev, capture));
+  // A key or a press tells the hub the owner is here (chatter spec §5), at most once a minute.
+  installPresencePing(document, () => api.post('/api/presence', {}));
   // A reconnect may follow a restart (exit 75 once the drive is back): re-route if the mode changed.
   api.onEvent('ws.open', async () => { if (await refreshState()) route(); });
   window.addEventListener('hashchange', route);

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from atlas.config import load_settings, save_settings
+from atlas.config import VOICE_EVENTS, load_settings, save_settings
 
 
 def test_defaults_when_no_file(paths):
@@ -181,7 +181,7 @@ def test_voice_defaults(paths):
     s = load_settings(paths)
     assert s["voice_enabled"] is True and s["voice_sass"] is True and s["voice_sass_readback"] is False
     assert s["voice_events"] == {"agent_waiting": True, "agent_finished": True, "reminder": True,
-                                 "readback": True, "reply": True}
+                                 "readback": True, "reply": True, **CHATTER_EVENTS}
     assert s["voice_blend"] == {"bm_george": 0.7, "bm_fable": 0.3}  # Atlas's voice (owner)
     assert s["voice_speed"] == 0.95 and s["voice_volume"] == 80 and s["voice_model"] == "int8"
     assert s["voice_finish_min_s"] == 120
@@ -193,8 +193,28 @@ def test_a_saved_duck_level_is_kept(paths):
     assert load_settings(paths)["voice_duck_to"] == 30
 
 
+CHATTER_EVENTS = {"briefing": True, "self": True, "nudge": True, "react": True, "due_today": True, "tease": True,
+                  "greet": True}
+
+
+def test_chatter_settings(paths):
+    d = load_settings(paths)
+    assert d["voice_chattiness"] == "medium" and d["voice_chatter_per_hour"] is None
+    assert d["voice_subscription"] is True and d["voice_sub_max_pct"] == 80 and d["voice_last_call"] == "18:00"
+    saved = save_settings(paths, {"voice_chattiness": "debug", "voice_chatter_per_hour": 0, "voice_last_call": "19:30",
+                                  "voice_atlas_project": "atlas", "voice_sub_quips": False})
+    assert (saved["voice_chattiness"], saved["voice_chatter_per_hour"], saved["voice_atlas_project"]) == ("debug", 0, "atlas")
+    assert save_settings(paths, {"voice_chatter_per_hour": None})["voice_chatter_per_hour"] is None
+    for key, bad in [("voice_chattiness", "loud"), ("voice_chatter_per_hour", 61), ("voice_chatter_per_hour", True),
+                     ("voice_chatter_per_hour", 2.5), ("voice_last_call", "6pm"), ("voice_atlas_project", "a b"),
+                     ("voice_atlas_project", 3), ("voice_sub_max_pct", 0), ("voice_subscription", "yes")]:
+        with pytest.raises(ValueError):
+            save_settings(paths, {key: bad})
+
+
 def test_voice_events_validation(paths):
-    ok = {"agent_waiting": False, "agent_finished": True, "reminder": True, "readback": False, "reply": False}
+    ok = {"agent_waiting": False, "agent_finished": True, "reminder": True, "readback": False, "reply": False,
+          **CHATTER_EVENTS}
     assert save_settings(paths, {"voice_events": ok})["voice_events"] == ok
     for bad in [{}, {**ok, "extra": True}, {**ok, "reminder": 1}, {"agent_waiting": True}, [], None]:
         with pytest.raises(ValueError):
@@ -208,10 +228,10 @@ def test_voice_events_saved_by_another_build_keep_their_switches(paths):
     old = {"agent_waiting": False, "agent_finished": True, "reminder": False, "readback": True}
     paths.settings_file.write_text(json.dumps({"voice_events": old}), encoding="utf-8")
     problems: list = []
-    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": True}
+    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": True, **CHATTER_EVENTS}
     newer = {**old, "reply": False, "something_later": True}
     paths.settings_file.write_text(json.dumps({"voice_events": newer}), encoding="utf-8")
-    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": False}
+    assert load_settings(paths, problems)["voice_events"] == {**old, "reply": False, **CHATTER_EVENTS}
     assert problems == []
     paths.settings_file.write_text(json.dumps({"voice_events": {**old, "reply": "yes"}}), encoding="utf-8")
     assert load_settings(paths, problems)["voice_events"]["agent_waiting"] is True  # a bad value: refused whole
@@ -251,3 +271,12 @@ def test_voice_volume_model_and_threshold(paths):
                      ("voice_finish_min_s", 3601), ("voice_enabled", 1), ("voice_sass", "yes")]:
         with pytest.raises(ValueError):
             save_settings(paths, {key: bad})
+
+
+def test_the_settings_page_has_a_switch_for_every_voice_event():
+    """Settings → Voice saves `voice_events` whole: a key the page lacks would fail every save."""
+    import re
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "web" / "js" / "views" / "voice-model.js").read_text(encoding="utf-8")
+    block = js[js.index("export const EVENT_LABELS"):js.index("];", js.index("export const EVENT_LABELS"))]
+    assert re.findall(r"\['(\w+)'", block) == list(VOICE_EVENTS)

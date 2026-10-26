@@ -29,7 +29,13 @@ DEFAULT_SETTINGS: dict = {
     "voice_enabled": True, "voice_sass": True, "voice_sass_readback": False,
     # `reply` (voice-input decisions VI4): what ATLAS says after the one input files a note or answers.
     "voice_events": {"agent_waiting": True, "agent_finished": True, "reminder": True, "readback": True,
-                     "reply": True},
+                     "reply": True,
+                     # Chatter (owner, 2026-10-26): briefings, self-awareness, nudges, reactions to what the
+                     # owner does, things due today, and teasing about ATLAS's own to-dos.
+                     "briefing": True, "self": True, "nudge": True, "react": True, "due_today": True,
+                     "tease": True,
+                     # Hello when ATLAS starts, goodbye when the owner quits it (owner, 2026-10-26).
+                     "greet": True},
     "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
     "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
     # Reminders whose text has one of these (whole words, any case) are workouts: "Workout time."
@@ -47,9 +53,19 @@ DEFAULT_SETTINGS: dict = {
     # loudness; duck_to is the share (%) of their loudness other apps keep while ATLAS speaks
     # (amplitude: 50 = -6 dB, slightly dulled; 100 = off). 2026-10-26: 30 → 50, see V-L4.
     "voice_boost": True, "voice_duck_to": 50,
+    # Chatter (chatter spec §2, owner 2026-10-26). How talkative ATLAS is unprompted: mute, low, medium,
+    # high, or debug (Very high: no waiting anywhere, drops back by itself). per_hour overrides the
+    # level's cap (null = the level's). The subscription switch turns off every claude -p run chatter
+    # makes (filing and recall aren't chatter); A quips, B the welcome back's joke, C the weekly self-review.
+    "voice_chattiness": "medium", "voice_chatter_per_hour": None,
+    "voice_subscription": True, "voice_sub_quips": True, "voice_sub_briefings": True, "voice_sub_review": True,
+    "voice_sub_max_pct": 80, "voice_last_call": "18:00", "voice_atlas_project": "",
 }
 
-VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback", "reply")
+CHATTINESS: tuple[str, ...] = ("mute", "low", "medium", "high", "debug")
+
+VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback", "reply", "briefing",
+                                 "self", "nudge", "react", "due_today", "tease", "greet")
 VOICE_MODELS: tuple[str, ...] = ("int8", "fp32")
 # The English voices in voices-v1.0.bin (a = American, b = British; f/m): the blend editor's list.
 VOICE_IDS: tuple[str, ...] = (
@@ -62,6 +78,7 @@ VOICE_IDS: tuple[str, ...] = (
 _PKG = Path(__file__).resolve().parent
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_SLUG = re.compile(r"^[\w][\w.-]*$")
 _FABLE_URL = re.compile(r"^https://\S+$")
 _ARM_URL = re.compile(r"^https?://[\w.-]+(:\d{1,5})?(/\S*)?$")
 _REMOTE = re.compile(r"^(https://\S+|ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
@@ -74,6 +91,7 @@ RANGES: dict[str, tuple[int, int]] = {
     "backup_debounce_s": (0, 86400),
     "usage_warn_pct": (1, 100), "agents_end_linger_s": (0, 3600), "agents_stale_h": (1, 168),
     "voice_finish_min_s": (0, 3600), "voice_volume": (0, 100), "voice_duck_to": (0, 100),
+    "voice_sub_max_pct": (1, 100),
 }
 
 
@@ -130,6 +148,22 @@ def _finite_number(v) -> bool:
 def validate_setting(key: str, value) -> None:
     """Raise ValueError unless `value` is acceptable for setting `key`."""
     default = DEFAULT_SETTINGS[key]
+    if key == "voice_chattiness":
+        if value not in CHATTINESS:
+            raise ValueError("voice_chattiness must be one of " + ", ".join(CHATTINESS))
+        return
+    if key == "voice_chatter_per_hour":
+        if value is not None and (type(value) is not int or not 0 <= value <= 60):
+            raise ValueError("voice_chatter_per_hour must be a whole number from 0 to 60, or null for the level's")
+        return
+    if key == "voice_last_call":
+        if not isinstance(value, str) or not _HHMM.match(value):
+            raise ValueError("voice_last_call must be a time like 18:00")
+        return
+    if key == "voice_atlas_project":
+        if not isinstance(value, str) or len(value) > 80 or (value and not _SLUG.match(value)):
+            raise ValueError("voice_atlas_project must be a project's slug from the map, or empty to find it")
+        return
     if key == "quiet_hours":
         ok = (isinstance(value, list) and len(value) == 2
               and all(isinstance(v, str) and _HHMM.match(v) for v in value))

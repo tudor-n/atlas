@@ -63,7 +63,9 @@ other hand. Notes typed there land in the same log.
 ### A voice
 ATLAS speaks a few things, in a British voice that runs fully offline: an agent that needs you, an
 agent that finished a long job, a reminder that's due, a readback of what you typed on the tablet.
-A quip often follows, from a list you can edit. Quiet hours and a pause button keep it polite.
+A quip often follows, from a list you can edit. Quiet hours and a pause button keep it polite. It varies how it says things, keeps what's due today in your ear, notices
+things about itself, and can talk a little on its own: how much is one setting, from Mute to Very high.
+No microphone, ever.
 
 ## Where it stands (October 2026)
 

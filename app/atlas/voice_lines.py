@@ -150,21 +150,31 @@ def time_words(t: datetime) -> str:
     return f"at {hh}{mm} {'am' if h < 12 else 'pm'}"
 
 
+def due_words(due: str | None, now: datetime) -> str | None:
+    """'today at 2 pm', 'tomorrow', 'on Friday': when an item is due, or None without a readable date."""
+    if not due:
+        return None
+    try:
+        when = datetime.fromisoformat(due)
+    except ValueError:
+        return None
+    part = day_words(when.date(), now.date())
+    if len(due) > 10:
+        part += " " + time_words(when)
+    return part
+
+
 def reminder_line(text: str, due: str | None, now: datetime, opener: str = "A reminder.") -> str:
     """'A reminder. Submit the lab report. It's due today at 2 pm.' The item text is the owner's
     own; the due part is left out when there's no due date or it can't be read. A workout says
     'Workout time.' instead (`is_workout`)."""
-    line = opener + " " + cap(sentence(text), CAP - 40)
-    if due:
-        try:
-            when = datetime.fromisoformat(due)
-        except ValueError:
-            return line
-        part = day_words(when.date(), now.date())
-        if len(due) > 10:
-            part += " " + time_words(when)
-        line += f" It's due {part}."
-    return line
+    line = opener + " " + reminder_text(text)
+    when = due_words(due, now)
+    return line + f" It's due {when}." if when else line
+
+
+def reminder_text(text: str) -> str:
+    return cap(sentence(text), CAP - 40)
 
 
 def is_workout(text: str, words) -> bool:
@@ -190,7 +200,7 @@ def catch_up_line(count: int) -> str:
 
 
 def readback_note(text: str) -> str:
-    return "Note saved. " + cap(sentence(text), CAP - 12)
+    return "Note saved. " + note_text(text)
 
 
 _ORDINALS = ("First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth")
@@ -199,16 +209,34 @@ _ORDINALS = ("First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", 
 def readback_answer(answers: dict[int, str]) -> str:
     """'412 millimetres. Saved.', or 'First, 412 millimetres. Third, 98 millimetres. Saved.' Only
     the owner's values are read: the item labels were written by an agent (atlas-request)."""
+    return answer_values(answers) + " Saved."
+
+
+def answer_values(answers: dict[int, str]) -> str:
     keys = sorted(answers)
     if len(keys) == 1:
-        return cap(sentence(unit_words(answers[keys[0]])), CAP - 7) + " Saved."
+        return cap(sentence(unit_words(answers[keys[0]])), CAP - 7)
     parts = [f"{_ORDINALS[i] if i < len(_ORDINALS) else 'Item ' + number_words(i + 1)}, "
              f"{sentence(unit_words(answers[i]))}" for i in keys]
-    return cap(" ".join(parts), CAP - 7) + " Saved."
+    return cap(" ".join(parts), CAP - 7)
+
+
+def note_text(text: str) -> str:
+    return cap(sentence(text), CAP - 12)
 
 
 def _things(n: int, one: str, many: str) -> str:
     return f"{number_words(n)} {one if n == 1 else many}"
+
+
+def things(n: int, one: str, many: str) -> str:
+    """'one possible task', 'three entries': a count in words with its noun."""
+    return _things(n, one, many)
+
+
+def and_list(names: list[str]) -> str:
+    """'Robot arm', 'Robot arm and Atlas', 'A, B and C' (each name once)."""
+    return _and_list(names)
 
 
 # What ATLAS says after the one input (voice-input decisions VI4): counts and fixed phrases only,

@@ -340,11 +340,11 @@ def test_view(env):
     ensure_quotes(env.brain)
     view = env.a.view()
     assert view == {"installed": True, "model": "int8", "enabled": True, "paused_until": None, "quiet_now": False,
-                    "last_error": None, "quote_problems": []}
+                    "last_error": None, "quote_problems": [], "chattiness": "medium"}
     (env.brain / "_voice" / "quotes.md").write_text("## nope\n", encoding="utf-8")
     assert env.a.view()["quote_problems"] == ["line 1: unknown pool 'nope' (known: agent_finished, agent_waiting, "
                                               "reminder, workout, readback, catch_up, reply_tasks, reply_filed, "
-                                              "reply_found, reply_nothing)"]
+                                              "reply_found, reply_nothing, briefing, self, nudge, react, due_today, tease)"]
 
 
 # -- replies after the one input (VI4) -----------------------------------------------------------------
