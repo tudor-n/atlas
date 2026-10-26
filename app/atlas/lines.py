@@ -83,6 +83,7 @@ for _n in ("self.quotes_edited", "self.lines_edited", "self.atlas_note", "self.m
            "self.set.subscription_on", "self.set.quiet_hours", "self.set.other"):
     _pool(_n)
 _pool("self.atlas_item", "text")
+_pool("self.atlas_items", "tasks")
 _pool("self.atlas_session", "project")
 _pool("self.atlas_finished", "duration")
 _pool("self.restraint", "what")
@@ -431,6 +432,11 @@ That one's about me. Filed it where I'll see it.
 ## self.atlas_item
 You've put me on your to-do list. Finally, some recognition. {text}
 A task about me. {text} I'll be watching.
+
+## self.atlas_items
+{tasks} about me. I'm flattered.
+You've put me on your to-do list. {tasks} of them. Finally, some recognition.
+{tasks} about me. I'll be watching.
 
 ## self.atlas_session
 {project} is working on me again. No pressure.

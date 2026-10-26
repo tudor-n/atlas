@@ -280,3 +280,11 @@ def test_the_settings_page_has_a_switch_for_every_voice_event():
     js = (Path(__file__).resolve().parents[1] / "web" / "js" / "views" / "voice-model.js").read_text(encoding="utf-8")
     block = js[js.index("export const EVENT_LABELS"):js.index("];", js.index("export const EVENT_LABELS"))]
     assert re.findall(r"\['(\w+)'", block) == list(VOICE_EVENTS)
+
+
+def test_lead_in_setting(paths):
+    assert load_settings(paths)["voice_lead_in_ms"] == 350
+    assert save_settings(paths, {"voice_lead_in_ms": 800})["voice_lead_in_ms"] == 800
+    for bad in (-1, 1501, 2.5, True):
+        with pytest.raises(ValueError):
+            save_settings(paths, {"voice_lead_in_ms": bad})

@@ -41,6 +41,8 @@ MERGE_S = 3.0  # lines of one kind arriving within this become one
 QUEUE_MAX = 5
 STALE_S = 60  # a line older than this when its turn comes is dropped
 IDLE_S = 600  # the worker exits after this long with nothing to say
+JOIN_S = 0.6  # a line waits this long for others: lines that come together are said as one (owner, 2026-10-26)
+JOIN_MAX_PARTS = 8
 REPLY_TIMEOUT_S = 120
 LOG_MAX = 1_000_000  # bytes of voice-worker.log before it's rotated
 SHH_S = 30  # a pause or a voice-off this soon after an unprompted line is a shh for its event
@@ -518,7 +520,7 @@ class Announcer:
 
     def chat(self, event: str, pool: str, values: dict, fallback: str, *, key: tuple | None = None,
              why: str = "", budgeted: bool = True, force: bool = False, quip: bool = True,
-             text: str | None = None, quiet_ok: bool = False) -> dict | None:
+             text: str | None = None, quiet_ok: bool = False, speak: bool = True) -> dict | None:
         """One of chatter's lines: worded (or `text` as given), then spoken when the gates, the
         chattiness level, the hourly budget, presence and learned restraint allow, else only
         captioned. `force` (the debug panel's Try it now) skips the level, the budget, presence and
@@ -537,6 +539,8 @@ class Announcer:
                 else:
                     info, meta = text, {"fused": False, "origin": "fixed"}
                 spoken, reason = self._may_chat(event, s, lvl, now, budgeted, force, quiet_ok)
+                if spoken and not speak:  # the caller said one like it just now: shown, not said again
+                    spoken, reason = False, "said one like it just now"
                 parts = [info]
                 self._chat_n += 1
                 if (quip and s["voice_sass"] and not meta["fused"] and lvl.quip_every
@@ -715,7 +719,19 @@ def _parse(s) -> datetime | None:
 def _request(parts: list[str], s: dict, files: dict) -> dict:
     return {"op": "say", "parts": parts, "blend": s["voice_blend"], "speed": s["voice_speed"],
             "volume": s["voice_volume"], "boost": s.get("voice_boost", True), "duck_to": s.get("voice_duck_to", 100),
+            "lead_ms": s.get("voice_lead_in_ms", 350),
             "model": files["model"], "voices": files["voices"]}
+
+
+def _joinable(a: Line, b: Line) -> bool:
+    """Same voice settings (everything but the words), and room left for one more."""
+    same = {k: v for k, v in a.request.items() if k != "parts"} == {k: v for k, v in b.request.items() if k != "parts"}
+    return same and len(a.parts) + len(b.parts) <= JOIN_MAX_PARTS and a.event != "sample" and b.event != "sample"
+
+
+def _join(a: Line, b: Line) -> Line:
+    parts = a.parts + b.parts
+    return Line(a.event, a.info, a.meta, a.created, parts=parts, request={**a.request, "parts": parts})
 
 
 def worker_command(state: Path) -> list[str]:
@@ -731,10 +747,10 @@ class Speaker:
     def __init__(self, state: Path, *, command: Callable[[], list[str]] | None = None,
                  env: dict | None = None, now: Callable[[], datetime] = datetime.now,
                  idle_s: float = IDLE_S, reply_timeout_s: float = REPLY_TIMEOUT_S,
-                 on_event: Callable[[str, dict], None] | None = None):
+                 on_event: Callable[[str, dict], None] | None = None, join_s: float = JOIN_S):
         self._state, self._now, self._on_event = Path(state), now, on_event
         self._command = command or (lambda: worker_command(self._state))
-        self._env, self._idle_s, self._reply_timeout_s = env, idle_s, reply_timeout_s
+        self._env, self._idle_s, self._reply_timeout_s, self._join_s = env, idle_s, reply_timeout_s, join_s
         self._lines: deque[Line] = deque()
         self._cv = threading.Condition()
         self._proc: subprocess.Popen | None = None
@@ -803,7 +819,10 @@ class Speaker:
                     line = None
                 else:
                     idle = False
+                    self._gather()
                     line = self._lines.popleft()
+                    while self._join_s > 0 and self._lines and _joinable(line, self._lines[0]):  # one clip
+                        line = _join(line, self._lines.popleft())
                     gen = self._stops
                     self._speaking = True  # with the pop, so wait_quiet never sees neither
             if idle:
@@ -819,6 +838,18 @@ class Speaker:
                 log.warning("voice: %s", self.last_error)
             finally:
                 self._speaking = False
+
+    def _gather(self) -> None:
+        """Caller holds _cv. Give a line JOIN_S for the lines that come with it (two remarks from one
+        filing, a reply and a self line): they are then said as one, not as jarring separate clips."""
+        if self._join_s <= 0:
+            return
+        deadline = time_mod.monotonic() + self._join_s
+        while not self._closed and self._lines:
+            left = deadline - time_mod.monotonic()
+            if left <= 0:
+                return
+            self._cv.wait(timeout=left)
 
     def _speak(self, line: Line, gen: int) -> None:
         self._ensure_worker()

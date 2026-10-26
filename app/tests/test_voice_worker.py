@@ -52,7 +52,7 @@ def _send(p, obj):
 
 def _say(rid, *parts):
     return {"op": "say", "id": rid, "parts": list(parts), "blend": {"bm_george": 0.7, "bm_fable": 0.3},
-            "speed": 0.95, "volume": 80, "model": "m.onnx", "voices": "v.bin"}
+            "speed": 0.95, "volume": 80, "model": "m.onnx", "voices": "v.bin", "lead_ms": 0}
 
 
 def _said(tmp_path):
@@ -87,6 +87,28 @@ def test_each_line_says_it_is_playing_with_its_loudness_first(tmp_path):
         p.wait(10)
     # the fake engine's two seconds of silence: 50 frames of 40 ms, all quiet
     assert playing == {"id": "a", "event": "playing", "frame_ms": 40, "env": [0] * 50}
+
+
+def test_a_line_starts_with_silence_so_a_waking_output_never_eats_its_first_word(tmp_path):
+    """Owner, 2026-10-26: the first word was cut off. 350 ms of silence first by default; the dot's
+    envelope starts with it (all zeros), so the dot waits too."""
+    p = _worker(tmp_path)
+    try:
+        req = _say("a", "Robot arm has finished.")
+        del req["lead_ms"]  # an older hub's request: the default
+        _send(p, req)
+        playing = _message(p)
+        assert _message(p) == {"id": "a", "ok": True}
+    finally:
+        p.stdin.close()
+        p.wait(10)
+    said = _said(tmp_path)
+    assert said[0]["frames"] == vw.SAMPLE_RATE + int(vw.SAMPLE_RATE * 0.35)
+    assert playing["env"][:8] == [0] * 8 and len(playing["env"]) == 34  # 1.35 s in 40 ms frames
+    import numpy as np
+    assert len(vw.lead_in(np.ones(10, dtype=np.float32), 1000)) == 10 + vw.SAMPLE_RATE
+    assert len(vw.lead_in(np.ones(10, dtype=np.float32), 5000)) == 10 + int(vw.SAMPLE_RATE * 1.5)  # capped
+    assert len(vw.lead_in(np.ones(10, dtype=np.float32), 0)) == 10
 
 
 def test_a_failing_line_is_reported_and_the_worker_carries_on(tmp_path):

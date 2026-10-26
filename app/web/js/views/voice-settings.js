@@ -147,6 +147,11 @@ export async function renderVoiceSettings(box, isDead, ui) {
     const duckText = (v) => (Number(v) >= 100 ? 'unchanged' : `${v} %`);
     const duckOut = el('span', { class: 'pv m out' }, duckText(duckVal));
     duck.oninput = () => { duckOut.textContent = duckText(duck.value); };
+    // Silence before each line, so an output waking up doesn't swallow the first word (owner, 2026-10-26).
+    const leadVal = Number.isFinite(s.voice_lead_in_ms) ? s.voice_lead_in_ms : 350;
+    const lead = el('input', { type: 'range', id: 'voice-lead', min: '0', max: '1500', step: '50', value: String(leadVal) });
+    const leadOut = el('span', { class: 'pv m out' }, `${leadVal} ms`);
+    lead.oninput = () => { leadOut.textContent = `${lead.value} ms`; };
     const model = el('select', { id: 'voice-model' },
       el('option', { value: 'int8', selected: s.voice_model === 'int8' || null }, `Standard (${mb(v.sizes.int8)})`),
       el('option', { value: 'fp32', selected: s.voice_model === 'fp32' || null }, `Higher quality (${mb(v.sizes.fp32)})`));
@@ -168,6 +173,7 @@ export async function renderVoiceSettings(box, isDead, ui) {
         voice_events: Object.fromEntries(events.map((e) => [e.key, e.box.isOn()])),
         voice_finish_min_s: Math.round(mins * 60), voice_workout_words: words.list, voice_blend: b.blend, voice_speed: Number(speed.value),
         voice_volume: Number(volume.value), voice_boost: boost.isOn(), voice_duck_to: Number(duck.value),
+        voice_lead_in_ms: Number(lead.value),
         voice_model: model.value, voice_chattiness: lvl, ...chat.patch, voice_subscription: subOn.isOn(),
         ...Object.fromEntries(patterns.map((p) => [p.key, p.box.isOn()])),
       };
@@ -176,7 +182,8 @@ export async function renderVoiceSettings(box, isDead, ui) {
     const sample = () => act(async () => {
       const f = read();
       await api.post('/api/voice/sample', { voice_blend: f.voice_blend, voice_speed: f.voice_speed,
-        voice_volume: f.voice_volume, voice_boost: f.voice_boost, voice_duck_to: f.voice_duck_to, voice_model: f.voice_model });
+        voice_volume: f.voice_volume, voice_boost: f.voice_boost, voice_duck_to: f.voice_duck_to, voice_model: f.voice_model,
+        voice_lead_in_ms: f.voice_lead_in_ms });
     }, 'Playing a sample…');
 
     const pause = v.paused_until
@@ -233,6 +240,8 @@ export async function renderVoiceSettings(box, isDead, ui) {
           hint: 'Brings every line up to a steady, clear loudness, so it carries over music.' }),
         prefRow('OTHER SOUNDS WHILE SPEAKING', el('div', { class: 'pair' }, duck, duckOut), { forId: 'voice-duck',
           hint: 'Music and other apps play at this share of their level while ATLAS speaks, then come back: 50 % is a little quieter (−6 dB), 100 % leaves them alone. Linux.' }),
+        prefRow('START PADDING', el('div', { class: 'pair' }, lead, leadOut), { forId: 'voice-lead',
+          hint: 'Silence before each line, so the speakers are awake for the first word. Raise it if the start still gets cut (Bluetooth may want 600 ms or more).' }),
         prefRow('MODEL', selectBox(model), { forId: 'voice-model' }))),
       el('section', { class: 'st-grp' }, groupHead('LISTEN'), el('div', { class: 'pfs' },
         prefRow('SAMPLE', el('div', { class: 'pair' },

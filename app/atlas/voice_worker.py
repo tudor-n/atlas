@@ -31,6 +31,7 @@ from pathlib import Path
 SAMPLE_RATE = 24000
 FRAME_MS = 40  # the loudness envelope's step: 25 values a second
 GAP_S = 0.4  # between the info and the quip: the owner's pick (sample C)
+LEAD_MS = 350  # silence before a line, for the output to wake (voice_lead_in_ms)
 ESPEAK_PATH_MAX = 159  # espeak-ng keeps its data path in a 160-byte buffer and silently cuts it
 LINUX_PLAYERS = (("pw-play",), ("paplay",), ("aplay", "-q"))
 
@@ -118,6 +119,15 @@ def prepare(samples, volume: int, boosted: bool = False):
     if boosted:
         samples = boost(samples)
     return np.clip(np.asarray(samples, dtype=np.float32) * (volume / 100.0), -1.0, 1.0)
+
+
+def lead_in(pcm, ms) -> "object":
+    """Silence before the line (owner, 2026-10-26: "the first word gets cut off"). PipeWire suspends
+    an idle output, and the first few hundred ms of a new stream are lost while it wakes: they are
+    this silence now, not the first word. The dot's envelope starts with it, so it stays still too."""
+    import numpy as np
+    n = int(SAMPLE_RATE * max(0, min(1500, int(ms or 0))) / 1000) if isinstance(ms, (int, float)) else 0
+    return np.concatenate([np.zeros(n, dtype=np.float32), np.asarray(pcm, dtype=np.float32)]) if n else pcm
 
 
 def write_wav(path: Path, pcm) -> float:
@@ -462,6 +472,7 @@ def serve(state: Path, inp, out, *, engine=None, player=None, ducker=None) -> in
                 if not player.cancelled(gen):
                     samples = engine.synth(req)
                     pcm = prepare(samples, int(req.get("volume", 80)), bool(req.get("boost", False)))
+                    pcm = lead_in(pcm, req.get("lead_ms", LEAD_MS))
                     seconds = write_wav(wav, pcm)
                     if seconds > 0 and not math.isnan(seconds):
                         lowered = ducker.duck(req.get("duck_to", 100))

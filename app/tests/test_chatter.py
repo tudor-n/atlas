@@ -603,3 +603,17 @@ def test_back_again_after_a_quick_quit_uses_the_again_pool(env):
     from atlas.chatter import greeting
     t = datetime(2026, 10, 27, 14, 0)
     assert greeting(t, t - timedelta(seconds=30), random.Random(1))[0] in ("greeting.again", "greeting.afternoon")
+
+
+def test_several_atlas_tasks_get_one_line_and_another_soon_after_is_only_shown(env):
+    a1 = item("a", "Fix the dot", project="atlas")
+    a2 = item("b", "Tune the quips", project="atlas")
+    env.c.on_confirmed([a1, a2, item("c", "Other", project="arm")], all_of_card=False)
+    mine = [x for x in env.lines if "about me" in x["text"]]
+    assert [x["text"] for x in mine] == ["Two tasks about me. I'm flattered."] and mine[0]["spoken"]
+    env.now.t += timedelta(seconds=40)
+    env.c.on_confirmed([item("d", "One more", project="atlas")], all_of_card=False)
+    assert env.lines[-1]["spoken"] is False and env.lines[-1]["why"].endswith("(said one like it just now)")
+    env.now.t += timedelta(minutes=3)
+    env.c.on_confirmed([item("e", "Later one", project="atlas")], all_of_card=False)
+    assert env.lines[-1]["spoken"] is True
