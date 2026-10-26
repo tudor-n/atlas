@@ -3,10 +3,12 @@
 // the guess until the field is emptied. A note is saved and filed, and its confirm card fills the
 // screen (look the tasks over there). A question gets the MATCHES rail, the cited ANSWER and DIG DEEPER,
 // as Ask did. Above both: the ATLAS dot (atlas-dot.js), which moves while ATLAS speaks, and a one-line
-// caption of what ATLAS last said (atlas.reply), shown whether or not the voice spoke. What was done is
-// always named with the other way one press away (SAVE AS NOTE INSTEAD, ASK INSTEAD), so a wrong guess
-// never loses what was written. Leaving the screen hands the last note to the tray, and anything typed
-// but not sent to the capture bar.
+// caption of what ATLAS last said (atlas.reply, and every line it says or captions: voice.line), shown
+// whether or not the voice spoke. What was done is always named with the other way one press away (SAVE
+// AS NOTE INSTEAD, ASK INSTEAD), so a wrong guess never loses what was written; taking it, or overruling
+// the NOTE | ASK guess, tells ATLAS (chatter react). Leaving the screen hands the last note to the tray,
+// and anything typed but not sent to the capture bar. At rest, ATLAS'S WEEK (atlas-week.js) shows the
+// weekly self-review when there is one.
 import * as api from '../api.js';
 import { el, clear } from '../dom.js';
 import { answerNodes, hitList, noteText } from '../components/text.js';
@@ -14,7 +16,8 @@ import { button, emptyRow, dot, seg } from '../components/ui.js';
 import { confirmCard } from '../components/confirm-card.js';
 import { atlasDot } from '../components/atlas-dot.js';
 import { readonlyReason } from '../drive.js';
-import { shownIntent } from '../intent-model.js';
+import { shownIntent, overrideKind } from '../intent-model.js';
+import { atlasWeek } from './atlas-week.js';
 
 const MAX_LINES = 6;
 const AT_REST = 'Write something down, or ask me something.';
@@ -34,8 +37,10 @@ export function render(container, params, query) {
   // -- presence: the dot and the caption --------------------------------------------------------
   const dotNode = atlasDot();
   const say = el('p', { class: 'read atl-say f', 'aria-live': 'polite' }, AT_REST);
+  // A reply arrives twice (atlas.reply, or the answer stream's reply, and voice.line): the latest wins,
+  // and the same line again changes nothing.
   const caption = (text) => {
-    if (!text) return;
+    if (!text || typeof text !== 'string' || (text === say.textContent && !say.classList.contains('f'))) return;
     say.textContent = text;
     say.classList.remove('f');
   };
@@ -49,7 +54,13 @@ export function render(container, params, query) {
       if (ev.ctrlKey || ev.metaKey || intent() === 'ask') { ev.preventDefault(); submit(); }
     },
   });
-  const pick = seg(INTENTS, 'note', (v) => { pinned = v; sync(); input.focus(); }, { label: 'Note or question' });
+  const pick = seg(INTENTS, 'note', (v) => {
+    const kind = overrideKind(input.value, intent(), v);
+    pinned = v;
+    sync();
+    input.focus();
+    if (kind) react(kind);
+  }, { label: 'Note or question' });
   // SAVE or ASK: an outline at rest, the white primary only while there is text (one primary on screen)
   const go = button('SAVE', { type: 'submit', cls: 'atl-go' });
   const form = el('form', { class: 'atl-bar', onsubmit: (ev) => { ev.preventDefault(); submit(); } },
@@ -114,8 +125,10 @@ export function render(container, params, query) {
 
   // -- a note: its confirm card -------------------------------------------------------------------
   const notePane = el('div', { class: 'atl-note', hidden: true });
+  const week = atlasWeek({ blocked: () => readonly });
   const idle = el('div', { class: 'atl-idle' },
-    emptyRow('Notes are saved, then filed, and the possible tasks come back here to confirm. Questions get your own words back, with citations.'));
+    emptyRow('Notes are saved, then filed, and the possible tasks come back here to confirm. Questions get your own words back, with citations.'),
+    week.node);
 
   const body = el('div', { class: 'atl-body' }, idle, askPane, notePane);
   const root = el('div', { class: 'vw atl' },
@@ -129,7 +142,8 @@ export function render(container, params, query) {
   sync();
   input.focus();
 
-  const subs = [api.onEvent('atlas.reply', ({ data }) => caption(data && data.text))];
+  const subs = [api.onEvent('atlas.reply', ({ data }) => caption(data && data.text)),
+    api.onEvent('voice.line', ({ data }) => caption(data && data.text))];
   api.get('/api/state').then((st) => { readonly = readonlyReason(st && st.drive); }).catch(() => {});
 
   function show(which) {
@@ -182,7 +196,7 @@ export function render(container, params, query) {
         note = { entryId: res.entry_id, text, card };
         clear(notePane).appendChild(card);
       }
-      showWas('Saved as a note', button('ASK INSTEAD', { size: 40, onclick: () => ask(lastQ) }),
+      showWas('Saved as a note', button('ASK INSTEAD', { size: 40, onclick: () => { react('flip_ask'); ask(lastQ); } }),
         'It stays in your log either way.');
       show('note');
     } catch (e) {
@@ -207,6 +221,8 @@ export function render(container, params, query) {
   const tray = (entryId, text) => document.dispatchEvent(new CustomEvent('atlas:tray', { detail: { entryId, text } }));
   // Text that would be lost with this screen goes into the capture bar (app.js), with why when given.
   const toBar = (text, why) => document.dispatchEvent(new CustomEvent('atlas:draft', { detail: { text, why } }));
+  // The owner overruled the guess (chatter react): ATLAS may say something. Fire and forget.
+  const react = (kind) => { api.post('/api/chatter/react', { kind }).catch(() => {}); };
 
   // -- questions -----------------------------------------------------------------------------------
   function stop() { if (closeStream) { closeStream(); closeStream = null; } }
@@ -300,7 +316,7 @@ export function render(container, params, query) {
     clear(deeperAct);
     const asNote = savedText !== null && savedText.trim() === q
       ? null  // already in the log: nothing to offer
-      : button('SAVE AS NOTE INSTEAD', { size: 40, onclick: () => saveNote(q) });
+      : button('SAVE AS NOTE INSTEAD', { size: 40, onclick: () => { react('flip_note'); saveNote(q); } });
     showWas('Asked as a question', asNote, asNote ? null : 'It is in your log as a note too.');
     show('ask');
     run(`/api/ask?q=${encodeURIComponent(q)}&reply=1`, answer, quickUi, {
@@ -358,6 +374,7 @@ export function render(container, params, query) {
     stop();
     release();
     dotNode.destroy();
+    week.destroy();
     for (const off of subs.splice(0)) off();
   };
 }

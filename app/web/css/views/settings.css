@@ -127,6 +127,13 @@
 .blend .sel { flex: 1 1 180px; min-width: 0; max-width: 280px; }
 .blend + .b { margin-top: 8px; }
 
+/* -- voice: chattiness's preview, TRY IT NOW and the recent lines (chatter spec §4, §8) ---------- */
+.st-prev { margin-top: 10px; max-width: 72ch; font-size: 13px; line-height: 18px; color: var(--dim); }
+.st-try { display: flex; flex-wrap: wrap; gap: 8px; }
+.st-lines > li { padding: 10px 20px; border-bottom: 1px solid var(--sub); }
+.st-lines .t { font-size: 15px; line-height: 21px; overflow-wrap: anywhere; }
+.st-lines .mt { margin-top: 4px; font-family: var(--mono); font-weight: 500; font-size: 12px; line-height: 16px; color: var(--dim); overflow-wrap: anywhere; }
+
 /* -- the brain-map editor (components/map-editor.js; Settings and the setup wizard) ------------- */
 .editor .ecols, .editor .e1 {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px) 104px; gap: 12px; align-items: center;

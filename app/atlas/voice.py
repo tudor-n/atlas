@@ -195,7 +195,8 @@ class Announcer:
         return {"installed": self._files(s) is not None, "model": s["voice_model"], "enabled": s["voice_enabled"],
                 "paused_until": until.isoformat(timespec="minutes") if until else None,
                 "quiet_now": in_quiet_hours(self._now(), s["quiet_hours"]),
-                "last_error": self._speaker.last_error, "quote_problems": problems[:5]}
+                "last_error": self._speaker.last_error, "quote_problems": problems[:5],
+                "chattiness": s.get("voice_chattiness", "medium")}  # the widget's DEBUG CHATTER tag
 
     # -- controls -----------------------------------------------------------------------------
     def pause(self, minutes: int | None = None, *, until_morning: bool = False) -> datetime:

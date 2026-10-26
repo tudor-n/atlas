@@ -52,3 +52,13 @@ export function shownIntent(text, pinned) {
   if (pinned === 'note' || pinned === 'ask') return pinned;
   return guessIntent(text).intent;
 }
+
+// A press on NOTE | ASK that overrules the guess (chatter spec §3, react): 'flip_ask' or 'flip_note' when
+// the owner picks the side the guess didn't, with text in the field and a change from what was shown;
+// else null. `before` is what the switch showed before the press.
+export function overrideKind(text, before, picked) {
+  if (!String(text || '').trim() || picked === before) return null;
+  if (picked !== 'note' && picked !== 'ask') return null;
+  if (picked === guessIntent(text).intent) return null;
+  return picked === 'ask' ? 'flip_ask' : 'flip_note';
+}

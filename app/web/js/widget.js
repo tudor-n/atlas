@@ -5,9 +5,10 @@
 import { get, post, put, onEvent } from './api.js';
 import { el, clear } from './dom.js';
 import { needsYou, barText, attention, statusStrip, loadDraft, saveDraft, openPlan, tauriInvoke, openOutcome } from './widget-model.js';
-import { widgetVoice } from './views/voice-model.js';
+import { widgetVoice, widgetDebug } from './views/voice-model.js';
 import { shownIntent } from './intent-model.js';
-import { seg } from './components/ui.js';
+import { seg, chip } from './components/ui.js';
+import { installPresencePing } from './presence-model.js';
 
 const WIDTH = 520;
 const OFFLINE = 'ATLAS offline · retrying';
@@ -73,11 +74,14 @@ const grip = el('span', { class: 'wgrip', 'aria-hidden': 'true', 'data-tauri-dra
 const dot = el('span', { class: 'watt', title: 'Needs your attention', hidden: true, 'data-tauri-drag-region': true });
 const synopsis = el('span', { class: 'wsyn', 'data-tauri-drag-region': true }, 'Loading…');
 const expandBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Expand', 'aria-expanded': 'false', onclick: () => setExpanded(!expanded) }, '▾');
+// Very high chattiness (chatter spec §4): an amber tag while every wait is collapsed.
+const debugTag = chip('DEBUG CHATTER', { title: 'Chattiness is at Very high: it drops back after 2 h or at a restart' });
+debugTag.hidden = true;
 // The voice on/off (spec §2: reachable from the widget); hidden until the voice is installed.
 const voiceBtn = el('button', { class: 'b wg', type: 'button', hidden: true, onclick: toggleVoice });
 const hideBtn = el('button', { class: 'b wg', type: 'button', 'aria-label': 'Hide the widget', title: 'Hide the widget (ATLAS stays in the taskbar)',
   hidden: !tauriInvoke(window), onclick: hideWidget }, '–');
-const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, dot, synopsis, voiceBtn, expandBtn, hideBtn);
+const bar = el('div', { class: 'wbar', 'data-tauri-drag-region': true }, grip, dot, synopsis, debugTag, voiceBtn, expandBtn, hideBtn);
 
 // One of the one input's doors (voice-input decisions VI1): NOTE | ASK follows the intent as you type
 // (a press overrides it until the field is emptied). A note saves here; a question opens ATLAS on it.
@@ -122,6 +126,8 @@ function setExpanded(on) {
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && expanded) setExpanded(false);
 });
+// A key or a press here tells the hub the owner is at the PC (chatter spec §5), at most once a minute.
+installPresencePing(document, () => post('/api/presence', {}));
 
 // -- capture ---------------------------------------------------------------------------------
 function showStatus(text, isErr) {
@@ -266,6 +272,7 @@ let voice = null;
 let voiceBusy = false;
 
 function renderVoice() {
+  debugTag.hidden = !widgetDebug(offline ? null : voice);
   const w = widgetVoice(offline ? null : voice);
   voiceBtn.hidden = !w.show;
   if (!w.show) return;
