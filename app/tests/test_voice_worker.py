@@ -378,12 +378,26 @@ def pactl(tmp_path, monkeypatch):
 def test_ducking_lowers_other_streams_and_gives_their_volume_back(tmp_path, pactl):
     exe, streams, _ = pactl
     d = vw.Ducker(tmp_path / "state", pactl=exe)
-    record = d.duck(30)
-    assert streams() == {"7": [19661, 19661], "9": [9830]}
+    record = d.duck(50)
+    assert streams() == {"7": [52016, 52016], "9": [26008]}  # half their loudness each (-6 dB)
     assert (tmp_path / "state" / "voice" / "ducked.json").is_file()  # written before anything changed
     d.restore(record)
     assert streams() == {"7": [65536, 65536], "9": [32768]}
     assert not (tmp_path / "state" / "voice" / "ducked.json").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")
+@pytest.mark.parametrize("share", [30, 50, 80])
+def test_ducking_keeps_that_share_of_the_loudness_not_of_the_cubic_volume_value(tmp_path, pactl, share):
+    """Owner, 2026-10-26: at 30 the music sounded paused. pactl's values are cubic (amplitude =
+    (value / 65536) ** 3), so 30 % of the value was -31 dB; the share is now of the amplitude."""
+    import math
+    exe, streams, _ = pactl
+    vw.Ducker(tmp_path / "state", pactl=exe).duck(share)
+    for now, before in ((streams()["7"][0], 65536), (streams()["9"][0], 32768)):
+        db = 60 * math.log10(now / before)  # PulseAudio's pa_sw_volume_to_dB, relative
+        assert db == pytest.approx(20 * math.log10(share / 100), abs=0.01)
+    assert 60 * math.log10(streams()["7"][0] / 65536) > -11  # even a saved 30 leaves music audible
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pactl is Linux")

@@ -2,7 +2,7 @@
 
 Run as `python -m atlas voice-worker --state <dir>`. It speaks JSON lines:
   in:  {"op": "say", "id": "…", "parts": ["info", "quip"], "blend": {"bm_george": 0.7, …},
-        "speed": 0.95, "volume": 80, "boost": true, "duck_to": 30, "model": "<model file>", "voices": "<voices file>"}
+        "speed": 0.95, "volume": 80, "boost": true, "duck_to": 50, "model": "<model file>", "voices": "<voices file>"}
        {"op": "stop"}   stops the line playing now (a "say" waiting behind it still plays)
   out: {"id": "…", "event": "playing", "frame_ms": 40, "env": [0, 37, 100, …]} just before a line
        starts to sound: its loudness, one 0–100 value per frame (the ATLAS dot follows it, VI8);
@@ -155,11 +155,12 @@ def envelope(pcm, frame_ms: int = FRAME_MS) -> list[int]:
 
 class Ducker:
     """Turns other apps down while ATLAS speaks (Linux, PipeWire/PulseAudio via `pactl`): every
-    playback stream that exists when a line starts plays at `duck_to` % of its volume, and gets its
-    own volume back when the line ends, unless it was changed meanwhile (then the owner's change
-    stands). What was lowered is written to `<state>/voice/ducked.json` before anything is lowered,
-    so a worker that dies mid-line is undone by the next one (`recover`). Without pactl, nothing
-    happens. Our own stream doesn't exist yet when `duck` runs (the player starts after)."""
+    playback stream that exists when a line starts plays at `duck_to` % of its loudness (signal
+    amplitude: 50 = -6 dB), and gets its own volume back when the line ends, unless it was changed
+    meanwhile (then the owner's change stands). What was lowered is written to
+    `<state>/voice/ducked.json` before anything is lowered, so a worker that dies mid-line is undone
+    by the next one (`recover`). Without pactl, nothing happens. Our own stream doesn't exist yet
+    when `duck` runs (the player starts after)."""
 
     def __init__(self, state: Path, pactl: str | None = None):
         self._pactl = pactl if pactl is not None else (shutil.which("pactl") or "")
@@ -197,7 +198,9 @@ class Ducker:
         """Lower the other streams; returns what to `restore` (None: nothing lowered)."""
         if not self._pactl or not isinstance(duck_to, (int, float)) or duck_to >= 100:
             return None
-        level = max(0.0, float(duck_to)) / 100
+        # pactl's volume values are on a cubic scale (amplitude = (value / 65536) ** 3): scaling
+        # them by the share itself took music at 30 to -31 dB, which sounded like a pause.
+        level = (max(0.0, float(duck_to)) / 100) ** (1 / 3)
         before = self._streams()
         if not before:
             return None
