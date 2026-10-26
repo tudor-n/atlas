@@ -326,8 +326,8 @@ def test_atlas_sessions_and_notes_about_itself(env):
 
 def test_the_atlas_project_comes_from_settings_the_map_or_the_slug(env):
     assert env.c.atlas_project() == "atlas"
-    env.settings["voice_atlas_project"] = "brainhub"
-    assert env.c.atlas_project() == "brainhub"
+    env.settings["voice_atlas_project"] = "my-assistant"
+    assert env.c.atlas_project() == "my-assistant"
     env.settings["voice_atlas_project"] = ""
     env.map = SimpleNamespace(projects=[{"slug": "other"}])
     assert env.c.atlas_project() is None
