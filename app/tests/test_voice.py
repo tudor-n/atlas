@@ -721,3 +721,21 @@ def test_lines_that_come_together_are_said_as_one(tmp_path):
         assert [s["parts"] for s in said] == [["A reminder. x.", "Two tasks about me.", "A quip."], ["Sample."]]
     finally:
         sp.close()
+
+
+def test_a_stop_while_lines_gather_never_kills_the_speaker(tmp_path):
+    """_gather waits without the lock: a stop() then empties the queue under it. The thread used to pop
+    from the empty queue, die with IndexError and leave ATLAS silent until a restart."""
+    sp = _speaker(tmp_path, join_s=0.5)
+    try:
+        sp.say(_line("Cut off."))
+        time.sleep(0.15)  # inside the gather window
+        sp.stop()
+        time.sleep(0.6)  # past it
+        assert sp._thread.is_alive()
+        sp.say(_line("Still here."))
+        assert sp.wait_quiet(15), _log(tmp_path)
+        said = [json.loads(x)["parts"] for x in (tmp_path / "said.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert said == [["Still here."]]
+    finally:
+        sp.close()
