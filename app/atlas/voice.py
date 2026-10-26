@@ -326,6 +326,19 @@ class Announcer:
                                     vl.readback_answer(answers))
             self._submit("readback", line, meta, None)
 
+    def measure_request(self, project: str | None, count: int, rid: str) -> None:
+        """An agent asked for measurements on the tablet (owner, 2026-10-26): the project and how
+        many, never the request's title or labels (an agent wrote those: V16)."""
+        with self._lock:
+            things = vl.things(count, "measurement", "measurements")
+            if project:
+                spoken = vl.spoken_project(project)
+                line, meta = self._info("request", {"project": spoken, "things": things},
+                                        f"{spoken} wants {things}. They're on the tablet.")
+            else:
+                line, meta = self._info("request.anon", {"things": things}, f"An agent wants {things}. They're on the tablet.")
+            self._submit("request", line, {**meta, "project": project}, ("request", rid))
+
     def reply(self, kind: str, count: int = 0, others: int = 0) -> str:
         """What ATLAS says after the one input filed a note or answered a question (VI4), spoken
         through the same gates as every line (on, installed, the `reply` switch, quiet hours,

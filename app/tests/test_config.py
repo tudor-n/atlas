@@ -194,7 +194,7 @@ def test_a_saved_duck_level_is_kept(paths):
 
 
 CHATTER_EVENTS = {"briefing": True, "self": True, "nudge": True, "react": True, "due_today": True, "tease": True,
-                  "greet": True}
+                  "greet": True, "request": True}
 
 
 def test_chatter_settings(paths):

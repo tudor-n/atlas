@@ -235,3 +235,26 @@ def test_debug_walks_the_pool_in_file_order(env):
         env.a.agent_transition(_tr("s1", "running", "waiting", env.now.t, kind="permission_prompt"))
         said.append(info(env)[0])
     assert said == ["A", "B", "C", "A"]
+
+
+def test_new_pools_reach_an_older_file_once_and_a_deleted_one_stays_deleted(tmp_path):
+    path = ln.lines_path(tmp_path)
+    path.parent.mkdir()
+    path.write_text("## agent_waiting\nMine {project}.\n", encoding="utf-8")
+    added = ln.ensure_line_pools(tmp_path)
+    assert "request" in added and "agent_waiting" not in added
+    pools, _, problems = ln.load_lines(tmp_path)
+    assert problems == [] and pools["agent_waiting"] == ["Mine {project}."] and pools["request"]
+    assert ln.ensure_line_pools(tmp_path) == []
+    text = path.read_text(encoding="utf-8")
+    start = text.index("## request\n")
+    path.write_text(text[:start] + text[text.index("\n\n", start) + 2:], encoding="utf-8")  # the owner deletes it
+    assert ln.ensure_line_pools(tmp_path) == [] and "## request\n" not in path.read_text(encoding="utf-8")
+    assert path.read_bytes().count(b"\r") == 0
+
+
+def test_every_pool_has_a_seed_section():
+    sections = ln.seed_sections()
+    assert set(ln.POOLS) <= set(sections)
+    for name, block in sections.items():
+        assert f"## {name}" in block and ln.parse(block)[2] == []

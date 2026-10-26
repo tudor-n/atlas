@@ -22,7 +22,7 @@ from .claude_runner import ClaudeRunner
 from .config import Paths, load_settings
 from .filing import FilingWorker, sweep_message
 from .gitrepo import BrainRepo
-from .lines import ensure_lines
+from .lines import ensure_line_pools, ensure_lines
 from .quotes import ensure_chatter_pools, ensure_quotes, ensure_reply_pools, ensure_workout_pool
 from .rawlog import read_log
 from .review import Reviewer
@@ -90,6 +90,9 @@ def _ensure_quotes(app: web.Application) -> None:
     commit of its own."""
     if ensure_lines(app["paths"].brain):  # the info lines' wordings (chatter, 2026-10-26)
         app["repo"].commit_all("add the voice's info lines")
+        app["backup"].notify_commit()
+    elif ensure_line_pools(app["paths"].brain):  # wordings for lines added since the file was seeded
+        app["repo"].commit_all("add the voice's new info line wordings")
         app["backup"].notify_commit()
     if ensure_quotes(app["paths"].brain):
         app["repo"].commit_all("add the voice quotes")

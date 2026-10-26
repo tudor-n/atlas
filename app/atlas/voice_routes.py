@@ -65,7 +65,8 @@ def setup_voice(app: web.Application, *, speaker_env: dict | None = None) -> Non
         usage=lambda: app["usage"].view(load_settings(paths)["usage_warn_pct"], ""),
         presence=app["presence"], save_settings=lambda patch: _save_and_tell(app, patch),
         roots=(paths.root, code), load_map=lambda: load_map(paths.brain),
-        commit=lambda: _running_commit(code), count_commits=lambda a, b: git_count(_code_repo(paths, code), a, b))
+        commit=lambda: _running_commit(code), count_commits=lambda a, b: git_count(_code_repo(paths, code), a, b),
+        requests=store.list_requests)
     app["chatter"].sub = Sub(
         runner=app["runner"], settings=lambda: load_settings(paths), paths=paths,
         usage=lambda: app["usage"].view(load_settings(paths)["usage_warn_pct"], ""), presence=app["presence"],

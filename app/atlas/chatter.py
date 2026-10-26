@@ -40,7 +40,7 @@ CALLBACK_AT = (3, 5, 10)  # "That's three times today for Robot Arm": at these c
 RESTART_GAP = timedelta(minutes=3)  # alive this recently: a restart (update, crash, drive back), not a hello
 GOODBYE_WAIT_S = 7.0  # the shell gives the hub 10 s after SIGTERM
 _DAYS_OF_WEEK = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")  # an ATLAS session starting a turn: one line per session an hour
-EVENT_WORDS = {"greet": "hellos and goodbyes", "agent_waiting": "calls about waiting agents",
+EVENT_WORDS = {"greet": "hellos and goodbyes", "request": "measurement requests", "agent_waiting": "calls about waiting agents",
                "agent_finished": "calls about finished agents", "reminder": "reminders", "readback": "readbacks",
                "reply": "replies", "briefing": "briefings", "self": "remarks about myself", "nudge": "nudges",
                "react": "reactions", "due_today": "due today reminders", "tease": "teases"}
@@ -92,11 +92,13 @@ class Chatter:
                  presence=None, now: Callable[[], datetime] = datetime.now,
                  save_settings: Callable[[dict], dict] | None = None, roots: tuple[Path, ...] = (),
                  load_map: Callable[[], object] = lambda: None, commit: Callable[[], str | None] = lambda: None,
-                 count_commits: Callable[[str, str], int | None] = lambda a, b: None, settle_s: float = SETTLE_S):
+                 count_commits: Callable[[str, str], int | None] = lambda a, b: None, settle_s: float = SETTLE_S,
+                 requests: Callable[[], list[dict]] = lambda: []):
         self.v, self._settings, self._brain, self._items, self._agents = voice, settings, Path(brain), items, agents
         self._entries_today, self._unconfirmed, self._usage, self.presence = entries_today, unconfirmed, usage, presence
         self._now, self._save_settings, self._roots, self._load_map = now, save_settings, roots, load_map
         self._commit, self._count_commits, self._settle_s = commit, count_commits, settle_s
+        self._requests = requests
         self.sub = None  # the subscription's patterns (chatter_sub.Sub), when wired
         self._rng = random.Random()
         self._started: datetime | None = None
@@ -510,6 +512,20 @@ class Chatter:
             self.v.chat("nudge", "nudge.waiting", {"project": project, "duration": vl.duration_words(wait.total_seconds())},
                         f"{project} has been waiting {vl.duration_words(wait.total_seconds())}.",
                         key=("nudge_wait", r.get("session_id"), r.get("status_since")), why="an agent left waiting")
+        for req in self._requests():  # a measurement request nobody has answered: once, after a while
+            created = _parse(req.get("created"))
+            if req.get("status") != "open" or created is None:
+                continue
+            wait = now - created
+            if not (NUDGE_WAIT <= wait < timedelta(hours=6) or (lvl.debug and wait >= timedelta(minutes=1))):
+                continue
+            things = vl.things(len(req.get("items") or []), "measurement", "measurements")
+            project = vl.spoken_project(req["project_name"]) if req.get("project_name") else None
+            values = {"things": things, "duration": vl.duration_words(wait.total_seconds()),
+                      **({"project": project} if project else {})}
+            self.v.chat("nudge", "nudge.request", values,
+                        f"{things.capitalize()} still waiting on the tablet. It's been {vl.duration_words(wait.total_seconds())}.",
+                        key=("nudge_request", req.get("id")), why="a measurement request left waiting")
         b = self._day_bucket("stale")
         if b.get("done") and not lvl.debug:
             return

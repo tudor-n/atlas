@@ -134,6 +134,12 @@ Four specialised reviews ran on the PRs: backend correctness, safety and the pro
   - **Start padding:** every clip starts with silence, `voice_lead_in_ms` (default 350 ms, 0–1500, Settings → Voice → START PADDING). An output waking from PipeWire's suspend loses the first few hundred ms of a stream; now that's silence, not the first word. The dot's envelope starts with the same silence, so it waits too.
   - **One clip for lines that come together:** the Speaker waits `JOIN_S` (0.6 s) for a line's companions, then says every queued line with the same voice settings as one clip, up to 8 parts, with the usual 0.4 s gaps. The sample is never joined.
   - **ATLAS tasks:** several confirmed together get one line ("Two tasks about me. I'm flattered."). A second batch within 2 minutes is shown, not said again (`chat(speak=False)`).
+- **CH34 Measurement requests are said aloud (owner, 2026-10-26: "if I'm working I might not see the tablet notification").**
+  - **The event:** `request`, with its own switch, on by default.
+  - **What's spoken:** the project (from the map, else its folder, as agent lines do) and how many: "Robot Arm wants three measurements. They're on the tablet." Never the request's title or labels: an agent wrote those (V16).
+  - **The gates:** like the phase 4 events, it isn't budgeted, but it follows the gates and quiet hours.
+  - **The nudge:** a request still open after 10 minutes gets one, said once, which counts against the budget.
+- **CH35 New pools reach an older `lines.md`.** On a start, pools the file lacks are appended once, and their names are recorded on an `ADDED_MARK` comment line, so a pool the owner deletes stays deleted. The owner's live file, seeded by #23, gets the pools added since (the requests, several ATLAS tasks, the evening's still-due line, waiting_many).
 
 ## Residuals
 - **CH5's idle blind spot:** a Wayland idle protocol client in the shell (`ext-idle-notify-v1`) would fix it, if it turns out to matter.

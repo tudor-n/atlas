@@ -617,3 +617,32 @@ def test_several_atlas_tasks_get_one_line_and_another_soon_after_is_only_shown(e
     env.now.t += timedelta(minutes=3)
     env.c.on_confirmed([item("e", "Later one", project="atlas")], all_of_card=False)
     assert env.lines[-1]["spoken"] is True
+
+
+# -- measurement requests on the tablet (owner, 2026-10-26) -----------------------------------------------
+def test_a_measurement_request_is_said_with_its_project_and_count_never_its_labels(env):
+    env.a.measure_request("RobotArm", 3, "r-1")
+    assert env.sink.lines[-1].info == "Robot Arm wants three measurements. They're on the tablet."
+    env.a.measure_request("RobotArm", 3, "r-1")  # the same request again: once
+    assert len(env.sink.lines) == 1
+    env.a.measure_request(None, 1, "r-2")
+    assert env.sink.lines[-1].info == "An agent wants one measurement. They're on the tablet."
+    env.settings["voice_events"]["request"] = False
+    env.a.measure_request("RobotArm", 2, "r-3")
+    assert len(env.sink.lines) == 2  # switched off: not said
+
+
+def test_an_unanswered_request_is_nudged_once(env):
+    box = []
+    env.c._requests = lambda: box
+    box.append({"id": "r-1", "status": "open", "items": ["a", "b"], "project_name": "RobotArm",
+                "created": (env.now.t - timedelta(minutes=12)).isoformat(timespec="seconds")})
+    env.c.tick()
+    env.c.tick()
+    nudges = [x for x in said(env) if "two measurements" in x.lower()]
+    assert len(nudges) == 1 and "twelve minutes" in nudges[0]  # once, with how long
+    box[0]["status"] = "answered"
+    box.append({"id": "r-2", "status": "answered", "items": ["a"], "project_name": "RobotArm",
+                "created": (env.now.t - timedelta(minutes=30)).isoformat(timespec="seconds")})
+    env.c.tick()
+    assert len([x for x in said(env) if "measurement" in x]) == 1  # answered ones never

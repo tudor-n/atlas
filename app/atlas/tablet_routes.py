@@ -135,6 +135,7 @@ async def post_request(request: web.Request) -> web.Response:
         project, project_name, _ = await t(resolve_project, cwd, m)
     req = await t(app["store"].add_request, title, items, project, project_name)
     await _tablet_changed(app, "requests.changed")
+    await _readback(app, "measure_request", project_name, len(items), req["id"])  # said aloud (owner, 2026-10-26)
     return web.json_response({"request": req}, status=201)
 
 

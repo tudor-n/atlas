@@ -92,6 +92,11 @@ _pool("self.set.chattiness_up", "level")
 _pool("self.set.event_off", "what")
 _pool("self.set.event_on", "what")
 _pool("tease", "text days")
+# Measurement requests on the tablet (owner, 2026-10-26): the project (from the map, or its folder) and
+# how many; never the request's title or labels (an agent wrote those: V16).
+_pool("request", "project things")
+_pool("request.anon", "things")
+_pool("nudge.request", "things duration", "project")
 # Hello and goodbye (owner, 2026-10-26): the time of day, the day of the week, how long it's been.
 for _n in ("greeting.early", "greeting.morning", "greeting.afternoon", "greeting.evening", "greeting.late",
            "greeting.monday", "greeting.friday", "greeting.weekend", "greeting.again",
@@ -510,6 +515,23 @@ New bedtime. Noted.
 ## self.set.other
 Settings changed. I noticed.
 
+# An agent asked for measurements on the tablet. {things} is "one measurement", "three measurements".
+## request
+{project} wants {things}. They're on the tablet.
+{project} needs {things} from the bench. Check the tablet.
+{project} is asking for {things}. Tape measure time.
+Measurements for {project}. That's {things}, on the tablet.
+
+## request.anon
+An agent wants {things}. They're on the tablet.
+{things} wanted at the bench. Check the tablet.
+
+# A request nobody has answered after a while. {duration} is how long.
+## nudge.request
+{project} is still waiting for {things}. That's {duration} now.
+Still {things} on the tablet for {project}. It's been {duration}.
+{things} still waiting on the tablet. It's been {duration}.
+
 # Teasing about my own open to-dos (High and up). {days} is how long it's been open.
 ## tease
 {text} That's been open {days}. Not that I'm counting.
@@ -692,6 +714,54 @@ def ensure_lines(brain: Path) -> bool:
     with open(path, "x", encoding="utf-8", newline="\n") as f:
         f.write(SEED)
     return True
+
+
+ADDED_MARK = "# Pools ATLAS added later (delete one and it stays deleted):"
+
+
+def seed_sections() -> dict[str, str]:
+    """Each pool's block in SEED: its `## name` heading and wordings, with the comment lines just above."""
+    out: dict[str, str] = {}
+    lines = SEED.splitlines()
+    for i, raw in enumerate(lines):
+        if not raw.startswith("## "):
+            continue
+        start = i
+        while start > 0 and lines[start - 1].startswith("#") and not lines[start - 1].startswith("##"):
+            start -= 1
+        end = i + 1
+        while end < len(lines) and lines[end].strip() and not lines[end].startswith("#"):
+            end += 1
+        out[raw[3:].strip()] = "\n".join(lines[start:end])
+    return out
+
+
+def ensure_line_pools(brain: Path) -> list[str]:
+    """Pools that came after the owner's lines.md was seeded get appended once, each recorded on the
+    ADDED_MARK line, so one the owner deletes is never added again. Never to a file it can't read.
+    Returns the pools it added."""
+    path = lines_path(brain)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    have = {m.strip() for m in re.findall(r"^##\s*(\S+)\s*$", text, re.M)}
+    mark = re.search("^" + re.escape(ADDED_MARK) + r"(.*)$", text, re.M)
+    added_before = set(mark.group(1).split()) if mark else set()
+    new = [p for p in POOLS if p not in have and p not in added_before]
+    if not new:
+        return []
+    sections = seed_sections()
+    blocks = [sections[p] for p in new if p in sections]
+    names = " ".join(sorted(added_before | set(new)))
+    if mark:
+        text = text[:mark.start()] + ADDED_MARK + " " + names + text[mark.end():]
+    else:
+        text = text.rstrip("\n") + "\n\n" + ADDED_MARK + " " + names
+    text = text.rstrip("\n") + "\n\n" + "\n\n".join(blocks) + "\n"
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    return new
 
 
 def load_lines(brain: Path) -> tuple[dict[str, list[str]], dict[str, list[int]], list[str]]:

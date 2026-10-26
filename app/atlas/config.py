@@ -35,7 +35,9 @@ DEFAULT_SETTINGS: dict = {
                      "briefing": True, "self": True, "nudge": True, "react": True, "due_today": True,
                      "tease": True,
                      # Hello when ATLAS starts, goodbye when the owner quits it (owner, 2026-10-26).
-                     "greet": True},
+                     "greet": True,
+                     # An agent asked for measurements on the tablet (owner, 2026-10-26).
+                     "request": True},
     "voice_finish_min_s": 120, "voice_blend": {"bm_george": 0.7, "bm_fable": 0.3},
     "voice_speed": 0.95, "voice_volume": 80, "voice_model": "int8",
     # Reminders whose text has one of these (whole words, any case) are workouts: "Workout time."
@@ -68,7 +70,7 @@ DEFAULT_SETTINGS: dict = {
 CHATTINESS: tuple[str, ...] = ("mute", "low", "medium", "high", "debug")
 
 VOICE_EVENTS: tuple[str, ...] = ("agent_waiting", "agent_finished", "reminder", "readback", "reply", "briefing",
-                                 "self", "nudge", "react", "due_today", "tease", "greet")
+                                 "self", "nudge", "react", "due_today", "tease", "greet", "request")
 VOICE_MODELS: tuple[str, ...] = ("int8", "fp32")
 # The English voices in voices-v1.0.bin (a = American, b = British; f/m): the blend editor's list.
 VOICE_IDS: tuple[str, ...] = (
