@@ -330,3 +330,14 @@ async def test_a_refused_request_is_not_the_owner(client):
     assert r.status == 404
     await asyncio.sleep(0.05)
     assert seen == []
+
+
+def test_the_running_commit_comes_from_the_runtime_slot(monkeypatch, tmp_path):
+    from atlas import voice_routes as vr
+    monkeypatch.setattr(vr.runtime, "hub_view", lambda state: {"commit": "abc123"})
+    assert vr._running_commit(tmp_path) == "abc123"
+    paths = type("P", (), {"root": tmp_path / "live"})()
+    assert vr._code_repo(paths, tmp_path / "code") == tmp_path / "live"
+    monkeypatch.setattr(vr.runtime, "hub_view", lambda state: None)
+    monkeypatch.setattr(vr, "git_commit", lambda code: "dev456")
+    assert vr._running_commit(tmp_path) == "dev456" and vr._code_repo(paths, tmp_path / "code") == tmp_path / "code"

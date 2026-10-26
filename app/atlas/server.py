@@ -272,6 +272,7 @@ async def on_cleanup(app: web.Application) -> None:
         # The owner quit ATLAS: one line before the voice goes, first, and only in what's left of the
         # shell's 10 s grace (GOODBYE_BY after shutdown began), so the store still closes cleanly.
         left = GOODBYE_BY - (time.monotonic() - app["shutdown"].get("since", time.monotonic()))
+        await t(app["chatter"].mark_quit)  # the next start says hello, even a minute from now
         if left > 1:
             await t(app["chatter"].goodbye, left)
     tasks = [*app["tasks"], *app["background"]]
