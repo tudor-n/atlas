@@ -39,6 +39,11 @@
 }
 /* desktop: hover lifts an outline; the state rules below win over it by order */
 @media (hover: hover) { .b:hover { border-color: var(--dim); color: var(--text); } }
+/* .tx: a row's secondary action (SNOOZE, EDIT, ✕, ×) as dim text, its outline only on hover or focus,
+   so a list shows one boxed control per row at most. :where() keeps the hover below the states. */
+.b.tx { border-color: var(--ground); color: var(--dim); }
+@media (hover: hover) { .b.tx:where(:hover) { border-color: var(--line2); color: var(--text); } }
+.b.tx:focus-visible { border-color: var(--line2); color: var(--text); }
 .b.pr { background: var(--text); color: var(--ground); border-color: var(--text); font-weight: 700; }
 .b.am { border-color: var(--amber); color: var(--amber); }
 .b.prs, .b.on { background: var(--text); color: var(--ground); border-color: var(--text); }
@@ -47,6 +52,9 @@
 .b.dis, .b:disabled, .b.dis:hover, .b:disabled:hover {
   color: var(--line2); border-color: var(--line); background: var(--ground); cursor: default;
 }
+/* a text button open on its own line (SNOOZE's picker) keeps an outline instead of inverting */
+.b.tx.on { background: var(--ground); color: var(--text); border-color: var(--line2); }
+.b.tx.dis, .b.tx:disabled, .b.tx.dis:hover, .b.tx:disabled:hover { border-color: var(--ground); }
 .b.h40 { height: var(--h40); line-height: 38px; }
 .b.h52 { height: var(--h52); line-height: 50px; padding: 0 20px; }
 input.h40, select.h40 { height: var(--h40); }
@@ -115,10 +123,12 @@ button.row, .row[data-press] { cursor: pointer; }
 /* -- panels, rails, section headers -------------------------------------------------------- */
 .panel { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--ground); }
 .rail { flex: none; width: var(--rail); border-right: 1px solid var(--line); overflow-y: auto; }
-/* a navigation rail's own rows (direct children: Browse, Settings) read as tabs: 600 13px .1em uppercase */
-.rail > .row { font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
-.rail > a.row { color: var(--text); text-decoration: none; }
-.rail > a.row:hover { color: var(--text); }
+/* a navigation rail's own rows (direct children: Browse, Settings) read as tabs: 600 13px .1em
+   uppercase, dim until hovered, no rules between them; the current one inverts */
+.rail > .row { font-weight: 600; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); border-bottom-color: var(--ground); }
+.rail > a.row { text-decoration: none; }
+.rail > .row:hover, .rail > a.row:hover { color: var(--text); }
+.rail > .row.cur { color: var(--ground); }
 .rail > a.row.cur, .rail > a.row.cur:hover { color: var(--ground); }
 /* the one left gutter (20px, the arm's): headers, rows, fields and text all start on it */
 .sect-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: var(--h40); padding: 0 20px; border-bottom: 1px solid var(--line); }

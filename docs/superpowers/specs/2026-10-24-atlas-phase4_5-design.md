@@ -61,6 +61,8 @@ Text conventions: a true minus `−`, `°` for units, `–` for an empty value. 
 - **Buttons.** `.b` is 48px with a `#3a3a3a` border. Primary (one per panel) is a white fill with black text. Pressed or on inverts to white. A pressed primary shows `#b8b8b8`.
 - **Amber outline buttons** turn solid amber when armed. Risky actions fire on a second press within 2 s, and the first press shows "TAP AGAIN" (`twice()`).
 - **Disabled:** `#3a3a3a` text on a `#262626` border.
+- **Text buttons** (`.b.tx`, 2026-10-27): a row's secondary actions (SNOOZE, EDIT, ✕, ×, ALL DAYS) are dim text whose outline shows only on hover or focus, so a row carries one boxed control at most.
+- **Navigation rails** (Browse, Settings): rows are dim with no rules between them, white on hover, inverted when current, like the tabs.
 - **Switch:** 56×30, green when on. The small `.s2` (48×26) turns white when on.
 - **Chip:** a 28px amber outline, 11px uppercase, with a 6×6 amber square.
 - **Status dot:** 8px, grey, green or amber, with mono 12 dim text.
