@@ -47,10 +47,10 @@ export function reviewDialog({ blocked, onChange, onOpen, onClosed }) {
   };
 
   const count = el('span', { class: 'n' }, '0');
-  const close = button('×', { size: 40, cls: 'x', title: 'Close (Esc)', onclick: () => dlg.close() });
+  const close = button('×', { size: 40, cls: 'x tx', title: 'Close (Esc)', onclick: () => dlg.close() });
   close.setAttribute('aria-label', 'Close the review');
   const list = el('div', { class: 'rvd-q', role: 'group', 'aria-label': 'Entries to review (arrow keys move)',
-    onkeydown: (ev) => {
+    title: '↑ ↓ move', onkeydown: (ev) => {
       if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
       const to = moveSelection(queue, selectedId, ev.key);
       if (!to) return;
@@ -63,7 +63,6 @@ export function reviewDialog({ blocked, onChange, onOpen, onClosed }) {
       el('div', { class: 'rvd-h' },
         el('h2', { class: 'lb', id: 'rvd-t' }, 'To review'), count,
         el('span', { class: 'grow' }),
-        el('span', { class: 'hn', 'aria-hidden': 'true' }, '↑ ↓ move · Esc closes'),
         close),
       el('div', { class: 'rvd-b' }, list, slot)));
 

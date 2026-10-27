@@ -67,7 +67,6 @@ dialog.rvd::backdrop { background: var(--ground); }
 @media (max-width: 1099px) {
   dialog.rvd { padding: 16px; }
   .rvd-b { grid-template-columns: 260px minmax(0, 1fr); }
-  .rvd-h .hn { display: none; }
 }
 @media (max-width: 759px) {
   .rvd-b { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 30%) minmax(0, 1fr); }
@@ -96,16 +95,12 @@ dialog.rvd::backdrop { background: var(--ground); }
 .today .row.it { flex-wrap: wrap; }
 .today .row.it > .grow { flex: 1 1 0; min-width: 0; }
 .snz { flex: none; display: flex; align-items: center; }
-/* SNOOZE: a faint text button, outlined on hover, focus and while its line is open */
-.today .snz .b.tx { padding: 0 10px; border-color: var(--ground); color: var(--dim); font-size: 11px; letter-spacing: .14em; }
-@media (hover: hover) { .today .snz .b.tx:hover { border-color: var(--line2); color: var(--text); } }
-.today .snz .b.tx:focus-visible, .today .snz .b.tx.on { border-color: var(--line2); background: var(--ground); color: var(--text); }
-.today .snz .b.tx:disabled, .today .snz .b.tx:disabled:hover { border-color: var(--ground); color: var(--line2); }
-.today .snz .b.tx.prs { background: var(--text); border-color: var(--text); color: var(--ground); }
+/* SNOOZE: the shared text button (.b.tx, components.css), on Today and Browse alike */
+.snz .b.tx { padding: 0 10px; font-size: 11px; letter-spacing: .14em; }
 /* SNOOZE shows on the row's hover or focus (it keeps its place, so the text never re-wraps, and stays
    in the Tab order: the ring's focus shows it); where there is no hover it always shows */
 @media (hover: hover) {
-  .today .row.it:not(:hover):not(:focus-within) .snz .b.tx:not(.on) { color: var(--ground); border-color: var(--ground); }
+  .row.it:not(:hover):not(:focus-within) .snz .b.tx:not(.on) { color: var(--ground); border-color: var(--ground); }
 }
 .snz-pick { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 2px 0 4px 52px; }
 .snz-pick .seg > button { min-width: 56px; font-family: var(--mono); font-weight: 500; font-size: 12px; }

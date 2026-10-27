@@ -266,7 +266,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
   }
 
   function closeButton() {
-    return keyed(button('×', { size: 40, cls: 'x', title: 'Close', onclick: onClose }), 'close', 'Close card');
+    return keyed(button('×', { size: 40, cls: 'x tx', title: 'Close', onclick: onClose }), 'close', 'Close card');
   }
 
   function header() {
@@ -275,7 +275,7 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
       stamp ? el('span', { class: 'm dt' }, stamp) : null,
       el('span', { class: 'syn' }, synopsisText()),
       statusNode(),
-      compact ? keyed(button('Hide', { size: 40, onclick: () => { s.draft.expanded = false; s.focus = 'review'; render(); } }), 'hide') : null,
+      compact ? keyed(button('Hide', { size: 40, cls: 'tx', onclick: () => { s.draft.expanded = false; s.focus = 'review'; render(); } }), 'hide') : null,
       compact && onClose ? closeButton() : null);
   }
 
@@ -323,9 +323,9 @@ export function confirmCard(entryId, { entryText, onChange, onClose, blocked = (
     const reason = blocked();
     const ok = keyed(button('✓', { size: 40, title: reason || 'Confirm', disabled: !canConfirm || !!reason || s.busy,
       onclick: () => { s.focus = 'first'; confirmIds([p.id]); } }), `ok:${p.id}`, 'Confirm');
-    const edit = keyed(button('Edit', { size: 40, title: reason || null, disabled: !!reason || s.busy,
+    const edit = keyed(button('Edit', { size: 40, cls: 'tx', title: reason || null, disabled: !!reason || s.busy,
       onclick: () => { s.draft.editing = p.id; s.focus = `edit:${p.id}`; render(); } }), `ed:${p.id}`);
-    const no = keyed(button('✕', { size: 40, cls: 'no', title: reason || 'Dismiss (press twice)', disabled: !!reason || s.busy }),
+    const no = keyed(button('✕', { size: 40, cls: 'no tx', title: reason || 'Dismiss (press twice)', disabled: !!reason || s.busy }),
       `no:${p.id}`, 'Dismiss');
     twice(no, { onGo: () => { s.focus = 'first'; dismissIds([p.id]); } });
     return el('div', { class: 'acts' }, ok, edit, no);
