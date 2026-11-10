@@ -93,7 +93,7 @@ export async function render(container, _params, query) {
   let names = mapNames(null);
   const dayErr = el('p', { class: 'err j-dayerr', id: 'j-day-err', role: 'alert' });
   const dayInput = el('input', { id: 'j-day', type: 'text', class: 'h40', value: day, inputmode: 'numeric',
-    maxlength: '10', autocomplete: 'off', spellcheck: 'false', placeholder: 'yyyy-mm-dd',
+    maxlength: '10', autocomplete: 'off', spellcheck: 'false', placeholder: 'yyyy-mm-dd', title: '↑ ↓ step a day',
     'aria-label': 'Day, as year-month-day', 'aria-describedby': 'j-day-err',
     onchange: () => applyDay(), onkeydown: (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); applyDay(); }
@@ -112,19 +112,18 @@ export async function render(container, _params, query) {
     dayInput.value = d;
     if (d !== day) { day = d; reload(); }
   }
-  const allDays = button('All days', { size: 40, cls: 'j-all', onclick: () => { day = ''; dayInput.value = ''; showDayErr(''); reload(); } });
+  const allDays = button('All days', { size: 40, cls: 'j-all tx', onclick: () => { day = ''; dayInput.value = ''; showDayErr(''); reload(); } });
   const areaCount = el('span', { class: 'n' });
   const areaRows = el('div', { class: 'j-areas', role: 'group', 'aria-label': 'Area' });
   const filterInput = el('input', { id: 'j-q', type: 'search', class: 'h40', placeholder: 'Words',
-    'aria-label': 'Find text' });
+    'aria-label': 'Find text', title: 'Local search only, never Claude.' });
   const findForm = el('form', { class: 'j-find', onsubmit: (ev) => { ev.preventDefault(); runFilter(); } },
     filterInput, button('Find', { size: 40, type: 'submit' }));
   const rail = el('aside', { class: 'rail j-rail', 'aria-label': 'Journal filters' },
     sectionHead('Find'),
-    el('div', { class: 'j-findp' }, findForm, el('p', { class: 'hn j-findn' }, 'Local search only, never Claude.')),
+    el('div', { class: 'j-findp' }, findForm),
     sectionHead('Day'),
-    el('div', { class: 'j-day' }, dayInput, dayErr,
-      el('p', { class: 'hn j-dayn' }, '↑ ↓ step a day'), allDays),
+    el('div', { class: 'j-day' }, dayInput, dayErr, allDays),
     el('div', { class: 'sect-h' }, el('h2', { class: 'lb' }, 'Area'), areaCount),
     areaRows);
 

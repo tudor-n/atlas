@@ -65,7 +65,7 @@ function itemRow(it, ctx, opts) {
   ring.dataset.k = `done:${it.id}`;
 
   const meta = metaNodes(it, ctx, opts);
-  const snoozeBtn = button('Snooze', { size: 40, title: reason || null, disabled: !!reason });
+  const snoozeBtn = button('Snooze', { size: 40, cls: 'tx', title: reason || null, disabled: !!reason });
   snoozeBtn.dataset.k = `snz:${it.id}`;
   const pick = el('div', { class: 'snz-pick', hidden: true });
   pick.id = `bsnz-${it.id}`;

@@ -121,7 +121,7 @@ export async function render(container, _params, _query, opts = {}) {
   }
 
   function removeButton(row) {
-    const btn = el('button', { type: 'button', class: 'b h40 x', 'aria-label': `Remove ${row.part}`, title: 'Remove from the list' }, '✕');
+    const btn = el('button', { type: 'button', class: 'b h40 x tx', 'aria-label': `Remove ${row.part}`, title: 'Remove from the list' }, '✕');
     twice(btn, { onGo: async () => {
       clear(msg);
       try { await api.del(`/api/agents/${encodeURIComponent(row.session_id)}`); } catch (e) { fail(e); }
